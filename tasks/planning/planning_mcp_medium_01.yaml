@@ -58,7 +58,7 @@ user_message: 'I have 5 MCP servers configured directly in Claude Desktop and Cu
 mock_responses:
   get_current_infrastructure:
   - match:
-      component_contains: mcp
+      component_contains: any
     response:
       content:
         servers:
@@ -89,6 +89,12 @@ mock_responses:
       content:
         compatible: true
         notes: Gateway can proxy SSE. Needs buffering for long-lived connections.
+  - match:
+      source_contains: any
+    response:
+      content:
+        compatible: true
+        notes: Compatible with standard gateway proxy pattern. Check transport-specific requirements.
   estimate_effort:
   - match:
       task_contains: proxy
@@ -108,6 +114,18 @@ mock_responses:
       content:
         estimate_days: 1
         notes: OpenTelemetry middleware. Structured JSON logging.
+  - match:
+      task_contains: migration
+    response:
+      content:
+        estimate_days: 5
+        notes: Full migration including proxy, auth, telemetry, and client reconfiguration.
+  - match:
+      task_contains: any
+    response:
+      content:
+        estimate_days: 2
+        notes: Estimated effort for standard infrastructure task.
 scoring:
   phased_approach:
     weight: 0.3

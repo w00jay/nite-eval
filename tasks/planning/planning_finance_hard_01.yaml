@@ -85,6 +85,23 @@ mock_responses:
         - pg_trgm
         storage_gb: 100
         edge_functions: true
+  - match:
+      component_contains: database
+    response:
+      content:
+        plan: Pro
+        postgres_version: '15'
+        extensions:
+        - pgvector
+        - pg_trgm
+        storage_gb: 100
+        edge_functions: true
+  - match:
+      component_contains: any
+    response:
+      content:
+        status: operational
+        notes: Supabase Pro plan with pgvector, 100GB storage, edge functions enabled
   check_api_availability:
   - match:
       api_name_contains: polygon
@@ -119,6 +136,60 @@ mock_responses:
         cost: $449/mo
         data_types:
         - news articles
+  - match:
+      api_name_contains: finnhub
+    response:
+      content:
+        available: true
+        rate_limit: 60 req/min free
+        cost: Free tier available, $149/mo premium
+        data_types:
+        - news
+        - sentiment
+        - earnings
+  - match:
+      api_name_contains: yfinance
+    response:
+      content:
+        available: true
+        rate_limit: unofficial, rate-limited
+        cost: Free (unofficial Yahoo Finance API)
+        data_types:
+        - stocks
+        - forex
+        - crypto
+  - match:
+      api_name_contains: sec
+    response:
+      content:
+        available: true
+        rate_limit: 10 req/sec
+        cost: Free (SEC EDGAR)
+        data_types:
+        - 10-K
+        - 10-Q
+        - earnings transcripts
+  - match:
+      api_name_contains: federal
+    response:
+      content:
+        available: true
+        rate_limit: 120 req/min
+        cost: Free (FRED API)
+        data_types:
+        - fed funds rate
+        - CPI
+        - unemployment
+        - GDP
+  - match:
+      api_name_contains: any
+    response:
+      content:
+        available: true
+        rate_limit: varies
+        cost: varies
+        data_types:
+        - general financial data
   estimate_storage:
   - match:
       data_type_contains: price
@@ -138,6 +209,24 @@ mock_responses:
       content:
         estimated_gb: 8
         notes: '~2000 transcripts/quarter × 20KB avg. Audio: 50GB+ if stored, recommend text-only.'
+  - match:
+      data_type_contains: news
+    response:
+      content:
+        estimated_gb: 3
+        notes: '~100 articles/day × 365 days × 2 years × 5KB avg = ~365K articles, ~1.8GB raw + embeddings.'
+  - match:
+      data_type_contains: OHLCV
+    response:
+      content:
+        estimated_gb: 2
+        notes: '500 instruments × 252 trading days × 10 years = ~1.26M rows. With indicators: ~5GB.'
+  - match:
+      data_type_contains: any
+    response:
+      content:
+        estimated_gb: 5
+        notes: Estimate varies by data type and retention policy.
   check_compatibility:
   - match:
       source_contains: pgvector
@@ -147,6 +236,18 @@ mock_responses:
         compatible: true
         notes: pgvector supports HNSW and IVFFlat. Adequate for <1M vectors. Beyond that, consider Qdrant
           or Pinecone.
+  - match:
+      source_contains: supabase
+    response:
+      content:
+        compatible: true
+        notes: Supabase natively supports pgvector. Good for <1M vectors. Python client via supabase-py.
+  - match:
+      source_contains: any
+    response:
+      content:
+        compatible: true
+        notes: Generally compatible. Check specific version requirements.
 scoring:
   architecture_quality:
     weight: 0.3

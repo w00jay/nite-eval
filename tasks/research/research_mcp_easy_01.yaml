@@ -59,6 +59,31 @@ mock_responses:
           snippet: .NET-based. K8s-native with session affinity. Control plane for MCP server lifecycle.
             Enterprise telemetry, access control, observability. Designed for K8s from start.
           url: https://github.com/microsoft/mcp-gateway
+  fetch_url:
+  - match:
+      url_contains: docker
+    response:
+      content:
+        title: docker/mcp-gateway
+        body: "Go-based MCP proxy. Supports Streamable HTTP transport. Runs MCP servers\
+          \ in isolated Docker containers. Features: catalog/registry for tool discovery,\
+          \ profile-based server grouping, Apache 2.0 license. Requires Docker for\
+          \ deployment. Configuration via YAML."
+  - match:
+      url_contains: microsoft
+    response:
+      content:
+        title: microsoft/mcp-gateway
+        body: ".NET-based MCP gateway designed for Kubernetes. Session affinity, control\
+          \ plane for server lifecycle management. Enterprise features: telemetry via\
+          \ OpenTelemetry, RBAC access control, health monitoring. Helm chart for K8s\
+          \ deployment."
+  - match:
+      url_contains: any
+    response:
+      content:
+        title: Fetched page
+        body: "Page content not available in mock environment."
 scoring:
   coverage:
     weight: 0.4

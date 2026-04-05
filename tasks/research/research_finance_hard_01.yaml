@@ -120,6 +120,47 @@ mock_responses:
           snippet: Google 2021. Variable selection, temporal attention, multi-horizon output. Interpretable
             via attention weights. Requires per-dataset training. Strong on structured time series with
             known covariates.
+  - match:
+      query_contains: Moirai
+    response:
+      content:
+        results:
+        - title: 'Moirai: Salesforce Universal Time Series Forecaster'
+          snippet: Masked encoder architecture. Multiple input/output projections handle any frequency.
+            Pre-trained on LOTSA (27B observations). Zero-shot SOTA on many benchmarks. Apache 2.0.
+  - match:
+      query_contains: Lag-Llama
+    response:
+      content:
+        results:
+        - title: Lag-Llama Probabilistic Time Series Forecasting
+          snippet: LLaMA-based decoder for univariate probabilistic forecasting. Uses lags as covariates.
+            Pre-trained on 352 datasets. Strong zero-shot. Lightweight (small parameter count). MIT license.
+  - match:
+      query_contains: PEFT
+    response:
+      content:
+        results:
+        - title: Fine-tuning Foundation Models for Finance
+          snippet: 'LoRA on TimesFM shows 15-20% improvement on domain-specific financial datasets. Key:
+            freeze base layers, LoRA rank 8-16 sufficient. Risk of overfitting on small financial datasets.'
+  - match:
+      query_contains: LoRA
+    response:
+      content:
+        results:
+        - title: Parameter-Efficient Fine-Tuning for Time Series
+          snippet: LoRA and QLoRA applicable to transformer-based time series models. HuggingFace PEFT
+            library supports Chronos and TimesFM. Rank 8-16 sufficient for financial domain adaptation.
+  - match:
+      query_contains: swing trading
+    response:
+      content:
+        results:
+        - title: ML for Swing Trading - Practical Considerations
+          snippet: Foundation models provide zero-shot baselines. Fine-tuning on 2-5 years of daily data
+            improves 10-20%. Key challenges - regime changes, non-stationarity, transaction costs.
+            Ensemble approaches (foundation + specialist) show best risk-adjusted returns.
   summarize_findings:
   - match:
       topic_contains: any

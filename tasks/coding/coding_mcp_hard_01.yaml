@@ -116,3 +116,34 @@ scoring:
       '
 max_turns: 14
 timeout_seconds: 180
+mock_responses:
+  write_file:
+  - match:
+      path_contains: any
+    response:
+      content:
+        status: written
+        bytes: 1024
+  run_tests:
+  - match:
+      directory_contains: any
+    response:
+      content:
+        passed: 4
+        failed: 0
+        output: All tests passed
+  run_code:
+  - match:
+      command_contains: any
+    response:
+      content:
+        exit_code: 0
+        stdout: ''
+        stderr: ''
+  read_file:
+  - match:
+      path_contains: any
+    response:
+      content:
+        content: // file contents placeholder
+        exists: true

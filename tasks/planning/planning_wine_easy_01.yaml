@@ -63,6 +63,18 @@ mock_responses:
         compatible: true
         notes: 150s timeout on Supabase edge functions. Claude Vision call typically 3-8s. Fits within
           limit.
+  - match:
+      tech_a_contains: edge function
+    response:
+      content:
+        compatible: true
+        notes: Supabase Edge Functions support external API calls. 150s timeout. Deno runtime.
+  - match:
+      tech_a_contains: any
+    response:
+      content:
+        compatible: true
+        notes: Generally compatible. Check specific version and platform requirements.
   estimate_effort:
   - match:
       task_contains: schema

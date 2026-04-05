@@ -80,6 +80,40 @@ mock_responses:
         - title: CellarMate.ai Review
           snippet: GPT-4 powered conversational sommelier. 14 specialized wine functions. Photo label
             scanning. Receipt and restaurant menu scanning. Early stage, thousands of users.
+  - match:
+      query_contains: Vivino
+    response:
+      content:
+        results:
+        - title: Vivino AI Label Scanning
+          snippet: 70M+ users. Label scanning via computer vision. Community ratings 200M+ reviews. Recommendation
+            based on taste profile from ratings. Pivoted to marketplace/commerce.
+  - match:
+      query_contains: CellarTracker
+    response:
+      content:
+        results:
+        - title: CellarTracker Launches CellarChat AI
+          snippet: AI assistant connected to personal collection. Suggestions based on owned bottles,
+            drinking windows, community tasting notes. Reactive Q&A format. 1M+ active users, 4.5M wines.
+  - match:
+      query_contains: wine cellar
+    response:
+      content:
+        results:
+        - title: Wine Cellar Management Apps Comparison
+          snippet: Most apps focus on cataloging and community ratings. Gap in proactive intelligence -
+            no app alerts you when bottles reach peak drinking window, suggests pairings based on
+            upcoming meals, or optimizes cellar composition against taste preferences.
+  - match:
+      query_contains: proactive
+    response:
+      content:
+        results:
+        - title: Proactive Cellar Intelligence - Unexplored Market
+          snippet: Current wine apps are reactive (user asks, app answers). No app proactively monitors
+            cellar health, predicts drinking windows, or suggests consumption order. Opportunity for
+            push-based intelligence using real-time sensor data and ML.
   summarize_findings:
   - match:
       topic_contains: any
