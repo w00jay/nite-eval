@@ -1,0 +1,31 @@
+# llama-swap configuration for nite-eval target models
+# GPU 0 (RTX 3090) — one model loaded at a time
+
+models:
+  "qwen3.5-27b":
+    cmd: >
+      /home/woojay/P/llama.cpp/build/bin/llama-server
+      -m /home/woojay/P/llama.cpp/build/bin/Qwen3.5-27B.Q4_K_M.gguf
+      --port ${PORT} -ngl 999 --ctx-size 8192
+      -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
+    group: "target-gpu"
+
+  "qwen3.5-9b":
+    cmd: >
+      /home/woojay/P/llama.cpp/build/bin/llama-server
+      -m /home/woojay/P/llama.cpp/build/bin/Qwen3.5-9B-Q4_K_M.gguf
+      --port ${PORT} -ngl 999 --ctx-size 8192
+      -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
+    group: "target-gpu"
+
+  "gemma4-26b-a4b":
+    cmd: >
+      /home/woojay/P/llama.cpp/build/bin/llama-server
+      -m /home/woojay/P/llama.cpp/build/bin/gemma-4-26b-a4b-it-Q4_K_M.gguf
+      --port ${PORT} -ngl 999 --ctx-size 8192
+      -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
+    group: "target-gpu"
+
+groups:
+  "target-gpu":
+    exclusive: true

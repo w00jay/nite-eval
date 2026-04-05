@@ -1,0 +1,1766 @@
+# =============================================================================
+# LLM Eval Suite — Custom Task Definitions
+# Derived from actual project patterns and agent workloads
+# =============================================================================
+#
+# Source projects:
+#   - MCP Gateway (Go, proxy architecture, tool registry, CLI)
+#   - Wine Inventory Tracker (Supabase, edge functions, computer vision, recommendations)
+#   - Artemis II Tracker (API integration, data parsing, 3D visualization, MCP server)
+#   - Financial AI Product (RAG, agent orchestration, time series, multi-modal data)
+#   - Wooj-brain (knowledge capture, semantic search, Supabase edge functions)
+#   - Autoresearch pattern (agent loop design, eval methodology)
+#
+# Task ID convention: {dimension}_{project}_{difficulty}_{sequence}
+# Dimensions: research, planning, coding, agentic
+# Difficulty: easy (1 tool / straightforward), medium (2-4 tools / multi-step),
+#             hard (5+ tools / long-horizon / ambiguity)
+# =============================================================================
+
+
+# =============================================================================
+# DIMENSION 1: RESEARCH TASKS
+# Tests: multi-step information gathering, synthesis, comparison, judgment
+# =============================================================================
+
+research_tasks:
+
+  # --- Derived from: MCP Gateway competitive analysis ---
+  - id: research_mcp_easy_01
+    dimension: research
+    difficulty: easy
+    source_project: mcp-gateway
+    description: >
+      Compare two open-source MCP gateway implementations (Docker vs Microsoft)
+      on transport support, auth model, and deployment complexity.
+    system_prompt: |
+      You are a technical research assistant helping evaluate infrastructure tools.
+    tools:
+      - type: function
+        function:
+          name: web_search
+          description: "Search the web for technical information"
+          parameters:
+            type: object
+            properties:
+              query: {type: string, description: "Search query"}
+            required: [query]
+      - type: function
+        function:
+          name: fetch_url
+          description: "Fetch the full content of a URL"
+          parameters:
+            type: object
+            properties:
+              url: {type: string, description: "URL to fetch"}
+            required: [url]
+    user_message: >
+      Compare Docker's mcp-gateway and Microsoft's mcp-gateway on these dimensions:
+      transport protocols supported, authentication model, and deployment requirements.
+      Which is better suited for a small team running on GKE?
+    mock_responses:
+      web_search:
+        - match: {query_contains: "docker mcp-gateway"}
+          response:
+            content:
+              results:
+                - title: "docker/mcp-gateway GitHub"
+                  snippet: "Go-based MCP proxy. Runs servers in isolated containers. Supports Streamable HTTP. Catalog/registry. Profile-based server grouping. Apache 2.0 license."
+                  url: "https://github.com/docker/mcp-gateway"
+        - match: {query_contains: "microsoft mcp-gateway"}
+          response:
+            content:
+              results:
+                - title: "microsoft/mcp-gateway GitHub"
+                  snippet: ".NET-based. K8s-native with session affinity. Control plane for MCP server lifecycle. Enterprise telemetry, access control, observability. Designed for K8s from start."
+                  url: "https://github.com/microsoft/mcp-gateway"
+    scoring:
+      coverage:
+        weight: 0.4
+        method: checklist
+        criteria:
+          - "Mentions Docker gateway is Go-based"
+          - "Mentions Microsoft gateway is .NET-based"
+          - "Compares transport support"
+          - "Compares auth approach"
+          - "Addresses GKE deployment fit"
+      accuracy:
+        weight: 0.3
+        method: judge_rubric
+        criteria: "Claims match mock search results, no hallucinated features"
+      recommendation_quality:
+        weight: 0.3
+        method: judge_rubric
+        criteria: "Gives a clear, reasoned recommendation for the GKE use case"
+    max_turns: 6
+    timeout_seconds: 90
+
+  # --- Derived from: Wine Tracker competitive landscape ---
+  - id: research_wine_medium_01
+    dimension: research
+    difficulty: medium
+    source_project: wine-tracker
+    description: >
+      Research the AI capabilities of three wine cellar apps and identify
+      gaps in proactive cellar intelligence. Mirrors the original competitive
+      analysis that shaped the Wine Tracker product thesis.
+    system_prompt: |
+      You are a product research assistant analyzing the wine technology market.
+    tools:
+      - type: function
+        function:
+          name: web_search
+          description: "Search the web for product information"
+          parameters:
+            type: object
+            properties:
+              query: {type: string, description: "Search query"}
+            required: [query]
+      - type: function
+        function:
+          name: fetch_url
+          description: "Fetch the full content of a URL"
+          parameters:
+            type: object
+            properties:
+              url: {type: string, description: "URL to fetch"}
+            required: [url]
+      - type: function
+        function:
+          name: summarize_findings
+          description: "Store intermediate research findings for later synthesis"
+          parameters:
+            type: object
+            properties:
+              topic: {type: string}
+              findings: {type: string}
+            required: [topic, findings]
+    user_message: >
+      Research the AI features of Vivino, CellarTracker (including CellarChat),
+      and CellarMate.ai. For each, identify: what AI capabilities they offer,
+      how deep the personalization goes, and what they're missing in terms of
+      proactive cellar intelligence. Synthesize into a gap analysis showing
+      where a new entrant could differentiate.
+    mock_responses:
+      web_search:
+        - match: {query_contains: "vivino AI"}
+          response:
+            content:
+              results:
+                - title: "Vivino AI Label Scanning"
+                  snippet: "70M+ users. Label scanning via computer vision. Community ratings 200M+ reviews. Recommendation based on taste profile from ratings. Pivoted to marketplace/commerce."
+        - match: {query_contains: "CellarTracker CellarChat"}
+          response:
+            content:
+              results:
+                - title: "CellarTracker Launches CellarChat AI"
+                  snippet: "AI assistant connected to personal collection. Suggestions based on owned bottles, drinking windows, community tasting notes. Reactive Q&A format. 1M+ active users, 4.5M wines."
+        - match: {query_contains: "CellarMate"}
+          response:
+            content:
+              results:
+                - title: "CellarMate.ai Review"
+                  snippet: "GPT-4 powered conversational sommelier. 14 specialized wine functions. Photo label scanning. Receipt and restaurant menu scanning. Early stage, thousands of users."
+      summarize_findings:
+        - match: {topic_contains: "any"}
+          response:
+            content: {status: "saved"}
+    scoring:
+      coverage:
+        weight: 0.3
+        method: checklist
+        criteria:
+          - "Covers all three apps"
+          - "Identifies AI capabilities per app"
+          - "Assesses personalization depth"
+          - "Identifies proactive vs reactive intelligence gap"
+      synthesis:
+        weight: 0.4
+        method: judge_rubric
+        criteria: >
+          Produces a coherent gap analysis, not just three separate summaries.
+          Identifies cross-cutting themes and a clear differentiation opportunity.
+      actionability:
+        weight: 0.3
+        method: judge_rubric
+        criteria: >
+          Recommendations are specific enough to inform product decisions,
+          not generic platitudes like "use more AI."
+    max_turns: 10
+    timeout_seconds: 120
+
+  # --- Derived from: Financial AI product research ---
+  - id: research_finance_hard_01
+    dimension: research
+    difficulty: hard
+    source_project: financial-ai
+    description: >
+      Research transformer-based time series models for financial forecasting,
+      comparing foundation models (TimesFM, Chronos, Moirai) against
+      fine-tuned specialist models (TFT, PatchTST). Requires multi-source
+      synthesis and nuanced technical judgment.
+    system_prompt: |
+      You are a quantitative research assistant specializing in ML for finance.
+    tools:
+      - type: function
+        function:
+          name: web_search
+          description: "Search the web for academic and technical information"
+          parameters:
+            type: object
+            properties:
+              query: {type: string, description: "Search query"}
+            required: [query]
+      - type: function
+        function:
+          name: fetch_url
+          description: "Fetch the full content of a URL"
+          parameters:
+            type: object
+            properties:
+              url: {type: string, description: "URL to fetch"}
+            required: [url]
+      - type: function
+        function:
+          name: summarize_findings
+          description: "Store intermediate research findings"
+          parameters:
+            type: object
+            properties:
+              topic: {type: string}
+              findings: {type: string}
+            required: [topic, findings]
+      - type: function
+        function:
+          name: create_comparison_table
+          description: "Create a structured comparison of options"
+          parameters:
+            type: object
+            properties:
+              title: {type: string}
+              columns: {type: array, items: {type: string}}
+              rows: {type: array, items: {type: object}}
+            required: [title, columns, rows]
+    user_message: >
+      I'm building a multi-asset swing trading system (days to weeks horizon).
+      Research the current state of transformer-based time series forecasting
+      models. Compare foundation models (TimesFM, Chronos, Moirai, Lag-Llama)
+      against fine-tunable architectures (TFT, PatchTST). For my use case:
+      which approach is better, and can I fine-tune a foundation model with
+      PEFT/LoRA on my own financial data? Include practical deployment
+      considerations for a single-GPU setup.
+    mock_responses:
+      web_search:
+        - match: {query_contains: "TimesFM"}
+          response:
+            content:
+              results:
+                - title: "TimesFM: Google's Time Series Foundation Model"
+                  snippet: "200M param decoder-only. Pre-trained on 100B real-world time points. Zero-shot competitive with supervised models. Supports variable context lengths. Apache 2.0."
+        - match: {query_contains: "Chronos"}
+          response:
+            content:
+              results:
+                - title: "Chronos: Amazon's Probabilistic Time Series Model"
+                  snippet: "T5-based. Tokenizes time series via scaling and quantization. Multiple sizes (20M to 710M). Strong zero-shot. Probabilistic forecasts. Apache 2.0."
+        - match: {query_contains: "PatchTST"}
+          response:
+            content:
+              results:
+                - title: "PatchTST: Channel-independent Transformer"
+                  snippet: "Patches time series like ViT patches images. Self-supervised pre-training. Channel independence enables multi-variate. Strong on long-horizon. IBM Research."
+        - match: {query_contains: "financial time series PEFT LoRA"}
+          response:
+            content:
+              results:
+                - title: "Fine-tuning Foundation Models for Finance"
+                  snippet: "LoRA on TimesFM shows 15-20% improvement on domain-specific financial datasets. Key: freeze base layers, LoRA rank 8-16 sufficient. Risk of overfitting on small financial datasets."
+        - match: {query_contains: "Temporal Fusion Transformer"}
+          response:
+            content:
+              results:
+                - title: "TFT for Multi-horizon Forecasting"
+                  snippet: "Google 2021. Variable selection, temporal attention, multi-horizon output. Interpretable via attention weights. Requires per-dataset training. Strong on structured time series with known covariates."
+      summarize_findings:
+        - match: {topic_contains: "any"}
+          response: {content: {status: "saved"}}
+      create_comparison_table:
+        - match: {title_contains: "any"}
+          response: {content: {status: "table_created"}}
+    scoring:
+      technical_depth:
+        weight: 0.3
+        method: judge_rubric
+        criteria: >
+          Demonstrates understanding of architectural differences (decoder-only
+          vs encoder, patching strategy, tokenization approach). Not just
+          listing features but explaining trade-offs.
+      practical_judgment:
+        weight: 0.3
+        method: judge_rubric
+        criteria: >
+          Gives a clear recommendation for the swing trading use case with
+          reasoning. Addresses single-GPU deployment constraints. Discusses
+          PEFT/LoRA feasibility honestly.
+      coverage:
+        weight: 0.2
+        method: checklist
+        criteria:
+          - "Covers at least 4 models"
+          - "Addresses zero-shot vs fine-tuned trade-off"
+          - "Discusses PEFT/LoRA for financial data"
+          - "Mentions deployment/inference considerations"
+      structure:
+        weight: 0.2
+        method: judge_rubric
+        criteria: "Well-organized with comparison, not a wall of text"
+    max_turns: 14
+    timeout_seconds: 180
+
+
+# =============================================================================
+# DIMENSION 2: PLANNING TASKS
+# Tests: task decomposition, dependency awareness, risk mitigation, specificity
+# =============================================================================
+
+planning_tasks:
+
+  # --- Derived from: Wine Tracker 2-week POC scope ---
+  - id: planning_wine_easy_01
+    dimension: planning
+    difficulty: easy
+    source_project: wine-tracker
+    description: >
+      Create a 2-week POC plan for a Supabase-backed wine inventory app
+      with label scanning. Tests basic task decomposition and dependency ordering.
+    system_prompt: |
+      You are a technical project planner for mobile app development.
+    tools:
+      - type: function
+        function:
+          name: check_dependency
+          description: "Check if a technology or service is compatible with another"
+          parameters:
+            type: object
+            properties:
+              tech_a: {type: string}
+              tech_b: {type: string}
+            required: [tech_a, tech_b]
+      - type: function
+        function:
+          name: estimate_effort
+          description: "Estimate development effort for a task"
+          parameters:
+            type: object
+            properties:
+              task: {type: string, description: "Task description"}
+              stack: {type: string, description: "Tech stack context"}
+            required: [task, stack]
+    user_message: >
+      Plan a 2-week POC for a wine inventory tracker. Stack: Supabase (Postgres,
+      Auth, Storage, Edge Functions), React Native mobile app, Claude Vision API
+      for label scanning. Core flows: scan label → identify wine → add to
+      inventory → place in rack grid → consume bottle. What should I build
+      in week 1 vs week 2, and what are the critical path dependencies?
+    mock_responses:
+      check_dependency:
+        - match: {tech_a_contains: "supabase", tech_b_contains: "react native"}
+          response: {content: {compatible: true, notes: "Use @supabase/supabase-js. Direct client SDK for reads, functions.invoke for server logic."}}
+        - match: {tech_a_contains: "claude vision", tech_b_contains: "edge function"}
+          response: {content: {compatible: true, notes: "150s timeout on Supabase edge functions. Claude Vision call typically 3-8s. Fits within limit."}}
+      estimate_effort:
+        - match: {task_contains: "schema"}
+          response: {content: {estimate_hours: 4, complexity: "medium", notes: "Core tables: wines, bottles, racks, rack_positions, events. RLS policies add 2h."}}
+        - match: {task_contains: "scan"}
+          response: {content: {estimate_hours: 8, complexity: "high", notes: "Image upload, Claude Vision call, wine matching/creation, error handling. Most complex edge function."}}
+        - match: {task_contains: "rack grid"}
+          response: {content: {estimate_hours: 6, complexity: "medium", notes: "Interactive grid component, drag-to-place, position state management."}}
+    scoring:
+      dependency_correctness:
+        weight: 0.3
+        method: deterministic
+        criteria: >
+          Schema must come before edge functions. Auth must come before
+          any user-scoped features. Scan-label must come before consume flow.
+      completeness:
+        weight: 0.3
+        method: checklist
+        criteria:
+          - "Week 1 includes database schema and auth"
+          - "Week 1 includes scan-label edge function"
+          - "Week 2 includes recommendation or intelligence features"
+          - "Identifies critical path"
+      specificity:
+        weight: 0.2
+        method: judge_rubric
+        criteria: "Tasks are concrete and actionable, not vague like 'set up backend'"
+      risk_awareness:
+        weight: 0.2
+        method: judge_rubric
+        criteria: "Identifies at least one risk (e.g., Claude Vision accuracy, edge function timeout)"
+    max_turns: 8
+    timeout_seconds: 90
+
+  # --- Derived from: MCP Gateway POC architecture ---
+  - id: planning_mcp_medium_01
+    dimension: planning
+    difficulty: medium
+    source_project: mcp-gateway
+    description: >
+      Design a migration plan from direct MCP server connections to a
+      centralized gateway proxy. Mirrors the actual MCP Gateway architecture
+      design work.
+    system_prompt: |
+      You are a systems architect specializing in developer infrastructure.
+    tools:
+      - type: function
+        function:
+          name: get_current_infrastructure
+          description: "Get details about the current system setup"
+          parameters:
+            type: object
+            properties:
+              component: {type: string, description: "Infrastructure component to query"}
+            required: [component]
+      - type: function
+        function:
+          name: check_compatibility
+          description: "Check compatibility between systems"
+          parameters:
+            type: object
+            properties:
+              source: {type: string}
+              target: {type: string}
+            required: [source, target]
+      - type: function
+        function:
+          name: estimate_effort
+          description: "Estimate migration effort"
+          parameters:
+            type: object
+            properties:
+              task: {type: string}
+              context: {type: string}
+            required: [task]
+    user_message: >
+      I have 5 MCP servers configured directly in Claude Desktop and Cursor
+      (Notion, Gmail, Slack, a custom Supabase MCP, and a GitHub MCP). I want
+      to migrate to a centralized MCP gateway that handles auth injection,
+      telemetry, and tool discovery. The gateway should be a Go service
+      deployable to ECS or GKE. Plan the migration in phases — I can't break
+      my current agent workflows during the transition.
+    mock_responses:
+      get_current_infrastructure:
+        - match: {component_contains: "mcp"}
+          response:
+            content:
+              servers:
+                - {name: "notion", transport: "sse", auth: "bearer_token"}
+                - {name: "gmail", transport: "sse", auth: "oauth2"}
+                - {name: "slack", transport: "sse", auth: "bot_token"}
+                - {name: "wooj-brain", transport: "http", auth: "api_key"}
+                - {name: "github", transport: "sse", auth: "pat"}
+              clients: ["claude-desktop", "cursor", "claude-code"]
+      check_compatibility:
+        - match: {source_contains: "sse", target_contains: "gateway"}
+          response: {content: {compatible: true, notes: "Gateway can proxy SSE. Needs buffering for long-lived connections."}}
+      estimate_effort:
+        - match: {task_contains: "proxy"}
+          response: {content: {estimate_days: 3, notes: "Basic Go HTTP proxy with route matching. SSE passthrough adds complexity."}}
+        - match: {task_contains: "auth"}
+          response: {content: {estimate_days: 2, notes: "Auth injection from config. OAuth2 refresh flow is the hard part."}}
+        - match: {task_contains: "telemetry"}
+          response: {content: {estimate_days: 1, notes: "OpenTelemetry middleware. Structured JSON logging."}}
+    scoring:
+      phased_approach:
+        weight: 0.3
+        method: judge_rubric
+        criteria: >
+          Plan has clear phases that don't break existing workflows.
+          Should include a parallel-run phase where both direct and
+          gateway connections work simultaneously.
+      dependency_correctness:
+        weight: 0.25
+        method: deterministic
+        criteria: >
+          Proxy layer must exist before auth injection. Auth injection
+          before telemetry. Client migration after gateway is stable.
+      completeness:
+        weight: 0.25
+        method: checklist
+        criteria:
+          - "Covers Go proxy service implementation"
+          - "Covers auth injection for all 3 auth types (bearer, OAuth2, API key)"
+          - "Covers client migration (Claude Desktop, Cursor, Claude Code)"
+          - "Covers rollback strategy"
+          - "Covers telemetry/observability"
+      risk_mitigation:
+        weight: 0.2
+        method: judge_rubric
+        criteria: >
+          Identifies risks: OAuth2 token refresh through proxy, SSE
+          connection lifecycle, client config migration pain points.
+    max_turns: 10
+    timeout_seconds: 120
+
+  # --- Derived from: Financial AI system architecture ---
+  - id: planning_finance_hard_01
+    dimension: planning
+    difficulty: hard
+    source_project: financial-ai
+    description: >
+      Design a data pipeline architecture for a multi-asset swing trading
+      system that ingests price data, news, earnings transcripts, and macro
+      indicators into a unified RAG-ready store.
+    system_prompt: |
+      You are a data engineering architect for quantitative finance systems.
+    tools:
+      - type: function
+        function:
+          name: get_current_infrastructure
+          description: "Get current system details"
+          parameters:
+            type: object
+            properties:
+              component: {type: string}
+            required: [component]
+      - type: function
+        function:
+          name: check_api_availability
+          description: "Check if a data API is available and its constraints"
+          parameters:
+            type: object
+            properties:
+              api_name: {type: string}
+              data_type: {type: string}
+            required: [api_name]
+      - type: function
+        function:
+          name: estimate_storage
+          description: "Estimate storage requirements"
+          parameters:
+            type: object
+            properties:
+              data_type: {type: string}
+              volume: {type: string}
+              retention: {type: string}
+            required: [data_type, volume]
+      - type: function
+        function:
+          name: check_compatibility
+          description: "Check compatibility between systems"
+          parameters:
+            type: object
+            properties:
+              source: {type: string}
+              target: {type: string}
+            required: [source, target]
+    user_message: >
+      Design the data pipeline architecture for my swing trading system. I need
+      to ingest: (1) daily OHLCV price data for ~500 instruments across equities,
+      FX, rates, and crypto, (2) financial news from 3-4 sources with sentiment,
+      (3) quarterly earnings call transcripts with audio, (4) macro indicators
+      (Fed funds rate, CPI, PMI, etc.). All data needs to be RAG-ready (embedded
+      and searchable). Stack: Python, Supabase (pgvector), with option to add
+      dedicated vector DB later. Single developer, so operational simplicity matters.
+    mock_responses:
+      get_current_infrastructure:
+        - match: {component_contains: "supabase"}
+          response:
+            content:
+              plan: "Pro"
+              postgres_version: "15"
+              extensions: ["pgvector", "pg_trgm"]
+              storage_gb: 100
+              edge_functions: true
+      check_api_availability:
+        - match: {api_name_contains: "polygon"}
+          response: {content: {available: true, rate_limit: "unlimited with paid plan", cost: "$199/mo starter", data_types: ["stocks", "options", "forex", "crypto"]}}
+        - match: {api_name_contains: "alpha vantage"}
+          response: {content: {available: true, rate_limit: "75 req/min premium", cost: "$49.99/mo", data_types: ["stocks", "forex", "crypto", "economic indicators"]}}
+        - match: {api_name_contains: "newsapi"}
+          response: {content: {available: true, rate_limit: "1000 req/day business", cost: "$449/mo", data_types: ["news articles"]}}
+      estimate_storage:
+        - match: {data_type_contains: "price"}
+          response: {content: {estimated_gb: 2, notes: "500 instruments × 252 trading days × 10 years = ~1.26M rows. With indicators: ~5GB."}}
+        - match: {data_type_contains: "embeddings"}
+          response: {content: {estimated_gb: 15, notes: "1536-dim embeddings × 500K documents. pgvector HNSW index adds 2-3x overhead."}}
+        - match: {data_type_contains: "transcripts"}
+          response: {content: {estimated_gb: 8, notes: "~2000 transcripts/quarter × 20KB avg. Audio: 50GB+ if stored, recommend text-only."}}
+      check_compatibility:
+        - match: {source_contains: "pgvector", target_contains: "rag"}
+          response: {content: {compatible: true, notes: "pgvector supports HNSW and IVFFlat. Adequate for <1M vectors. Beyond that, consider Qdrant or Pinecone."}}
+    scoring:
+      architecture_quality:
+        weight: 0.3
+        method: judge_rubric
+        criteria: >
+          Clear separation of ingestion, storage, embedding, and retrieval layers.
+          Addresses batch vs real-time appropriately for each data type.
+      completeness:
+        weight: 0.25
+        method: checklist
+        criteria:
+          - "Covers all 4 data sources"
+          - "Addresses embedding strategy"
+          - "Addresses storage estimates"
+          - "Addresses scheduling/orchestration"
+          - "Addresses operational simplicity constraint"
+      feasibility:
+        weight: 0.25
+        method: judge_rubric
+        criteria: >
+          Design is realistic for a single developer. Doesn't over-engineer.
+          Acknowledges Supabase limitations and when to graduate components.
+      scalability_awareness:
+        weight: 0.2
+        method: judge_rubric
+        criteria: >
+          Plants seams for growth (consistent with the pragmatic architecture
+          principle) without pre-optimizing.
+    max_turns: 14
+    timeout_seconds: 180
+
+
+# =============================================================================
+# DIMENSION 3: CODING TASKS
+# Tests: code generation, debugging, iteration, test awareness
+# Scoring: primarily automated (test suites, linting, type checking)
+# =============================================================================
+
+coding_tasks:
+
+  # --- Derived from: MCP Gateway Go proxy service ---
+  - id: coding_mcp_easy_01
+    dimension: coding
+    difficulty: easy
+    source_project: mcp-gateway
+    description: >
+      Implement a Go config loader that reads a servers.yaml file defining
+      upstream MCP server connections with auth credentials.
+    system_prompt: |
+      You are a Go developer building infrastructure tooling.
+    tools:
+      - type: function
+        function:
+          name: write_file
+          description: "Write content to a file"
+          parameters:
+            type: object
+            properties:
+              path: {type: string}
+              content: {type: string}
+            required: [path, content]
+      - type: function
+        function:
+          name: run_tests
+          description: "Run Go tests in a directory"
+          parameters:
+            type: object
+            properties:
+              directory: {type: string}
+              verbose: {type: boolean}
+            required: [directory]
+      - type: function
+        function:
+          name: run_code
+          description: "Run a shell command"
+          parameters:
+            type: object
+            properties:
+              command: {type: string}
+            required: [command]
+    user_message: >
+      Write a Go package that loads MCP server configuration from a YAML file.
+      The config should support: server name, endpoint URL, transport type
+      (sse or http), auth type (bearer, api_key, oauth2), auth credentials,
+      and an enabled flag. Include validation (URL must be valid, auth type
+      must be recognized) and tests.
+    test_suite:
+      language: go
+      tests:
+        - name: "TestLoadValidConfig"
+          input_file: |
+            servers:
+              - name: notion
+                url: https://mcp.notion.com/mcp
+                transport: sse
+                auth_type: bearer
+                auth_token: "ntn_test123"
+                enabled: true
+              - name: wooj-brain
+                url: https://example.supabase.co/functions/v1/mcp
+                transport: http
+                auth_type: api_key
+                api_key: "sk_test456"
+                enabled: true
+          expected: "loads 2 servers, both enabled, correct auth types"
+        - name: "TestInvalidURL"
+          input_file: |
+            servers:
+              - name: bad
+                url: "not-a-url"
+                transport: sse
+                auth_type: bearer
+          expected: "returns validation error"
+        - name: "TestUnknownAuthType"
+          input_file: |
+            servers:
+              - name: bad
+                url: https://example.com
+                transport: sse
+                auth_type: "magic"
+          expected: "returns validation error for auth_type"
+        - name: "TestFilterEnabled"
+          input_file: |
+            servers:
+              - name: active
+                url: https://a.com
+                transport: sse
+                auth_type: bearer
+                enabled: true
+              - name: disabled
+                url: https://b.com
+                transport: sse
+                auth_type: bearer
+                enabled: false
+          expected: "EnabledServers() returns only 1 server"
+    scoring:
+      test_pass_rate:
+        weight: 0.5
+        method: automated
+        criteria: "pass@1 on test suite"
+      code_quality:
+        weight: 0.3
+        method: judge_rubric
+        criteria: >
+          Idiomatic Go: exported types with documentation, proper error
+          wrapping, yaml struct tags, no panics in library code.
+      go_vet_clean:
+        weight: 0.2
+        method: automated
+        criteria: "go vet passes with no issues"
+    max_turns: 6
+    timeout_seconds: 90
+
+  # --- Derived from: Wine Tracker Supabase edge function ---
+  - id: coding_wine_medium_01
+    dimension: coding
+    difficulty: medium
+    source_project: wine-tracker
+    description: >
+      Implement a Supabase Edge Function that receives a wine label image,
+      calls Claude Vision to extract wine metadata, matches against the wine
+      catalog, and returns structured results. Mirrors the scan-label flow.
+    system_prompt: |
+      You are a TypeScript developer building Supabase Edge Functions.
+    tools:
+      - type: function
+        function:
+          name: write_file
+          description: "Write content to a file"
+          parameters:
+            type: object
+            properties:
+              path: {type: string}
+              content: {type: string}
+            required: [path, content]
+      - type: function
+        function:
+          name: run_tests
+          description: "Run TypeScript tests"
+          parameters:
+            type: object
+            properties:
+              directory: {type: string}
+            required: [directory]
+      - type: function
+        function:
+          name: read_file
+          description: "Read a file's contents"
+          parameters:
+            type: object
+            properties:
+              path: {type: string}
+            required: [path]
+      - type: function
+        function:
+          name: run_code
+          description: "Run a shell command"
+          parameters:
+            type: object
+            properties:
+              command: {type: string}
+            required: [command]
+    user_message: >
+      Write a Supabase Edge Function (TypeScript, Deno) for the scan-label
+      endpoint. It should: (1) accept a base64 image in the request body,
+      (2) upload the image to Supabase Storage, (3) call Claude Vision to
+      extract: producer, wine_name, vintage, region, varietal, wine_type,
+      (4) search the wines table for a match using trigram similarity on
+      producer + wine_name, (5) return the matched wine or create a new
+      entry if no match above 0.6 similarity. Handle errors gracefully —
+      a failed Claude API call should return a partial result prompting
+      manual entry, not a 500.
+    test_suite:
+      language: typescript
+      tests:
+        - name: "TestSuccessfulScan"
+          expected: "Returns matched wine with extracted metadata"
+        - name: "TestNewWineCreation"
+          expected: "Creates new wine entry when no match above threshold"
+        - name: "TestClaudeAPIFailure"
+          expected: "Returns 200 with manual_entry_required flag, not 500"
+        - name: "TestInvalidImage"
+          expected: "Returns 400 with user-friendly error message"
+        - name: "TestMissingFields"
+          expected: "Handles partial extraction (e.g., no vintage visible)"
+    scoring:
+      test_pass_rate:
+        weight: 0.4
+        method: automated
+      error_handling:
+        weight: 0.25
+        method: judge_rubric
+        criteria: >
+          Graceful degradation on Claude API failure. User-friendly error
+          messages. No unhandled promise rejections. Partial results on
+          incomplete extraction.
+      code_quality:
+        weight: 0.2
+        method: judge_rubric
+        criteria: >
+          TypeScript strict types. No 'any'. Proper Supabase client usage.
+          Thin orchestration pattern (DB query → build context → API call → store).
+      edge_case_handling:
+        weight: 0.15
+        method: judge_rubric
+        criteria: "Handles missing vintage, ambiguous matches, storage upload failure"
+    max_turns: 10
+    timeout_seconds: 120
+
+  # --- Derived from: Artemis II tracker backend proxy ---
+  - id: coding_artemis_medium_01
+    dimension: coding
+    difficulty: medium
+    source_project: artemis-tracker
+    description: >
+      Write a Python backend proxy that queries the JPL Horizons API for
+      Artemis II position vectors and caches results. Handles the
+      text-inside-JSON parsing quirk of the Horizons API.
+    system_prompt: |
+      You are a Python developer building scientific data APIs.
+    tools:
+      - type: function
+        function:
+          name: write_file
+          description: "Write content to a file"
+          parameters:
+            type: object
+            properties:
+              path: {type: string}
+              content: {type: string}
+            required: [path, content]
+      - type: function
+        function:
+          name: run_tests
+          description: "Run pytest"
+          parameters:
+            type: object
+            properties:
+              directory: {type: string}
+              verbose: {type: boolean}
+            required: [directory]
+      - type: function
+        function:
+          name: run_code
+          description: "Run a shell command"
+          parameters:
+            type: object
+            properties:
+              command: {type: string}
+            required: [command]
+    user_message: >
+      Write a Python module that: (1) queries JPL Horizons API for Artemis II
+      (COMMAND='-1024') position vectors (EPHEM_TYPE='VECTORS', CENTER='500@399'
+      for geocentric), (2) parses the text-inside-JSON response format (Horizons
+      returns a JSON wrapper around plain-text ephemeris data with $$SOE/$$EOE
+      delimiters), (3) extracts X, Y, Z position and VX, VY, VZ velocity for
+      each time step, (4) implements a TTL-based cache (5 min for recent data,
+      1 hour for historical), (5) exposes a clean get_position(time) function.
+      Use httpx for async HTTP. Include tests with a mock Horizons response.
+    test_suite:
+      language: python
+      tests:
+        - name: "test_parse_horizons_response"
+          expected: "Correctly extracts vectors from $$SOE/$$EOE delimited text"
+        - name: "test_cache_hit"
+          expected: "Returns cached data without HTTP call on second request"
+        - name: "test_cache_ttl_expiry"
+          expected: "Re-fetches after TTL expires"
+        - name: "test_api_error_handling"
+          expected: "Raises descriptive error on API failure"
+        - name: "test_get_position_interpolation"
+          expected: "Returns interpolated position for times between data points"
+    scoring:
+      test_pass_rate:
+        weight: 0.4
+        method: automated
+      parsing_correctness:
+        weight: 0.25
+        method: deterministic
+        criteria: "Correctly handles $$SOE/$$EOE format, whitespace, multi-line records"
+      code_quality:
+        weight: 0.2
+        method: judge_rubric
+        criteria: "Type hints, async/await pattern, proper error types, docstrings"
+      cache_design:
+        weight: 0.15
+        method: judge_rubric
+        criteria: "TTL logic is correct, thread-safe, doesn't leak memory"
+    max_turns: 10
+    timeout_seconds: 120
+
+  # --- Derived from: MCP Gateway Go HTTP proxy with tool routing ---
+  - id: coding_mcp_hard_01
+    dimension: coding
+    difficulty: hard
+    source_project: mcp-gateway
+    description: >
+      Implement the core MCP gateway proxy in Go: an HTTP server that receives
+      MCP tools/list and tools/call requests, routes to the correct upstream
+      server based on tool name, injects auth, and returns aggregated results.
+    system_prompt: |
+      You are a senior Go developer building a production proxy service.
+    tools:
+      - type: function
+        function:
+          name: write_file
+          description: "Write content to a file"
+          parameters:
+            type: object
+            properties:
+              path: {type: string}
+              content: {type: string}
+            required: [path, content]
+      - type: function
+        function:
+          name: read_file
+          description: "Read a file"
+          parameters:
+            type: object
+            properties:
+              path: {type: string}
+            required: [path]
+      - type: function
+        function:
+          name: run_tests
+          description: "Run Go tests"
+          parameters:
+            type: object
+            properties:
+              directory: {type: string}
+              verbose: {type: boolean}
+              race: {type: boolean, description: "Enable race detector"}
+            required: [directory]
+      - type: function
+        function:
+          name: run_code
+          description: "Run a shell command"
+          parameters:
+            type: object
+            properties:
+              command: {type: string}
+            required: [command]
+    user_message: >
+      Implement the core MCP gateway proxy in Go. Requirements:
+      (1) HTTP server on :8080 with two endpoints: POST /mcp/tools/list and
+      POST /mcp/tools/call.
+      (2) tools/list aggregates tools from all configured upstream servers
+      (fetched concurrently with errgroup), deduplicates by tool name, and
+      returns the merged list.
+      (3) tools/call looks up which upstream owns the requested tool, injects
+      the appropriate auth header (Bearer, X-API-Key, or OAuth2 based on config),
+      proxies the request, and returns the response.
+      (4) Structured JSON logging via slog for every proxied request (server,
+      tool, latency, status).
+      (5) Graceful shutdown on SIGTERM.
+      Load server config from the YAML format we defined earlier.
+      Include tests with httptest for both endpoints, and run with -race.
+    test_suite:
+      language: go
+      tests:
+        - name: "TestToolsListAggregation"
+          expected: "Merges tools from 2+ upstream servers, no duplicates"
+        - name: "TestToolsCallRouting"
+          expected: "Routes to correct upstream based on tool name"
+        - name: "TestAuthInjection_Bearer"
+          expected: "Adds Authorization: Bearer header for bearer auth type"
+        - name: "TestAuthInjection_APIKey"
+          expected: "Adds X-API-Key header for api_key auth type"
+        - name: "TestUnknownTool"
+          expected: "Returns 404 with descriptive error for unknown tool"
+        - name: "TestUpstreamTimeout"
+          expected: "Returns 504 when upstream doesn't respond within timeout"
+        - name: "TestConcurrentToolsList"
+          expected: "Fetches from all upstreams concurrently, no race conditions"
+        - name: "TestStructuredLogging"
+          expected: "Log entries contain server, tool, latency_ms, status fields"
+    scoring:
+      test_pass_rate:
+        weight: 0.35
+        method: automated
+      race_detector_clean:
+        weight: 0.15
+        method: automated
+        criteria: "go test -race passes with no data races"
+      code_quality:
+        weight: 0.25
+        method: judge_rubric
+        criteria: >
+          Production Go patterns: context propagation, errgroup for concurrency,
+          proper HTTP client reuse, structured logging with slog, no goroutine
+          leaks, graceful shutdown.
+      architecture:
+        weight: 0.25
+        method: judge_rubric
+        criteria: >
+          Clean separation: config, router, proxy, logging as distinct packages
+          or clear internal boundaries. Handler functions are testable without
+          starting a real server.
+    max_turns: 14
+    timeout_seconds: 180
+
+
+# =============================================================================
+# DIMENSION 4: AGENTIC TOOL-CALLING TASKS
+# Tests: Hermes-format tool calling, multi-step reasoning, error recovery,
+#        context maintenance, distractor avoidance
+# Scoring: primarily deterministic (tool sequence matching, argument validation)
+# =============================================================================
+
+agentic_tasks:
+
+  # --- Derived from: Wooj-brain thought capture workflow ---
+  - id: agentic_brain_easy_01
+    dimension: agentic
+    difficulty: easy
+    source_project: wooj-brain
+    description: >
+      Capture a thought to Wooj-brain and then search for related thoughts.
+      Tests basic two-step tool chaining with correct argument construction.
+    system_prompt: |
+      You are a personal knowledge assistant. You have access to the user's
+      thought capture system (Wooj-brain) for saving and searching ideas.
+    tools:
+      - type: function
+        function:
+          name: capture_thought
+          description: "Save a new thought to Wooj-brain"
+          parameters:
+            type: object
+            properties:
+              content: {type: string, description: "The thought content"}
+              type: {type: string, enum: ["idea", "observation", "question", "decision", "reference"]}
+              topics: {type: array, items: {type: string}, description: "Topic tags"}
+            required: [content, type]
+      - type: function
+        function:
+          name: search_thoughts
+          description: "Search captured thoughts by meaning"
+          parameters:
+            type: object
+            properties:
+              query: {type: string, description: "Semantic search query"}
+              limit: {type: integer, default: 5}
+            required: [query]
+      - type: function
+        function:
+          name: send_email  # Distractor
+          description: "Send an email"
+          parameters:
+            type: object
+            properties:
+              to: {type: string}
+              subject: {type: string}
+              body: {type: string}
+            required: [to, subject, body]
+    user_message: >
+      I just realized that the autoresearch pattern could be applied to my
+      MCP gateway — the eval metric would be tool-call routing latency.
+      Save this insight and then find any related thoughts I've had about
+      evaluation or testing patterns.
+    mock_responses:
+      capture_thought:
+        - match: {content_contains: "autoresearch"}
+          response: {content: {id: "thought_123", status: "saved"}}
+      search_thoughts:
+        - match: {query_contains: "eval"}
+          response:
+            content:
+              results:
+                - {id: "thought_089", content: "Need a consistent way to benchmark local LLM performance across models", type: "question", topics: ["llm", "evaluation"]}
+                - {id: "thought_045", content: "Karpathy's key insight: the fixed eval is what makes the agent loop work", type: "observation", topics: ["autoresearch", "agent-loop"]}
+    expected_tool_sequence:
+      - name: capture_thought
+        args_must_contain:
+          content: ["autoresearch", "mcp gateway", "latency"]
+          type: "idea"
+      - name: search_thoughts
+        args_must_contain:
+          query: ["eval", "test"]
+    scoring:
+      tool_selection:
+        weight: 0.3
+        method: sequence_match
+        criteria: "Called capture_thought then search_thoughts, NOT send_email"
+      argument_accuracy:
+        weight: 0.3
+        method: partial_match
+        criteria: "Thought content captures the key insight. Type is 'idea'. Search query is relevant."
+      synthesis:
+        weight: 0.2
+        method: judge_rubric
+        criteria: "Connects the search results back to the user's insight meaningfully"
+      distractor_avoidance:
+        weight: 0.2
+        method: deterministic
+        criteria: "Did not call send_email"
+    max_turns: 6
+    timeout_seconds: 60
+
+  # --- Derived from: Wine Tracker recommendation flow ---
+  - id: agentic_wine_medium_01
+    dimension: agentic
+    difficulty: medium
+    source_project: wine-tracker
+    description: >
+      Multi-step wine recommendation: query cellar inventory, check drinking
+      windows, cross-reference taste profile, and produce a recommendation.
+      Mirrors the structured-context-over-raw-prompts pattern.
+    system_prompt: |
+      You are a wine cellar assistant with access to the user's inventory,
+      taste profile, and environmental data. You follow the principle:
+      query structured data → assemble context → reason → recommend.
+    tools:
+      - type: function
+        function:
+          name: query_inventory
+          description: "Search the user's wine inventory"
+          parameters:
+            type: object
+            properties:
+              filters: 
+                type: object
+                properties:
+                  wine_type: {type: string, enum: ["red", "white", "rosé", "sparkling"]}
+                  region: {type: string}
+                  min_vintage: {type: integer}
+                  max_vintage: {type: integer}
+                  status: {type: string, enum: ["in_cellar", "consumed"]}
+            required: [filters]
+      - type: function
+        function:
+          name: check_drinking_window
+          description: "Get drinking window info for specific bottles"
+          parameters:
+            type: object
+            properties:
+              bottle_ids: {type: array, items: {type: string}}
+            required: [bottle_ids]
+      - type: function
+        function:
+          name: get_taste_profile
+          description: "Get the user's taste preferences and history"
+          parameters:
+            type: object
+            properties: {}
+      - type: function
+        function:
+          name: get_sensor_data
+          description: "Get current cellar environmental conditions"
+          parameters:
+            type: object
+            properties:
+              cellar_id: {type: string}
+            required: [cellar_id]
+      - type: function
+        function:
+          name: get_rack_position
+          description: "Get the physical location of a bottle in the rack"
+          parameters:
+            type: object
+            properties:
+              bottle_id: {type: string}
+            required: [bottle_id]
+    user_message: >
+      I'm grilling salmon tonight for 4 people. What should I open from my cellar?
+    mock_responses:
+      query_inventory:
+        - match: {filters: {wine_type: "white", status: "in_cellar"}}
+          response:
+            content:
+              bottles:
+                - {id: "b001", wine: "2022 Cloudy Bay Sauvignon Blanc", region: "Marlborough", vintage: 2022}
+                - {id: "b002", wine: "2020 Domaine Weinbach Riesling Grand Cru", region: "Alsace", vintage: 2020}
+                - {id: "b003", wine: "2021 Cakebread Chardonnay", region: "Napa Valley", vintage: 2021}
+        - match: {filters: {wine_type: "rosé", status: "in_cellar"}}
+          response:
+            content:
+              bottles:
+                - {id: "b004", wine: "2023 Whispering Angel Rosé", region: "Provence", vintage: 2023}
+        - match: {filters: {wine_type: "red", status: "in_cellar"}}
+          response:
+            content:
+              bottles:
+                - {id: "b005", wine: "2019 Meiomi Pinot Noir", region: "California", vintage: 2019}
+                - {id: "b006", wine: "2018 Tignanello", region: "Tuscany", vintage: 2018}
+      check_drinking_window:
+        - match: {bottle_ids_contains: "b001"}
+          response:
+            content:
+              windows:
+                - {bottle_id: "b001", status: "drink_now", peak_start: 2023, peak_end: 2025}
+                - {bottle_id: "b002", status: "approaching_peak", peak_start: 2025, peak_end: 2032}
+                - {bottle_id: "b003", status: "drink_now", peak_start: 2023, peak_end: 2026}
+      get_taste_profile:
+        - match: {}
+          response:
+            content:
+              preferences:
+                preferred_styles: ["crisp whites", "medium-bodied reds"]
+                disliked: ["heavily oaked chardonnay"]
+                recent_favorites: ["Sancerre", "Grüner Veltliner", "Oregon Pinot"]
+      get_rack_position:
+        - match: {bottle_id: "b001"}
+          response: {content: {rack: "A", position: "A3"}}
+        - match: {bottle_id: "b002"}
+          response: {content: {rack: "B", position: "B7"}}
+    expected_tool_sequence_flexible: true  # Order may vary, but all must be called
+    expected_tools_called:
+      - query_inventory  # At least once for white/rosé
+      - check_drinking_window
+      - get_taste_profile
+      - get_rack_position  # For the recommended bottle
+    scoring:
+      tool_coverage:
+        weight: 0.25
+        method: subset_match
+        criteria: "Called query_inventory, check_drinking_window, get_taste_profile, and get_rack_position"
+      reasoning_quality:
+        weight: 0.3
+        method: judge_rubric
+        criteria: >
+          Recommendation accounts for: salmon pairing (white/rosé/light red),
+          drinking window (prioritize drink_now), taste profile (dislikes oaked
+          chardonnay → should not recommend b003 strongly), and provides rack
+          location ("pull from A3").
+      context_assembly:
+        weight: 0.25
+        method: judge_rubric
+        criteria: >
+          Follows the structured-context pattern: gathers data first, then
+          reasons over it. Does not hallucinate wines not in the inventory.
+      practical_output:
+        weight: 0.2
+        method: judge_rubric
+        criteria: >
+          Final recommendation is specific (1-2 bottles), includes rack position,
+          and briefly explains why. Not a generic wine pairing lecture.
+    max_turns: 12
+    timeout_seconds: 120
+
+  # --- Derived from: Artemis II MCP server multi-tool chain ---
+  - id: agentic_artemis_medium_01
+    dimension: agentic
+    difficulty: medium
+    source_project: artemis-tracker
+    description: >
+      Answer "Can I photograph Artemis II tonight?" by chaining spacecraft
+      position, observer location, sun/moon positions, and sky brightness.
+      Tests the multi-step reasoning chain from the Artemis MCP server design.
+    system_prompt: |
+      You are an astronomy assistant with access to spacecraft tracking,
+      celestial position, and observing condition tools.
+    tools:
+      - type: function
+        function:
+          name: get_spacecraft_position
+          description: "Get current position of a spacecraft"
+          parameters:
+            type: object
+            properties:
+              target: {type: string, description: "Spacecraft name or ID"}
+              time: {type: string, description: "ISO timestamp, or 'now'"}
+              reference: {type: string, enum: ["geocentric", "topocentric"]}
+            required: [target]
+      - type: function
+        function:
+          name: get_observer_location
+          description: "Get the observer's geographic coordinates"
+          parameters:
+            type: object
+            properties: {}
+      - type: function
+        function:
+          name: get_celestial_positions
+          description: "Get sun and moon positions for an observer"
+          parameters:
+            type: object
+            properties:
+              latitude: {type: number}
+              longitude: {type: number}
+              time: {type: string}
+            required: [latitude, longitude]
+      - type: function
+        function:
+          name: calculate_visibility
+          description: "Calculate if an object is visible given sky conditions"
+          parameters:
+            type: object
+            properties:
+              object_ra: {type: number, description: "Right ascension in degrees"}
+              object_dec: {type: number, description: "Declination in degrees"}
+              object_magnitude: {type: number, description: "Apparent magnitude"}
+              sun_altitude: {type: number}
+              moon_phase: {type: number}
+              observer_latitude: {type: number}
+              observer_longitude: {type: number}
+            required: [object_ra, object_dec, sun_altitude, observer_latitude, observer_longitude]
+    user_message: "Can I photograph Artemis II tonight from my location?"
+    mock_responses:
+      get_spacecraft_position:
+        - match: {target_contains: "artemis"}
+          response:
+            content:
+              name: "Artemis II"
+              ra_deg: 185.4
+              dec_deg: -12.3
+              distance_km: 320000
+              apparent_magnitude: 4.2
+              constellation: "Virgo"
+      get_observer_location:
+        - match: {}
+          response:
+            content:
+              latitude: 37.7749
+              longitude: -122.4194
+              city: "San Francisco"
+              timezone: "America/Los_Angeles"
+      get_celestial_positions:
+        - match: {latitude: 37.7749}
+          response:
+            content:
+              sun:
+                altitude: -18.5
+                set_time: "2026-04-04T19:42:00-07:00"
+                astronomical_twilight_end: "2026-04-04T21:15:00-07:00"
+              moon:
+                altitude: 25.3
+                phase: 0.65
+                illumination: "waxing gibbous"
+                rise_time: "2026-04-04T16:30:00-07:00"
+      calculate_visibility:
+        - match: {object_ra: 185.4}
+          response:
+            content:
+              visible: true
+              best_time: "2026-04-04T21:30:00-07:00"
+              limiting_magnitude: 4.8
+              sky_brightness: "moderate (moon interference)"
+              recommendation: "Visible but challenging. Use telescope or long exposure. Moon at 65% will reduce contrast."
+    expected_tools_called:
+      - get_observer_location
+      - get_spacecraft_position
+      - get_celestial_positions
+      - calculate_visibility
+    scoring:
+      tool_chain_completeness:
+        weight: 0.3
+        method: subset_match
+        criteria: "All four tools called with correct argument chaining"
+      data_threading:
+        weight: 0.3
+        method: deterministic
+        criteria: >
+          Observer lat/lon from get_observer_location correctly passed to
+          get_celestial_positions and calculate_visibility. Spacecraft RA/DEC
+          correctly passed to calculate_visibility.
+      answer_quality:
+        weight: 0.25
+        method: judge_rubric
+        criteria: >
+          Gives a clear yes/no with specific timing, mentions moon interference,
+          and provides practical photography advice.
+      no_hallucination:
+        weight: 0.15
+        method: deterministic
+        criteria: "All stated facts (magnitude, position, timing) match mock data"
+    max_turns: 10
+    timeout_seconds: 90
+
+  # --- Derived from: Financial AI agent orchestration ---
+  - id: agentic_finance_hard_01
+    dimension: agentic
+    difficulty: hard
+    source_project: financial-ai
+    description: >
+      Multi-agent investment analysis: gather price data, check news sentiment,
+      retrieve earnings context via RAG, assess macro conditions, and synthesize
+      a trade recommendation. Tests long-horizon agent loop with 6+ tool calls,
+      conditional branching, and result chaining.
+    system_prompt: |
+      You are an investment research agent. You follow a systematic process:
+      gather quantitative signals, layer on qualitative context, assess macro
+      environment, then synthesize a recommendation. Be explicit about
+      confidence levels and what data supports each claim.
+    tools:
+      - type: function
+        function:
+          name: get_price_data
+          description: "Get historical OHLCV price data for an instrument"
+          parameters:
+            type: object
+            properties:
+              symbol: {type: string}
+              period: {type: string, enum: ["1d", "5d", "1mo", "3mo", "1y"]}
+              interval: {type: string, enum: ["1h", "1d", "1wk"]}
+            required: [symbol, period]
+      - type: function
+        function:
+          name: get_technical_indicators
+          description: "Calculate technical indicators for a symbol"
+          parameters:
+            type: object
+            properties:
+              symbol: {type: string}
+              indicators: {type: array, items: {type: string, enum: ["rsi", "macd", "bollinger", "sma_50", "sma_200", "atr"]}}
+            required: [symbol, indicators]
+      - type: function
+        function:
+          name: search_news
+          description: "Search recent financial news with sentiment scores"
+          parameters:
+            type: object
+            properties:
+              query: {type: string}
+              days_back: {type: integer, default: 7}
+            required: [query]
+      - type: function
+        function:
+          name: rag_search
+          description: "Search the financial knowledge base (earnings transcripts, filings, analyst reports)"
+          parameters:
+            type: object
+            properties:
+              query: {type: string}
+              doc_types: {type: array, items: {type: string, enum: ["earnings_transcript", "10k", "10q", "analyst_report"]}}
+              limit: {type: integer, default: 5}
+            required: [query]
+      - type: function
+        function:
+          name: get_macro_indicators
+          description: "Get current macro economic indicators"
+          parameters:
+            type: object
+            properties:
+              indicators: {type: array, items: {type: string, enum: ["fed_funds_rate", "cpi", "pmi", "vix", "yield_curve", "unemployment"]}}
+            required: [indicators]
+      - type: function
+        function:
+          name: calculate_position_size
+          description: "Calculate recommended position size based on risk parameters"
+          parameters:
+            type: object
+            properties:
+              symbol: {type: string}
+              entry_price: {type: number}
+              stop_loss: {type: number}
+              portfolio_value: {type: number}
+              max_risk_pct: {type: number, default: 0.02}
+            required: [symbol, entry_price, stop_loss, portfolio_value]
+      - type: function
+        function:
+          name: social_media_sentiment  # Low-signal distractor
+          description: "Get social media sentiment from Reddit/Twitter"
+          parameters:
+            type: object
+            properties:
+              ticker: {type: string}
+            required: [ticker]
+    user_message: >
+      Analyze NVDA for a potential swing trade entry. I have a $100K portfolio
+      and standard 2% risk per trade. Give me a full analysis with entry, stop,
+      target, and position size — but only if the setup is actually good.
+      Don't force a trade if the data doesn't support it.
+    mock_responses:
+      get_price_data:
+        - match: {symbol: "NVDA", period: "3mo"}
+          response:
+            content:
+              current_price: 142.50
+              high_52w: 156.80
+              low_52w: 85.40
+              avg_volume: 45000000
+              recent_trend: "Pulled back 9% from highs over 2 weeks"
+      get_technical_indicators:
+        - match: {symbol: "NVDA"}
+          response:
+            content:
+              rsi: 38.5
+              macd: {value: -1.2, signal: -0.8, histogram: -0.4}
+              bollinger: {upper: 155, middle: 145, lower: 135, position: "near_lower"}
+              sma_50: 148.20
+              sma_200: 128.50
+              atr: 5.80
+      search_news:
+        - match: {query_contains: "NVDA"}
+          response:
+            content:
+              articles:
+                - {title: "NVIDIA Data Center Revenue Beats Expectations", sentiment: 0.8, date: "2026-03-28"}
+                - {title: "Export Controls Tightened on AI Chips to China", sentiment: -0.6, date: "2026-04-01"}
+                - {title: "NVIDIA Announces Next-Gen Blackwell Ultra Architecture", sentiment: 0.7, date: "2026-04-03"}
+      rag_search:
+        - match: {query_contains: "NVDA earnings"}
+          response:
+            content:
+              documents:
+                - {type: "earnings_transcript", date: "2026-02-26", excerpt: "Data center revenue grew 65% YoY. CEO highlighted sovereign AI demand. Guided Q2 revenue $44B ± 2%, above consensus."}
+                - {type: "analyst_report", date: "2026-03-15", excerpt: "Maintain Overweight. PT $175. Key risk: China export restrictions could impact 12-15% of data center revenue."}
+      get_macro_indicators:
+        - match: {indicators_contains: "vix"}
+          response:
+            content:
+              fed_funds_rate: {value: 4.25, trend: "holding"}
+              vix: {value: 18.5, trend: "slightly_elevated"}
+              yield_curve: {spread: 0.15, status: "mildly_positive"}
+      calculate_position_size:
+        - match: {symbol: "NVDA"}
+          response:
+            content:
+              position_size: 345
+              dollar_value: 49162.50
+              risk_amount: 2000
+              reward_risk_ratio: 2.3
+      social_media_sentiment:
+        - match: {ticker: "NVDA"}
+          response:
+            content:
+              reddit_sentiment: 0.72
+              twitter_mentions: 45000
+              wsb_mentions: 1200
+    expected_tools_called:
+      - get_price_data
+      - get_technical_indicators
+      - search_news
+      - rag_search
+      - get_macro_indicators
+      - calculate_position_size
+    scoring:
+      tool_coverage:
+        weight: 0.2
+        method: subset_match
+        criteria: >
+          Called all 5 core tools (price, technicals, news, RAG, macro).
+          Position sizing optional (depends on whether setup is recommended).
+      analysis_structure:
+        weight: 0.25
+        method: judge_rubric
+        criteria: >
+          Follows systematic process: quantitative → qualitative → macro → synthesis.
+          Each section references specific data from tool responses.
+      judgment_quality:
+        weight: 0.25
+        method: judge_rubric
+        criteria: >
+          Makes a clear recommendation (long/short/wait) with explicit reasoning.
+          Addresses the conflicting signals (strong fundamentals vs export risk vs
+          technical pullback). States confidence level. If recommending entry,
+          provides specific price levels.
+      data_accuracy:
+        weight: 0.15
+        method: deterministic
+        criteria: >
+          All numbers cited (RSI, price, ATR, revenue growth) match mock data.
+          No hallucinated statistics.
+      distractor_handling:
+        weight: 0.15
+        method: deterministic
+        criteria: >
+          Either did not call social_media_sentiment (preferred — low signal
+          for institutional-quality analysis) or appropriately discounted it.
+          Did NOT weight Reddit sentiment as a primary signal.
+    max_turns: 16
+    timeout_seconds: 180
+
+  # --- Derived from: MCP Gateway error recovery during tool routing ---
+  - id: agentic_mcp_hard_01
+    dimension: agentic
+    difficulty: hard
+    source_project: mcp-gateway
+    description: >
+      Debug a failing MCP tool call chain: the initial tool call fails due
+      to an auth error, requiring the agent to diagnose the issue, refresh
+      credentials, retry, and then complete the original task. Tests error
+      recovery, context maintenance across retries, and diagnostic reasoning.
+    system_prompt: |
+      You are a developer assistant that helps debug and fix issues with
+      MCP server integrations. You have access to gateway management tools
+      and can inspect server health, logs, and credentials.
+    tools:
+      - type: function
+        function:
+          name: call_mcp_tool
+          description: "Call a tool through the MCP gateway"
+          parameters:
+            type: object
+            properties:
+              server: {type: string, description: "MCP server name"}
+              tool: {type: string, description: "Tool name"}
+              arguments: {type: object, description: "Tool arguments"}
+            required: [server, tool, arguments]
+      - type: function
+        function:
+          name: check_server_health
+          description: "Check the health status of an MCP server"
+          parameters:
+            type: object
+            properties:
+              server: {type: string}
+            required: [server]
+      - type: function
+        function:
+          name: get_server_logs
+          description: "Get recent logs for an MCP server connection"
+          parameters:
+            type: object
+            properties:
+              server: {type: string}
+              lines: {type: integer, default: 20}
+            required: [server]
+      - type: function
+        function:
+          name: refresh_credentials
+          description: "Refresh OAuth2 or rotate API credentials for a server"
+          parameters:
+            type: object
+            properties:
+              server: {type: string}
+              auth_type: {type: string, enum: ["oauth2", "api_key", "bearer"]}
+            required: [server, auth_type]
+      - type: function
+        function:
+          name: restart_server
+          description: "Restart an MCP server connection"  # Unnecessary for auth issue
+          parameters:
+            type: object
+            properties:
+              server: {type: string}
+            required: [server]
+    user_message: >
+      I need to search my Notion workspace for the MCP Gateway design doc,
+      but the Notion MCP server seems broken. Can you figure out what's wrong
+      and get me that doc?
+    mock_responses:
+      call_mcp_tool:
+        - match: {server: "notion", tool: "search", _call_number: 1}
+          response: {error: "401 Unauthorized: Invalid or expired token"}
+        - match: {server: "notion", tool: "search", _call_number: 2}
+          response:
+            content:
+              results:
+                - {title: "MCP Gateway Design Doc", id: "page_abc123", last_edited: "2026-03-10"}
+                - {title: "MCP Gateway POC Scope", id: "page_def456", last_edited: "2026-03-08"}
+      check_server_health:
+        - match: {server: "notion"}
+          response:
+            content:
+              status: "degraded"
+              last_successful_call: "2026-04-03T14:22:00Z"
+              error_count_24h: 12
+              auth_type: "oauth2"
+              token_expiry: "2026-04-03T15:00:00Z"  # Expired
+      get_server_logs:
+        - match: {server: "notion"}
+          response:
+            content:
+              logs:
+                - "2026-04-04T10:15:22Z ERROR auth_injection: OAuth2 token expired for server=notion"
+                - "2026-04-04T10:15:22Z ERROR proxy: upstream returned 401 for tool=search server=notion"
+                - "2026-04-04T09:30:01Z WARN health_check: server=notion consecutive_failures=3"
+      refresh_credentials:
+        - match: {server: "notion", auth_type: "oauth2"}
+          response:
+            content:
+              status: "refreshed"
+              new_expiry: "2026-04-04T22:15:30Z"
+              message: "OAuth2 token refreshed successfully"
+    expected_tool_sequence:
+      - {name: call_mcp_tool, args: {server: "notion", tool: "search"}}  # Fails
+      # Agent should now diagnose rather than blindly retry
+      - {name: check_server_health, args: {server: "notion"}}
+      - {name: get_server_logs, args: {server: "notion"}}  # Optional but good
+      - {name: refresh_credentials, args: {server: "notion", auth_type: "oauth2"}}
+      - {name: call_mcp_tool, args: {server: "notion", tool: "search"}}  # Succeeds
+    scoring:
+      diagnostic_approach:
+        weight: 0.3
+        method: judge_rubric
+        criteria: >
+          After the 401 error, the agent investigates (checks health and/or logs)
+          rather than blindly retrying or restarting. Correctly identifies the
+          expired OAuth2 token as the root cause.
+      correct_fix:
+        weight: 0.25
+        method: deterministic
+        criteria: >
+          Calls refresh_credentials with auth_type='oauth2' (not api_key or bearer).
+          Does NOT call restart_server (wrong fix for an auth issue).
+      task_completion:
+        weight: 0.25
+        method: deterministic
+        criteria: "Successfully retries the Notion search after credential refresh and returns the results"
+      communication:
+        weight: 0.2
+        method: judge_rubric
+        criteria: >
+          Explains what went wrong and what was fixed. Mentions the token
+          expiry. Presents the search results clearly.
+    max_turns: 12
+    timeout_seconds: 120
+
+
+# =============================================================================
+# METADATA
+# =============================================================================
+
+metadata:
+  version: "1.0.0"
+  created: "2026-04-04"
+  derived_from_projects:
+    - name: mcp-gateway
+      description: "Centralized MCP proxy with tool routing, auth, and telemetry"
+      languages: [go]
+    - name: wine-tracker
+      description: "AI-powered wine inventory tracker with Supabase backend"
+      languages: [typescript, sql]
+    - name: artemis-tracker
+      description: "Artemis II spacecraft tracker using JPL Horizons API"
+      languages: [python, typescript]
+    - name: financial-ai
+      description: "Multi-asset swing trading system with RAG and agent orchestration"
+      languages: [python]
+    - name: wooj-brain
+      description: "Personal knowledge capture and semantic search"
+      languages: [typescript, sql]
+  total_tasks: 15
+  by_dimension:
+    research: 3
+    planning: 3
+    coding: 4
+    agentic: 5
+  by_difficulty:
+    easy: 4
+    medium: 7
+    hard: 4

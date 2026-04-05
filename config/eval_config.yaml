@@ -1,0 +1,41 @@
+# nite-eval master configuration
+
+target:
+  base_url: "http://127.0.0.1:8080"
+  llama_swap_config: "config/llama_swap_config.yaml"
+
+judge:
+  base_url: "http://127.0.0.1:8081"
+  model: "selene-1-mini"
+  temperature: 0.1
+  max_tokens: 1024
+
+models:
+  - name: "qwen3.5-27b"
+    backend: "llama.cpp"
+  - name: "qwen3.5-9b"
+    backend: "llama.cpp"
+  - name: "gemma4-26b-a4b"
+    backend: "llama.cpp"
+
+evaluation:
+  temperature: 0.0
+  max_tokens: 2048
+  warm_up: true  # Send a warm-up prompt after each model swap
+
+scoring:
+  dimension_weights:
+    research: 0.25
+    planning: 0.25
+    coding: 0.25
+    agentic: 0.25
+
+results:
+  dir: "results/runs"
+  db_name: "eval_results.db"
+
+hardware:
+  target_gpu: 0  # RTX 3090
+  judge_gpu: 1   # RTX 3060
+  llama_server_path: "/home/woojay/P/llama.cpp/build/bin/llama-server"
+  llama_swap_path: "/home/woojay/T/llama-swap/llama-swap"
