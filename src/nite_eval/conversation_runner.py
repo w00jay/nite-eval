@@ -6,6 +6,7 @@ Implements the agent loop:
 """
 
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 
@@ -117,8 +118,9 @@ def run_conversation(
 
             turns.append(turn)
 
-        # Reached max turns without a final text response
-        final = turns[-1].response if turns else ""
+        # Reached max turns — find the best final response by walking back
+        # through turns to find the last one with meaningful text content
+        final = _extract_best_final_response(turns)
         return ConversationResult(
             turns=turns,
             final_response=final,
@@ -139,6 +141,26 @@ def run_conversation(
         )
     finally:
         client.close()
+
+
+TOOL_CALL_TAG_RE = re.compile(r"<tool_call>.*?</tool_call>", re.DOTALL)
+
+
+def _extract_best_final_response(turns: list[TurnResult]) -> str:
+    """Find the best final response when max_turns is reached.
+
+    Walks backwards through turns to find one with meaningful text
+    (not just tool_call tags). Strips tool_call tags from the response.
+    """
+    for turn in reversed(turns):
+        # Strip tool_call tags to get the text portion
+        text = TOOL_CALL_TAG_RE.sub("", turn.response).strip()
+        if len(text) > 20:
+            return text
+    # Fallback: return last turn's raw response stripped of tool calls
+    if turns:
+        return TOOL_CALL_TAG_RE.sub("", turns[-1].response).strip()
+    return ""
 
 
 def _call_model(

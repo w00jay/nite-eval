@@ -10,7 +10,7 @@ judge:
   flow_judge_model: "flow-judge"
   reward_anything_model: "reward-anything"
   temperature: 0.1
-  max_tokens: 1024
+  max_tokens: 2048
 
 models:
   - name: "qwen3.5-27b"
