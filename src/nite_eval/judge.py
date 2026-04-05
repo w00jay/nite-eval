@@ -263,8 +263,8 @@ class RoutedJudgeClient:
     where its 5-bias correctly identifies excellence. RewardAnything handles
     all other dimensions where its 3-bias aligns with typical scores.
 
-    Both judges are served via llama-swap on the same port; the model name
-    in the API request triggers the swap.
+    Supports both shared-port (llama-swap) and split-port (direct servers)
+    configurations via separate base_url per judge.
     """
 
     def __init__(
@@ -272,6 +272,8 @@ class RoutedJudgeClient:
         base_url: str = DEFAULT_JUDGE_URL,
         flow_judge_model: str = DEFAULT_FLOW_JUDGE_MODEL,
         reward_anything_model: str = DEFAULT_REWARD_ANYTHING_MODEL,
+        flow_judge_url: str | None = None,
+        reward_anything_url: str | None = None,
         flow_judge_dimensions: frozenset[str] = FLOW_JUDGE_DIMENSIONS,
         temperature: float = 0.1,
         max_tokens: int = 1024,
@@ -279,14 +281,14 @@ class RoutedJudgeClient:
     ):
         self._flow_dims = flow_judge_dimensions
         self._flow = JudgeClient(
-            base_url=base_url,
+            base_url=flow_judge_url or base_url,
             model=flow_judge_model,
             temperature=temperature,
             max_tokens=max_tokens,
             timeout=timeout,
         )
         self._reward = JudgeClient(
-            base_url=base_url,
+            base_url=reward_anything_url or base_url,
             model=reward_anything_model,
             temperature=temperature,
             max_tokens=max_tokens,

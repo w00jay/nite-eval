@@ -16,6 +16,7 @@ models:
       -m /home/woojay/models/RewardAnything-8B-v1.Q6_K.gguf
       --port ${PORT} -ngl 999 --ctx-size 4096
       --cache-type-k q8_0 --cache-type-v q8_0 --no-webui
+      --sleep-idle-seconds -1
     group: "judge-gpu"
 
 groups:

@@ -392,8 +392,10 @@ def main() -> None:
         base_url=judge_cfg["base_url"],
         flow_judge_model=judge_cfg.get("flow_judge_model", "flow-judge"),
         reward_anything_model=judge_cfg.get("reward_anything_model", "reward-anything"),
+        flow_judge_url=judge_cfg.get("flow_judge_url"),
+        reward_anything_url=judge_cfg.get("reward_anything_url"),
         temperature=judge_cfg.get("temperature", 0.1),
-        max_tokens=judge_cfg.get("max_tokens", 1024),
+        max_tokens=judge_cfg.get("max_tokens", 2048),
     )
 
     try:

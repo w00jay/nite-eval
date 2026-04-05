@@ -5,10 +5,11 @@ target:
   llama_swap_config: "config/llama_swap_config.yaml"
 
 judge:
-  base_url: "http://127.0.0.1:9091/v1"
-  judge_swap_config: "config/judge_swap_config.yaml"
+  base_url: "http://127.0.0.1:9091/v1"  # fallback if per-judge URLs not set
   flow_judge_model: "flow-judge"
+  flow_judge_url: "http://127.0.0.1:9092/v1"
   reward_anything_model: "reward-anything"
+  reward_anything_url: "http://127.0.0.1:9091/v1"
   temperature: 0.1
   max_tokens: 2048
 
