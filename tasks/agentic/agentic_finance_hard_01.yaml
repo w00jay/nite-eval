@@ -1,0 +1,299 @@
+id: agentic_finance_hard_01
+dimension: agentic
+difficulty: hard
+source_project: financial-ai
+description: 'Multi-agent investment analysis: gather price data, check news sentiment, retrieve earnings
+  context via RAG, assess macro conditions, and synthesize a trade recommendation. Tests long-horizon
+  agent loop with 6+ tool calls, conditional branching, and result chaining.
+
+  '
+system_prompt: 'You are an investment research agent. You follow a systematic process:
+
+  gather quantitative signals, layer on qualitative context, assess macro
+
+  environment, then synthesize a recommendation. Be explicit about
+
+  confidence levels and what data supports each claim.
+
+  '
+tools:
+- type: function
+  function:
+    name: get_price_data
+    description: Get historical OHLCV price data for an instrument
+    parameters:
+      type: object
+      properties:
+        symbol:
+          type: string
+        period:
+          type: string
+          enum:
+          - 1d
+          - 5d
+          - 1mo
+          - 3mo
+          - 1y
+        interval:
+          type: string
+          enum:
+          - 1h
+          - 1d
+          - 1wk
+      required:
+      - symbol
+      - period
+- type: function
+  function:
+    name: get_technical_indicators
+    description: Calculate technical indicators for a symbol
+    parameters:
+      type: object
+      properties:
+        symbol:
+          type: string
+        indicators:
+          type: array
+          items:
+            type: string
+            enum:
+            - rsi
+            - macd
+            - bollinger
+            - sma_50
+            - sma_200
+            - atr
+      required:
+      - symbol
+      - indicators
+- type: function
+  function:
+    name: search_news
+    description: Search recent financial news with sentiment scores
+    parameters:
+      type: object
+      properties:
+        query:
+          type: string
+        days_back:
+          type: integer
+          default: 7
+      required:
+      - query
+- type: function
+  function:
+    name: rag_search
+    description: Search the financial knowledge base (earnings transcripts, filings, analyst reports)
+    parameters:
+      type: object
+      properties:
+        query:
+          type: string
+        doc_types:
+          type: array
+          items:
+            type: string
+            enum:
+            - earnings_transcript
+            - 10k
+            - 10q
+            - analyst_report
+        limit:
+          type: integer
+          default: 5
+      required:
+      - query
+- type: function
+  function:
+    name: get_macro_indicators
+    description: Get current macro economic indicators
+    parameters:
+      type: object
+      properties:
+        indicators:
+          type: array
+          items:
+            type: string
+            enum:
+            - fed_funds_rate
+            - cpi
+            - pmi
+            - vix
+            - yield_curve
+            - unemployment
+      required:
+      - indicators
+- type: function
+  function:
+    name: calculate_position_size
+    description: Calculate recommended position size based on risk parameters
+    parameters:
+      type: object
+      properties:
+        symbol:
+          type: string
+        entry_price:
+          type: number
+        stop_loss:
+          type: number
+        portfolio_value:
+          type: number
+        max_risk_pct:
+          type: number
+          default: 0.02
+      required:
+      - symbol
+      - entry_price
+      - stop_loss
+      - portfolio_value
+- type: function
+  function:
+    name: social_media_sentiment
+    description: Get social media sentiment from Reddit/Twitter
+    parameters:
+      type: object
+      properties:
+        ticker:
+          type: string
+      required:
+      - ticker
+user_message: 'Analyze NVDA for a potential swing trade entry. I have a $100K portfolio and standard 2%
+  risk per trade. Give me a full analysis with entry, stop, target, and position size — but only if the
+  setup is actually good. Don''t force a trade if the data doesn''t support it.
+
+  '
+mock_responses:
+  get_price_data:
+  - match:
+      symbol: NVDA
+      period: 3mo
+    response:
+      content:
+        current_price: 142.5
+        high_52w: 156.8
+        low_52w: 85.4
+        avg_volume: 45000000
+        recent_trend: Pulled back 9% from highs over 2 weeks
+  get_technical_indicators:
+  - match:
+      symbol: NVDA
+    response:
+      content:
+        rsi: 38.5
+        macd:
+          value: -1.2
+          signal: -0.8
+          histogram: -0.4
+        bollinger:
+          upper: 155
+          middle: 145
+          lower: 135
+          position: near_lower
+        sma_50: 148.2
+        sma_200: 128.5
+        atr: 5.8
+  search_news:
+  - match:
+      query_contains: NVDA
+    response:
+      content:
+        articles:
+        - title: NVIDIA Data Center Revenue Beats Expectations
+          sentiment: 0.8
+          date: '2026-03-28'
+        - title: Export Controls Tightened on AI Chips to China
+          sentiment: -0.6
+          date: '2026-04-01'
+        - title: NVIDIA Announces Next-Gen Blackwell Ultra Architecture
+          sentiment: 0.7
+          date: '2026-04-03'
+  rag_search:
+  - match:
+      query_contains: NVDA earnings
+    response:
+      content:
+        documents:
+        - type: earnings_transcript
+          date: '2026-02-26'
+          excerpt: Data center revenue grew 65% YoY. CEO highlighted sovereign AI demand. Guided Q2 revenue
+            $44B ± 2%, above consensus.
+        - type: analyst_report
+          date: '2026-03-15'
+          excerpt: 'Maintain Overweight. PT $175. Key risk: China export restrictions could impact 12-15%
+            of data center revenue.'
+  get_macro_indicators:
+  - match:
+      indicators_contains: vix
+    response:
+      content:
+        fed_funds_rate:
+          value: 4.25
+          trend: holding
+        vix:
+          value: 18.5
+          trend: slightly_elevated
+        yield_curve:
+          spread: 0.15
+          status: mildly_positive
+  calculate_position_size:
+  - match:
+      symbol: NVDA
+    response:
+      content:
+        position_size: 345
+        dollar_value: 49162.5
+        risk_amount: 2000
+        reward_risk_ratio: 2.3
+  social_media_sentiment:
+  - match:
+      ticker: NVDA
+    response:
+      content:
+        reddit_sentiment: 0.72
+        twitter_mentions: 45000
+        wsb_mentions: 1200
+expected_tools_called:
+- get_price_data
+- get_technical_indicators
+- search_news
+- rag_search
+- get_macro_indicators
+- calculate_position_size
+scoring:
+  tool_coverage:
+    weight: 0.2
+    method: subset_match
+    criteria: 'Called all 5 core tools (price, technicals, news, RAG, macro). Position sizing optional
+      (depends on whether setup is recommended).
+
+      '
+  analysis_structure:
+    weight: 0.25
+    method: judge_rubric
+    criteria: 'Follows systematic process: quantitative → qualitative → macro → synthesis. Each section
+      references specific data from tool responses.
+
+      '
+  judgment_quality:
+    weight: 0.25
+    method: judge_rubric
+    criteria: 'Makes a clear recommendation (long/short/wait) with explicit reasoning. Addresses the conflicting
+      signals (strong fundamentals vs export risk vs technical pullback). States confidence level. If
+      recommending entry, provides specific price levels.
+
+      '
+  data_accuracy:
+    weight: 0.15
+    method: deterministic
+    criteria: 'All numbers cited (RSI, price, ATR, revenue growth) match mock data. No hallucinated statistics.
+
+      '
+  distractor_handling:
+    weight: 0.15
+    method: deterministic
+    criteria: 'Either did not call social_media_sentiment (preferred — low signal for institutional-quality
+      analysis) or appropriately discounted it. Did NOT weight Reddit sentiment as a primary signal.
+
+      '
+max_turns: 16
+timeout_seconds: 180

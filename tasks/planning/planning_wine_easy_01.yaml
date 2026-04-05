@@ -1,0 +1,114 @@
+id: planning_wine_easy_01
+dimension: planning
+difficulty: easy
+source_project: wine-tracker
+description: 'Create a 2-week POC plan for a Supabase-backed wine inventory app with label scanning. Tests
+  basic task decomposition and dependency ordering.
+
+  '
+system_prompt: 'You are a technical project planner for mobile app development.
+
+  '
+tools:
+- type: function
+  function:
+    name: check_dependency
+    description: Check if a technology or service is compatible with another
+    parameters:
+      type: object
+      properties:
+        tech_a:
+          type: string
+        tech_b:
+          type: string
+      required:
+      - tech_a
+      - tech_b
+- type: function
+  function:
+    name: estimate_effort
+    description: Estimate development effort for a task
+    parameters:
+      type: object
+      properties:
+        task:
+          type: string
+          description: Task description
+        stack:
+          type: string
+          description: Tech stack context
+      required:
+      - task
+      - stack
+user_message: 'Plan a 2-week POC for a wine inventory tracker. Stack: Supabase (Postgres, Auth, Storage,
+  Edge Functions), React Native mobile app, Claude Vision API for label scanning. Core flows: scan label
+  → identify wine → add to inventory → place in rack grid → consume bottle. What should I build in week
+  1 vs week 2, and what are the critical path dependencies?
+
+  '
+mock_responses:
+  check_dependency:
+  - match:
+      tech_a_contains: supabase
+      tech_b_contains: react native
+    response:
+      content:
+        compatible: true
+        notes: Use @supabase/supabase-js. Direct client SDK for reads, functions.invoke for server logic.
+  - match:
+      tech_a_contains: claude vision
+      tech_b_contains: edge function
+    response:
+      content:
+        compatible: true
+        notes: 150s timeout on Supabase edge functions. Claude Vision call typically 3-8s. Fits within
+          limit.
+  estimate_effort:
+  - match:
+      task_contains: schema
+    response:
+      content:
+        estimate_hours: 4
+        complexity: medium
+        notes: 'Core tables: wines, bottles, racks, rack_positions, events. RLS policies add 2h.'
+  - match:
+      task_contains: scan
+    response:
+      content:
+        estimate_hours: 8
+        complexity: high
+        notes: Image upload, Claude Vision call, wine matching/creation, error handling. Most complex
+          edge function.
+  - match:
+      task_contains: rack grid
+    response:
+      content:
+        estimate_hours: 6
+        complexity: medium
+        notes: Interactive grid component, drag-to-place, position state management.
+scoring:
+  dependency_correctness:
+    weight: 0.3
+    method: deterministic
+    criteria: 'Schema must come before edge functions. Auth must come before any user-scoped features.
+      Scan-label must come before consume flow.
+
+      '
+  completeness:
+    weight: 0.3
+    method: checklist
+    criteria:
+    - Week 1 includes database schema and auth
+    - Week 1 includes scan-label edge function
+    - Week 2 includes recommendation or intelligence features
+    - Identifies critical path
+  specificity:
+    weight: 0.2
+    method: judge_rubric
+    criteria: Tasks are concrete and actionable, not vague like 'set up backend'
+  risk_awareness:
+    weight: 0.2
+    method: judge_rubric
+    criteria: Identifies at least one risk (e.g., Claude Vision accuracy, edge function timeout)
+max_turns: 8
+timeout_seconds: 90

@@ -1,0 +1,164 @@
+id: agentic_artemis_medium_01
+dimension: agentic
+difficulty: medium
+source_project: artemis-tracker
+description: 'Answer "Can I photograph Artemis II tonight?" by chaining spacecraft position, observer
+  location, sun/moon positions, and sky brightness. Tests the multi-step reasoning chain from the Artemis
+  MCP server design.
+
+  '
+system_prompt: 'You are an astronomy assistant with access to spacecraft tracking,
+
+  celestial position, and observing condition tools.
+
+  '
+tools:
+- type: function
+  function:
+    name: get_spacecraft_position
+    description: Get current position of a spacecraft
+    parameters:
+      type: object
+      properties:
+        target:
+          type: string
+          description: Spacecraft name or ID
+        time:
+          type: string
+          description: ISO timestamp, or 'now'
+        reference:
+          type: string
+          enum:
+          - geocentric
+          - topocentric
+      required:
+      - target
+- type: function
+  function:
+    name: get_observer_location
+    description: Get the observer's geographic coordinates
+    parameters:
+      type: object
+      properties: {}
+- type: function
+  function:
+    name: get_celestial_positions
+    description: Get sun and moon positions for an observer
+    parameters:
+      type: object
+      properties:
+        latitude:
+          type: number
+        longitude:
+          type: number
+        time:
+          type: string
+      required:
+      - latitude
+      - longitude
+- type: function
+  function:
+    name: calculate_visibility
+    description: Calculate if an object is visible given sky conditions
+    parameters:
+      type: object
+      properties:
+        object_ra:
+          type: number
+          description: Right ascension in degrees
+        object_dec:
+          type: number
+          description: Declination in degrees
+        object_magnitude:
+          type: number
+          description: Apparent magnitude
+        sun_altitude:
+          type: number
+        moon_phase:
+          type: number
+        observer_latitude:
+          type: number
+        observer_longitude:
+          type: number
+      required:
+      - object_ra
+      - object_dec
+      - sun_altitude
+      - observer_latitude
+      - observer_longitude
+user_message: Can I photograph Artemis II tonight from my location?
+mock_responses:
+  get_spacecraft_position:
+  - match:
+      target_contains: artemis
+    response:
+      content:
+        name: Artemis II
+        ra_deg: 185.4
+        dec_deg: -12.3
+        distance_km: 320000
+        apparent_magnitude: 4.2
+        constellation: Virgo
+  get_observer_location:
+  - match: {}
+    response:
+      content:
+        latitude: 37.7749
+        longitude: -122.4194
+        city: San Francisco
+        timezone: America/Los_Angeles
+  get_celestial_positions:
+  - match:
+      latitude: 37.7749
+    response:
+      content:
+        sun:
+          altitude: -18.5
+          set_time: '2026-04-04T19:42:00-07:00'
+          astronomical_twilight_end: '2026-04-04T21:15:00-07:00'
+        moon:
+          altitude: 25.3
+          phase: 0.65
+          illumination: waxing gibbous
+          rise_time: '2026-04-04T16:30:00-07:00'
+  calculate_visibility:
+  - match:
+      object_ra: 185.4
+    response:
+      content:
+        visible: true
+        best_time: '2026-04-04T21:30:00-07:00'
+        limiting_magnitude: 4.8
+        sky_brightness: moderate (moon interference)
+        recommendation: Visible but challenging. Use telescope or long exposure. Moon at 65% will reduce
+          contrast.
+expected_tools_called:
+- get_observer_location
+- get_spacecraft_position
+- get_celestial_positions
+- calculate_visibility
+scoring:
+  tool_chain_completeness:
+    weight: 0.3
+    method: subset_match
+    criteria: All four tools called with correct argument chaining
+  data_threading:
+    weight: 0.3
+    method: deterministic
+    criteria: 'Observer lat/lon from get_observer_location correctly passed to get_celestial_positions
+      and calculate_visibility. Spacecraft RA/DEC correctly passed to calculate_visibility.
+
+      '
+  answer_quality:
+    weight: 0.25
+    method: judge_rubric
+    criteria: 'Gives a clear yes/no with specific timing, mentions moon interference, and provides practical
+      photography advice.
+
+      '
+  no_hallucination:
+    weight: 0.15
+    method: deterministic
+    criteria: All stated facts (magnitude, position, timing) match mock data
+max_turns: 10
+timeout_seconds: 90

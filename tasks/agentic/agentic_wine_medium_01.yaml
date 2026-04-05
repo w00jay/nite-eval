@@ -1,0 +1,218 @@
+id: agentic_wine_medium_01
+dimension: agentic
+difficulty: medium
+source_project: wine-tracker
+description: 'Multi-step wine recommendation: query cellar inventory, check drinking windows, cross-reference
+  taste profile, and produce a recommendation. Mirrors the structured-context-over-raw-prompts pattern.
+
+  '
+system_prompt: 'You are a wine cellar assistant with access to the user''s inventory,
+
+  taste profile, and environmental data. You follow the principle:
+
+  query structured data → assemble context → reason → recommend.
+
+  '
+tools:
+- type: function
+  function:
+    name: query_inventory
+    description: Search the user's wine inventory
+    parameters:
+      type: object
+      properties:
+        filters:
+          type: object
+          properties:
+            wine_type:
+              type: string
+              enum:
+              - red
+              - white
+              - rosé
+              - sparkling
+            region:
+              type: string
+            min_vintage:
+              type: integer
+            max_vintage:
+              type: integer
+            status:
+              type: string
+              enum:
+              - in_cellar
+              - consumed
+      required:
+      - filters
+- type: function
+  function:
+    name: check_drinking_window
+    description: Get drinking window info for specific bottles
+    parameters:
+      type: object
+      properties:
+        bottle_ids:
+          type: array
+          items:
+            type: string
+      required:
+      - bottle_ids
+- type: function
+  function:
+    name: get_taste_profile
+    description: Get the user's taste preferences and history
+    parameters:
+      type: object
+      properties: {}
+- type: function
+  function:
+    name: get_sensor_data
+    description: Get current cellar environmental conditions
+    parameters:
+      type: object
+      properties:
+        cellar_id:
+          type: string
+      required:
+      - cellar_id
+- type: function
+  function:
+    name: get_rack_position
+    description: Get the physical location of a bottle in the rack
+    parameters:
+      type: object
+      properties:
+        bottle_id:
+          type: string
+      required:
+      - bottle_id
+user_message: 'I''m grilling salmon tonight for 4 people. What should I open from my cellar?
+
+  '
+mock_responses:
+  query_inventory:
+  - match:
+      filters:
+        wine_type: white
+        status: in_cellar
+    response:
+      content:
+        bottles:
+        - id: b001
+          wine: 2022 Cloudy Bay Sauvignon Blanc
+          region: Marlborough
+          vintage: 2022
+        - id: b002
+          wine: 2020 Domaine Weinbach Riesling Grand Cru
+          region: Alsace
+          vintage: 2020
+        - id: b003
+          wine: 2021 Cakebread Chardonnay
+          region: Napa Valley
+          vintage: 2021
+  - match:
+      filters:
+        wine_type: rosé
+        status: in_cellar
+    response:
+      content:
+        bottles:
+        - id: b004
+          wine: 2023 Whispering Angel Rosé
+          region: Provence
+          vintage: 2023
+  - match:
+      filters:
+        wine_type: red
+        status: in_cellar
+    response:
+      content:
+        bottles:
+        - id: b005
+          wine: 2019 Meiomi Pinot Noir
+          region: California
+          vintage: 2019
+        - id: b006
+          wine: 2018 Tignanello
+          region: Tuscany
+          vintage: 2018
+  check_drinking_window:
+  - match:
+      bottle_ids_contains: b001
+    response:
+      content:
+        windows:
+        - bottle_id: b001
+          status: drink_now
+          peak_start: 2023
+          peak_end: 2025
+        - bottle_id: b002
+          status: approaching_peak
+          peak_start: 2025
+          peak_end: 2032
+        - bottle_id: b003
+          status: drink_now
+          peak_start: 2023
+          peak_end: 2026
+  get_taste_profile:
+  - match: {}
+    response:
+      content:
+        preferences:
+          preferred_styles:
+          - crisp whites
+          - medium-bodied reds
+          disliked:
+          - heavily oaked chardonnay
+          recent_favorites:
+          - Sancerre
+          - Grüner Veltliner
+          - Oregon Pinot
+  get_rack_position:
+  - match:
+      bottle_id: b001
+    response:
+      content:
+        rack: A
+        position: A3
+  - match:
+      bottle_id: b002
+    response:
+      content:
+        rack: B
+        position: B7
+expected_tool_sequence_flexible: true
+expected_tools_called:
+- query_inventory
+- check_drinking_window
+- get_taste_profile
+- get_rack_position
+scoring:
+  tool_coverage:
+    weight: 0.25
+    method: subset_match
+    criteria: Called query_inventory, check_drinking_window, get_taste_profile, and get_rack_position
+  reasoning_quality:
+    weight: 0.3
+    method: judge_rubric
+    criteria: 'Recommendation accounts for: salmon pairing (white/rosé/light red), drinking window (prioritize
+      drink_now), taste profile (dislikes oaked chardonnay → should not recommend b003 strongly), and
+      provides rack location ("pull from A3").
+
+      '
+  context_assembly:
+    weight: 0.25
+    method: judge_rubric
+    criteria: 'Follows the structured-context pattern: gathers data first, then reasons over it. Does
+      not hallucinate wines not in the inventory.
+
+      '
+  practical_output:
+    weight: 0.2
+    method: judge_rubric
+    criteria: 'Final recommendation is specific (1-2 bottles), includes rack position, and briefly explains
+      why. Not a generic wine pairing lecture.
+
+      '
+max_turns: 12
+timeout_seconds: 120

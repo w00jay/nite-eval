@@ -1,0 +1,191 @@
+id: agentic_mcp_hard_01
+dimension: agentic
+difficulty: hard
+source_project: mcp-gateway
+description: 'Debug a failing MCP tool call chain: the initial tool call fails due to an auth error, requiring
+  the agent to diagnose the issue, refresh credentials, retry, and then complete the original task. Tests
+  error recovery, context maintenance across retries, and diagnostic reasoning.
+
+  '
+system_prompt: 'You are a developer assistant that helps debug and fix issues with
+
+  MCP server integrations. You have access to gateway management tools
+
+  and can inspect server health, logs, and credentials.
+
+  '
+tools:
+- type: function
+  function:
+    name: call_mcp_tool
+    description: Call a tool through the MCP gateway
+    parameters:
+      type: object
+      properties:
+        server:
+          type: string
+          description: MCP server name
+        tool:
+          type: string
+          description: Tool name
+        arguments:
+          type: object
+          description: Tool arguments
+      required:
+      - server
+      - tool
+      - arguments
+- type: function
+  function:
+    name: check_server_health
+    description: Check the health status of an MCP server
+    parameters:
+      type: object
+      properties:
+        server:
+          type: string
+      required:
+      - server
+- type: function
+  function:
+    name: get_server_logs
+    description: Get recent logs for an MCP server connection
+    parameters:
+      type: object
+      properties:
+        server:
+          type: string
+        lines:
+          type: integer
+          default: 20
+      required:
+      - server
+- type: function
+  function:
+    name: refresh_credentials
+    description: Refresh OAuth2 or rotate API credentials for a server
+    parameters:
+      type: object
+      properties:
+        server:
+          type: string
+        auth_type:
+          type: string
+          enum:
+          - oauth2
+          - api_key
+          - bearer
+      required:
+      - server
+      - auth_type
+- type: function
+  function:
+    name: restart_server
+    description: Restart an MCP server connection
+    parameters:
+      type: object
+      properties:
+        server:
+          type: string
+      required:
+      - server
+user_message: 'I need to search my Notion workspace for the MCP Gateway design doc, but the Notion MCP
+  server seems broken. Can you figure out what''s wrong and get me that doc?
+
+  '
+mock_responses:
+  call_mcp_tool:
+  - match:
+      server: notion
+      tool: search
+      _call_number: 1
+    response:
+      error: '401 Unauthorized: Invalid or expired token'
+  - match:
+      server: notion
+      tool: search
+      _call_number: 2
+    response:
+      content:
+        results:
+        - title: MCP Gateway Design Doc
+          id: page_abc123
+          last_edited: '2026-03-10'
+        - title: MCP Gateway POC Scope
+          id: page_def456
+          last_edited: '2026-03-08'
+  check_server_health:
+  - match:
+      server: notion
+    response:
+      content:
+        status: degraded
+        last_successful_call: '2026-04-03T14:22:00Z'
+        error_count_24h: 12
+        auth_type: oauth2
+        token_expiry: '2026-04-03T15:00:00Z'
+  get_server_logs:
+  - match:
+      server: notion
+    response:
+      content:
+        logs:
+        - '2026-04-04T10:15:22Z ERROR auth_injection: OAuth2 token expired for server=notion'
+        - '2026-04-04T10:15:22Z ERROR proxy: upstream returned 401 for tool=search server=notion'
+        - '2026-04-04T09:30:01Z WARN health_check: server=notion consecutive_failures=3'
+  refresh_credentials:
+  - match:
+      server: notion
+      auth_type: oauth2
+    response:
+      content:
+        status: refreshed
+        new_expiry: '2026-04-04T22:15:30Z'
+        message: OAuth2 token refreshed successfully
+expected_tool_sequence:
+- name: call_mcp_tool
+  args:
+    server: notion
+    tool: search
+- name: check_server_health
+  args:
+    server: notion
+- name: get_server_logs
+  args:
+    server: notion
+- name: refresh_credentials
+  args:
+    server: notion
+    auth_type: oauth2
+- name: call_mcp_tool
+  args:
+    server: notion
+    tool: search
+scoring:
+  diagnostic_approach:
+    weight: 0.3
+    method: judge_rubric
+    criteria: 'After the 401 error, the agent investigates (checks health and/or logs) rather than blindly
+      retrying or restarting. Correctly identifies the expired OAuth2 token as the root cause.
+
+      '
+  correct_fix:
+    weight: 0.25
+    method: deterministic
+    criteria: 'Calls refresh_credentials with auth_type=''oauth2'' (not api_key or bearer). Does NOT call
+      restart_server (wrong fix for an auth issue).
+
+      '
+  task_completion:
+    weight: 0.25
+    method: deterministic
+    criteria: Successfully retries the Notion search after credential refresh and returns the results
+  communication:
+    weight: 0.2
+    method: judge_rubric
+    criteria: 'Explains what went wrong and what was fixed. Mentions the token expiry. Presents the search
+      results clearly.
+
+      '
+max_turns: 12
+timeout_seconds: 120

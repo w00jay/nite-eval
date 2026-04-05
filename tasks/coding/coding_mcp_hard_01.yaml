@@ -1,0 +1,118 @@
+id: coding_mcp_hard_01
+dimension: coding
+difficulty: hard
+source_project: mcp-gateway
+description: 'Implement the core MCP gateway proxy in Go: an HTTP server that receives MCP tools/list
+  and tools/call requests, routes to the correct upstream server based on tool name, injects auth, and
+  returns aggregated results.
+
+  '
+system_prompt: 'You are a senior Go developer building a production proxy service.
+
+  '
+tools:
+- type: function
+  function:
+    name: write_file
+    description: Write content to a file
+    parameters:
+      type: object
+      properties:
+        path:
+          type: string
+        content:
+          type: string
+      required:
+      - path
+      - content
+- type: function
+  function:
+    name: read_file
+    description: Read a file
+    parameters:
+      type: object
+      properties:
+        path:
+          type: string
+      required:
+      - path
+- type: function
+  function:
+    name: run_tests
+    description: Run Go tests
+    parameters:
+      type: object
+      properties:
+        directory:
+          type: string
+        verbose:
+          type: boolean
+        race:
+          type: boolean
+          description: Enable race detector
+      required:
+      - directory
+- type: function
+  function:
+    name: run_code
+    description: Run a shell command
+    parameters:
+      type: object
+      properties:
+        command:
+          type: string
+      required:
+      - command
+user_message: 'Implement the core MCP gateway proxy in Go. Requirements: (1) HTTP server on :8080 with
+  two endpoints: POST /mcp/tools/list and POST /mcp/tools/call. (2) tools/list aggregates tools from all
+  configured upstream servers (fetched concurrently with errgroup), deduplicates by tool name, and returns
+  the merged list. (3) tools/call looks up which upstream owns the requested tool, injects the appropriate
+  auth header (Bearer, X-API-Key, or OAuth2 based on config), proxies the request, and returns the response.
+  (4) Structured JSON logging via slog for every proxied request (server, tool, latency, status). (5)
+  Graceful shutdown on SIGTERM. Load server config from the YAML format we defined earlier. Include tests
+  with httptest for both endpoints, and run with -race.
+
+  '
+test_suite:
+  language: go
+  tests:
+  - name: TestToolsListAggregation
+    expected: Merges tools from 2+ upstream servers, no duplicates
+  - name: TestToolsCallRouting
+    expected: Routes to correct upstream based on tool name
+  - name: TestAuthInjection_Bearer
+    expected: 'Adds Authorization: Bearer header for bearer auth type'
+  - name: TestAuthInjection_APIKey
+    expected: Adds X-API-Key header for api_key auth type
+  - name: TestUnknownTool
+    expected: Returns 404 with descriptive error for unknown tool
+  - name: TestUpstreamTimeout
+    expected: Returns 504 when upstream doesn't respond within timeout
+  - name: TestConcurrentToolsList
+    expected: Fetches from all upstreams concurrently, no race conditions
+  - name: TestStructuredLogging
+    expected: Log entries contain server, tool, latency_ms, status fields
+scoring:
+  test_pass_rate:
+    weight: 0.35
+    method: automated
+  race_detector_clean:
+    weight: 0.15
+    method: automated
+    criteria: go test -race passes with no data races
+  code_quality:
+    weight: 0.25
+    method: judge_rubric
+    criteria: 'Production Go patterns: context propagation, errgroup for concurrency, proper HTTP client
+      reuse, structured logging with slog, no goroutine leaks, graceful shutdown.
+
+      '
+  architecture:
+    weight: 0.25
+    method: judge_rubric
+    criteria: 'Clean separation: config, router, proxy, logging as distinct packages or clear internal
+      boundaries. Handler functions are testable without starting a real server.
+
+      '
+max_turns: 14
+timeout_seconds: 180

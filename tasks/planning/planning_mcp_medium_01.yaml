@@ -1,0 +1,143 @@
+id: planning_mcp_medium_01
+dimension: planning
+difficulty: medium
+source_project: mcp-gateway
+description: 'Design a migration plan from direct MCP server connections to a centralized gateway proxy.
+  Mirrors the actual MCP Gateway architecture design work.
+
+  '
+system_prompt: 'You are a systems architect specializing in developer infrastructure.
+
+  '
+tools:
+- type: function
+  function:
+    name: get_current_infrastructure
+    description: Get details about the current system setup
+    parameters:
+      type: object
+      properties:
+        component:
+          type: string
+          description: Infrastructure component to query
+      required:
+      - component
+- type: function
+  function:
+    name: check_compatibility
+    description: Check compatibility between systems
+    parameters:
+      type: object
+      properties:
+        source:
+          type: string
+        target:
+          type: string
+      required:
+      - source
+      - target
+- type: function
+  function:
+    name: estimate_effort
+    description: Estimate migration effort
+    parameters:
+      type: object
+      properties:
+        task:
+          type: string
+        context:
+          type: string
+      required:
+      - task
+user_message: 'I have 5 MCP servers configured directly in Claude Desktop and Cursor (Notion, Gmail, Slack,
+  a custom Supabase MCP, and a GitHub MCP). I want to migrate to a centralized MCP gateway that handles
+  auth injection, telemetry, and tool discovery. The gateway should be a Go service deployable to ECS
+  or GKE. Plan the migration in phases — I can''t break my current agent workflows during the transition.
+
+  '
+mock_responses:
+  get_current_infrastructure:
+  - match:
+      component_contains: mcp
+    response:
+      content:
+        servers:
+        - name: notion
+          transport: sse
+          auth: bearer_token
+        - name: gmail
+          transport: sse
+          auth: oauth2
+        - name: slack
+          transport: sse
+          auth: bot_token
+        - name: wooj-brain
+          transport: http
+          auth: api_key
+        - name: github
+          transport: sse
+          auth: pat
+        clients:
+        - claude-desktop
+        - cursor
+        - claude-code
+  check_compatibility:
+  - match:
+      source_contains: sse
+      target_contains: gateway
+    response:
+      content:
+        compatible: true
+        notes: Gateway can proxy SSE. Needs buffering for long-lived connections.
+  estimate_effort:
+  - match:
+      task_contains: proxy
+    response:
+      content:
+        estimate_days: 3
+        notes: Basic Go HTTP proxy with route matching. SSE passthrough adds complexity.
+  - match:
+      task_contains: auth
+    response:
+      content:
+        estimate_days: 2
+        notes: Auth injection from config. OAuth2 refresh flow is the hard part.
+  - match:
+      task_contains: telemetry
+    response:
+      content:
+        estimate_days: 1
+        notes: OpenTelemetry middleware. Structured JSON logging.
+scoring:
+  phased_approach:
+    weight: 0.3
+    method: judge_rubric
+    criteria: 'Plan has clear phases that don''t break existing workflows. Should include a parallel-run
+      phase where both direct and gateway connections work simultaneously.
+
+      '
+  dependency_correctness:
+    weight: 0.25
+    method: deterministic
+    criteria: 'Proxy layer must exist before auth injection. Auth injection before telemetry. Client migration
+      after gateway is stable.
+
+      '
+  completeness:
+    weight: 0.25
+    method: checklist
+    criteria:
+    - Covers Go proxy service implementation
+    - Covers auth injection for all 3 auth types (bearer, OAuth2, API key)
+    - Covers client migration (Claude Desktop, Cursor, Claude Code)
+    - Covers rollback strategy
+    - Covers telemetry/observability
+  risk_mitigation:
+    weight: 0.2
+    method: judge_rubric
+    criteria: 'Identifies risks: OAuth2 token refresh through proxy, SSE connection lifecycle, client
+      config migration pain points.
+
+      '
+max_turns: 10
+timeout_seconds: 120

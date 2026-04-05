@@ -1,0 +1,81 @@
+id: research_mcp_easy_01
+dimension: research
+difficulty: easy
+source_project: mcp-gateway
+description: 'Compare two open-source MCP gateway implementations (Docker vs Microsoft) on transport support,
+  auth model, and deployment complexity.
+
+  '
+system_prompt: 'You are a technical research assistant helping evaluate infrastructure tools.
+
+  '
+tools:
+- type: function
+  function:
+    name: web_search
+    description: Search the web for technical information
+    parameters:
+      type: object
+      properties:
+        query:
+          type: string
+          description: Search query
+      required:
+      - query
+- type: function
+  function:
+    name: fetch_url
+    description: Fetch the full content of a URL
+    parameters:
+      type: object
+      properties:
+        url:
+          type: string
+          description: URL to fetch
+      required:
+      - url
+user_message: 'Compare Docker''s mcp-gateway and Microsoft''s mcp-gateway on these dimensions: transport
+  protocols supported, authentication model, and deployment requirements. Which is better suited for a
+  small team running on GKE?
+
+  '
+mock_responses:
+  web_search:
+  - match:
+      query_contains: docker mcp-gateway
+    response:
+      content:
+        results:
+        - title: docker/mcp-gateway GitHub
+          snippet: Go-based MCP proxy. Runs servers in isolated containers. Supports Streamable HTTP.
+            Catalog/registry. Profile-based server grouping. Apache 2.0 license.
+          url: https://github.com/docker/mcp-gateway
+  - match:
+      query_contains: microsoft mcp-gateway
+    response:
+      content:
+        results:
+        - title: microsoft/mcp-gateway GitHub
+          snippet: .NET-based. K8s-native with session affinity. Control plane for MCP server lifecycle.
+            Enterprise telemetry, access control, observability. Designed for K8s from start.
+          url: https://github.com/microsoft/mcp-gateway
+scoring:
+  coverage:
+    weight: 0.4
+    method: checklist
+    criteria:
+    - Mentions Docker gateway is Go-based
+    - Mentions Microsoft gateway is .NET-based
+    - Compares transport support
+    - Compares auth approach
+    - Addresses GKE deployment fit
+  accuracy:
+    weight: 0.3
+    method: judge_rubric
+    criteria: Claims match mock search results, no hallucinated features
+  recommendation_quality:
+    weight: 0.3
+    method: judge_rubric
+    criteria: Gives a clear, reasoned recommendation for the GKE use case
+max_turns: 6
+timeout_seconds: 90

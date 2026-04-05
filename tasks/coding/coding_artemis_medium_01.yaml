@@ -1,0 +1,89 @@
+id: coding_artemis_medium_01
+dimension: coding
+difficulty: medium
+source_project: artemis-tracker
+description: 'Write a Python backend proxy that queries the JPL Horizons API for Artemis II position vectors
+  and caches results. Handles the text-inside-JSON parsing quirk of the Horizons API.
+
+  '
+system_prompt: 'You are a Python developer building scientific data APIs.
+
+  '
+tools:
+- type: function
+  function:
+    name: write_file
+    description: Write content to a file
+    parameters:
+      type: object
+      properties:
+        path:
+          type: string
+        content:
+          type: string
+      required:
+      - path
+      - content
+- type: function
+  function:
+    name: run_tests
+    description: Run pytest
+    parameters:
+      type: object
+      properties:
+        directory:
+          type: string
+        verbose:
+          type: boolean
+      required:
+      - directory
+- type: function
+  function:
+    name: run_code
+    description: Run a shell command
+    parameters:
+      type: object
+      properties:
+        command:
+          type: string
+      required:
+      - command
+user_message: 'Write a Python module that: (1) queries JPL Horizons API for Artemis II (COMMAND=''-1024'')
+  position vectors (EPHEM_TYPE=''VECTORS'', CENTER=''500@399'' for geocentric), (2) parses the text-inside-JSON
+  response format (Horizons returns a JSON wrapper around plain-text ephemeris data with $$SOE/$$EOE delimiters),
+  (3) extracts X, Y, Z position and VX, VY, VZ velocity for each time step, (4) implements a TTL-based
+  cache (5 min for recent data, 1 hour for historical), (5) exposes a clean get_position(time) function.
+  Use httpx for async HTTP. Include tests with a mock Horizons response.
+
+  '
+test_suite:
+  language: python
+  tests:
+  - name: test_parse_horizons_response
+    expected: Correctly extracts vectors from $$SOE/$$EOE delimited text
+  - name: test_cache_hit
+    expected: Returns cached data without HTTP call on second request
+  - name: test_cache_ttl_expiry
+    expected: Re-fetches after TTL expires
+  - name: test_api_error_handling
+    expected: Raises descriptive error on API failure
+  - name: test_get_position_interpolation
+    expected: Returns interpolated position for times between data points
+scoring:
+  test_pass_rate:
+    weight: 0.4
+    method: automated
+  parsing_correctness:
+    weight: 0.25
+    method: deterministic
+    criteria: Correctly handles $$SOE/$$EOE format, whitespace, multi-line records
+  code_quality:
+    weight: 0.2
+    method: judge_rubric
+    criteria: Type hints, async/await pattern, proper error types, docstrings
+  cache_design:
+    weight: 0.15
+    method: judge_rubric
+    criteria: TTL logic is correct, thread-safe, doesn't leak memory
+max_turns: 10
+timeout_seconds: 120

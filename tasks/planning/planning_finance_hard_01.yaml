@@ -1,0 +1,182 @@
+id: planning_finance_hard_01
+dimension: planning
+difficulty: hard
+source_project: financial-ai
+description: 'Design a data pipeline architecture for a multi-asset swing trading system that ingests
+  price data, news, earnings transcripts, and macro indicators into a unified RAG-ready store.
+
+  '
+system_prompt: 'You are a data engineering architect for quantitative finance systems.
+
+  '
+tools:
+- type: function
+  function:
+    name: get_current_infrastructure
+    description: Get current system details
+    parameters:
+      type: object
+      properties:
+        component:
+          type: string
+      required:
+      - component
+- type: function
+  function:
+    name: check_api_availability
+    description: Check if a data API is available and its constraints
+    parameters:
+      type: object
+      properties:
+        api_name:
+          type: string
+        data_type:
+          type: string
+      required:
+      - api_name
+- type: function
+  function:
+    name: estimate_storage
+    description: Estimate storage requirements
+    parameters:
+      type: object
+      properties:
+        data_type:
+          type: string
+        volume:
+          type: string
+        retention:
+          type: string
+      required:
+      - data_type
+      - volume
+- type: function
+  function:
+    name: check_compatibility
+    description: Check compatibility between systems
+    parameters:
+      type: object
+      properties:
+        source:
+          type: string
+        target:
+          type: string
+      required:
+      - source
+      - target
+user_message: 'Design the data pipeline architecture for my swing trading system. I need to ingest: (1)
+  daily OHLCV price data for ~500 instruments across equities, FX, rates, and crypto, (2) financial news
+  from 3-4 sources with sentiment, (3) quarterly earnings call transcripts with audio, (4) macro indicators
+  (Fed funds rate, CPI, PMI, etc.). All data needs to be RAG-ready (embedded and searchable). Stack: Python,
+  Supabase (pgvector), with option to add dedicated vector DB later. Single developer, so operational
+  simplicity matters.
+
+  '
+mock_responses:
+  get_current_infrastructure:
+  - match:
+      component_contains: supabase
+    response:
+      content:
+        plan: Pro
+        postgres_version: '15'
+        extensions:
+        - pgvector
+        - pg_trgm
+        storage_gb: 100
+        edge_functions: true
+  check_api_availability:
+  - match:
+      api_name_contains: polygon
+    response:
+      content:
+        available: true
+        rate_limit: unlimited with paid plan
+        cost: $199/mo starter
+        data_types:
+        - stocks
+        - options
+        - forex
+        - crypto
+  - match:
+      api_name_contains: alpha vantage
+    response:
+      content:
+        available: true
+        rate_limit: 75 req/min premium
+        cost: $49.99/mo
+        data_types:
+        - stocks
+        - forex
+        - crypto
+        - economic indicators
+  - match:
+      api_name_contains: newsapi
+    response:
+      content:
+        available: true
+        rate_limit: 1000 req/day business
+        cost: $449/mo
+        data_types:
+        - news articles
+  estimate_storage:
+  - match:
+      data_type_contains: price
+    response:
+      content:
+        estimated_gb: 2
+        notes: '500 instruments × 252 trading days × 10 years = ~1.26M rows. With indicators: ~5GB.'
+  - match:
+      data_type_contains: embeddings
+    response:
+      content:
+        estimated_gb: 15
+        notes: 1536-dim embeddings × 500K documents. pgvector HNSW index adds 2-3x overhead.
+  - match:
+      data_type_contains: transcripts
+    response:
+      content:
+        estimated_gb: 8
+        notes: '~2000 transcripts/quarter × 20KB avg. Audio: 50GB+ if stored, recommend text-only.'
+  check_compatibility:
+  - match:
+      source_contains: pgvector
+      target_contains: rag
+    response:
+      content:
+        compatible: true
+        notes: pgvector supports HNSW and IVFFlat. Adequate for <1M vectors. Beyond that, consider Qdrant
+          or Pinecone.
+scoring:
+  architecture_quality:
+    weight: 0.3
+    method: judge_rubric
+    criteria: 'Clear separation of ingestion, storage, embedding, and retrieval layers. Addresses batch
+      vs real-time appropriately for each data type.
+
+      '
+  completeness:
+    weight: 0.25
+    method: checklist
+    criteria:
+    - Covers all 4 data sources
+    - Addresses embedding strategy
+    - Addresses storage estimates
+    - Addresses scheduling/orchestration
+    - Addresses operational simplicity constraint
+  feasibility:
+    weight: 0.25
+    method: judge_rubric
+    criteria: 'Design is realistic for a single developer. Doesn''t over-engineer. Acknowledges Supabase
+      limitations and when to graduate components.
+
+      '
+  scalability_awareness:
+    weight: 0.2
+    method: judge_rubric
+    criteria: 'Plants seams for growth (consistent with the pragmatic architecture principle) without
+      pre-optimizing.
+
+      '
+max_turns: 14
+timeout_seconds: 180

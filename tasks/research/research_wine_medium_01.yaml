@@ -1,0 +1,113 @@
+id: research_wine_medium_01
+dimension: research
+difficulty: medium
+source_project: wine-tracker
+description: 'Research the AI capabilities of three wine cellar apps and identify gaps in proactive cellar
+  intelligence. Mirrors the original competitive analysis that shaped the Wine Tracker product thesis.
+
+  '
+system_prompt: 'You are a product research assistant analyzing the wine technology market.
+
+  '
+tools:
+- type: function
+  function:
+    name: web_search
+    description: Search the web for product information
+    parameters:
+      type: object
+      properties:
+        query:
+          type: string
+          description: Search query
+      required:
+      - query
+- type: function
+  function:
+    name: fetch_url
+    description: Fetch the full content of a URL
+    parameters:
+      type: object
+      properties:
+        url:
+          type: string
+          description: URL to fetch
+      required:
+      - url
+- type: function
+  function:
+    name: summarize_findings
+    description: Store intermediate research findings for later synthesis
+    parameters:
+      type: object
+      properties:
+        topic:
+          type: string
+        findings:
+          type: string
+      required:
+      - topic
+      - findings
+user_message: 'Research the AI features of Vivino, CellarTracker (including CellarChat), and CellarMate.ai.
+  For each, identify: what AI capabilities they offer, how deep the personalization goes, and what they''re
+  missing in terms of proactive cellar intelligence. Synthesize into a gap analysis showing where a new
+  entrant could differentiate.
+
+  '
+mock_responses:
+  web_search:
+  - match:
+      query_contains: vivino AI
+    response:
+      content:
+        results:
+        - title: Vivino AI Label Scanning
+          snippet: 70M+ users. Label scanning via computer vision. Community ratings 200M+ reviews. Recommendation
+            based on taste profile from ratings. Pivoted to marketplace/commerce.
+  - match:
+      query_contains: CellarTracker CellarChat
+    response:
+      content:
+        results:
+        - title: CellarTracker Launches CellarChat AI
+          snippet: AI assistant connected to personal collection. Suggestions based on owned bottles,
+            drinking windows, community tasting notes. Reactive Q&A format. 1M+ active users, 4.5M wines.
+  - match:
+      query_contains: CellarMate
+    response:
+      content:
+        results:
+        - title: CellarMate.ai Review
+          snippet: GPT-4 powered conversational sommelier. 14 specialized wine functions. Photo label
+            scanning. Receipt and restaurant menu scanning. Early stage, thousands of users.
+  summarize_findings:
+  - match:
+      topic_contains: any
+    response:
+      content:
+        status: saved
+scoring:
+  coverage:
+    weight: 0.3
+    method: checklist
+    criteria:
+    - Covers all three apps
+    - Identifies AI capabilities per app
+    - Assesses personalization depth
+    - Identifies proactive vs reactive intelligence gap
+  synthesis:
+    weight: 0.4
+    method: judge_rubric
+    criteria: 'Produces a coherent gap analysis, not just three separate summaries. Identifies cross-cutting
+      themes and a clear differentiation opportunity.
+
+      '
+  actionability:
+    weight: 0.3
+    method: judge_rubric
+    criteria: 'Recommendations are specific enough to inform product decisions, not generic platitudes
+      like "use more AI."
+
+      '
+max_turns: 10
+timeout_seconds: 120

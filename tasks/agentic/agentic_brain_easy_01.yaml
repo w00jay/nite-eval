@@ -1,0 +1,135 @@
+id: agentic_brain_easy_01
+dimension: agentic
+difficulty: easy
+source_project: wooj-brain
+description: 'Capture a thought to Wooj-brain and then search for related thoughts. Tests basic two-step
+  tool chaining with correct argument construction.
+
+  '
+system_prompt: 'You are a personal knowledge assistant. You have access to the user''s
+
+  thought capture system (Wooj-brain) for saving and searching ideas.
+
+  '
+tools:
+- type: function
+  function:
+    name: capture_thought
+    description: Save a new thought to Wooj-brain
+    parameters:
+      type: object
+      properties:
+        content:
+          type: string
+          description: The thought content
+        type:
+          type: string
+          enum:
+          - idea
+          - observation
+          - question
+          - decision
+          - reference
+        topics:
+          type: array
+          items:
+            type: string
+          description: Topic tags
+      required:
+      - content
+      - type
+- type: function
+  function:
+    name: search_thoughts
+    description: Search captured thoughts by meaning
+    parameters:
+      type: object
+      properties:
+        query:
+          type: string
+          description: Semantic search query
+        limit:
+          type: integer
+          default: 5
+      required:
+      - query
+- type: function
+  function:
+    name: send_email
+    description: Send an email
+    parameters:
+      type: object
+      properties:
+        to:
+          type: string
+        subject:
+          type: string
+        body:
+          type: string
+      required:
+      - to
+      - subject
+      - body
+user_message: 'I just realized that the autoresearch pattern could be applied to my MCP gateway — the
+  eval metric would be tool-call routing latency. Save this insight and then find any related thoughts
+  I''ve had about evaluation or testing patterns.
+
+  '
+mock_responses:
+  capture_thought:
+  - match:
+      content_contains: autoresearch
+    response:
+      content:
+        id: thought_123
+        status: saved
+  search_thoughts:
+  - match:
+      query_contains: eval
+    response:
+      content:
+        results:
+        - id: thought_089
+          content: Need a consistent way to benchmark local LLM performance across models
+          type: question
+          topics:
+          - llm
+          - evaluation
+        - id: thought_045
+          content: 'Karpathy''s key insight: the fixed eval is what makes the agent loop work'
+          type: observation
+          topics:
+          - autoresearch
+          - agent-loop
+expected_tool_sequence:
+- name: capture_thought
+  args_must_contain:
+    content:
+    - autoresearch
+    - mcp gateway
+    - latency
+    type: idea
+- name: search_thoughts
+  args_must_contain:
+    query:
+    - eval
+    - test
+scoring:
+  tool_selection:
+    weight: 0.3
+    method: sequence_match
+    criteria: Called capture_thought then search_thoughts, NOT send_email
+  argument_accuracy:
+    weight: 0.3
+    method: partial_match
+    criteria: Thought content captures the key insight. Type is 'idea'. Search query is relevant.
+  synthesis:
+    weight: 0.2
+    method: judge_rubric
+    criteria: Connects the search results back to the user's insight meaningfully
+  distractor_avoidance:
+    weight: 0.2
+    method: deterministic
+    criteria: Did not call send_email
+max_turns: 6
+timeout_seconds: 60

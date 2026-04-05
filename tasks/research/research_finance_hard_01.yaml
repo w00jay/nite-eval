@@ -1,0 +1,163 @@
+id: research_finance_hard_01
+dimension: research
+difficulty: hard
+source_project: financial-ai
+description: 'Research transformer-based time series models for financial forecasting, comparing foundation
+  models (TimesFM, Chronos, Moirai) against fine-tuned specialist models (TFT, PatchTST). Requires multi-source
+  synthesis and nuanced technical judgment.
+
+  '
+system_prompt: 'You are a quantitative research assistant specializing in ML for finance.
+
+  '
+tools:
+- type: function
+  function:
+    name: web_search
+    description: Search the web for academic and technical information
+    parameters:
+      type: object
+      properties:
+        query:
+          type: string
+          description: Search query
+      required:
+      - query
+- type: function
+  function:
+    name: fetch_url
+    description: Fetch the full content of a URL
+    parameters:
+      type: object
+      properties:
+        url:
+          type: string
+          description: URL to fetch
+      required:
+      - url
+- type: function
+  function:
+    name: summarize_findings
+    description: Store intermediate research findings
+    parameters:
+      type: object
+      properties:
+        topic:
+          type: string
+        findings:
+          type: string
+      required:
+      - topic
+      - findings
+- type: function
+  function:
+    name: create_comparison_table
+    description: Create a structured comparison of options
+    parameters:
+      type: object
+      properties:
+        title:
+          type: string
+        columns:
+          type: array
+          items:
+            type: string
+        rows:
+          type: array
+          items:
+            type: object
+      required:
+      - title
+      - columns
+      - rows
+user_message: 'I''m building a multi-asset swing trading system (days to weeks horizon). Research the
+  current state of transformer-based time series forecasting models. Compare foundation models (TimesFM,
+  Chronos, Moirai, Lag-Llama) against fine-tunable architectures (TFT, PatchTST). For my use case: which
+  approach is better, and can I fine-tune a foundation model with PEFT/LoRA on my own financial data?
+  Include practical deployment considerations for a single-GPU setup.
+
+  '
+mock_responses:
+  web_search:
+  - match:
+      query_contains: TimesFM
+    response:
+      content:
+        results:
+        - title: 'TimesFM: Google''s Time Series Foundation Model'
+          snippet: 200M param decoder-only. Pre-trained on 100B real-world time points. Zero-shot competitive
+            with supervised models. Supports variable context lengths. Apache 2.0.
+  - match:
+      query_contains: Chronos
+    response:
+      content:
+        results:
+        - title: 'Chronos: Amazon''s Probabilistic Time Series Model'
+          snippet: T5-based. Tokenizes time series via scaling and quantization. Multiple sizes (20M to
+            710M). Strong zero-shot. Probabilistic forecasts. Apache 2.0.
+  - match:
+      query_contains: PatchTST
+    response:
+      content:
+        results:
+        - title: 'PatchTST: Channel-independent Transformer'
+          snippet: Patches time series like ViT patches images. Self-supervised pre-training. Channel
+            independence enables multi-variate. Strong on long-horizon. IBM Research.
+  - match:
+      query_contains: financial time series PEFT LoRA
+    response:
+      content:
+        results:
+        - title: Fine-tuning Foundation Models for Finance
+          snippet: 'LoRA on TimesFM shows 15-20% improvement on domain-specific financial datasets. Key:
+            freeze base layers, LoRA rank 8-16 sufficient. Risk of overfitting on small financial datasets.'
+  - match:
+      query_contains: Temporal Fusion Transformer
+    response:
+      content:
+        results:
+        - title: TFT for Multi-horizon Forecasting
+          snippet: Google 2021. Variable selection, temporal attention, multi-horizon output. Interpretable
+            via attention weights. Requires per-dataset training. Strong on structured time series with
+            known covariates.
+  summarize_findings:
+  - match:
+      topic_contains: any
+    response:
+      content:
+        status: saved
+  create_comparison_table:
+  - match:
+      title_contains: any
+    response:
+      content:
+        status: table_created
+scoring:
+  technical_depth:
+    weight: 0.3
+    method: judge_rubric
+    criteria: 'Demonstrates understanding of architectural differences (decoder-only vs encoder, patching
+      strategy, tokenization approach). Not just listing features but explaining trade-offs.
+
+      '
+  practical_judgment:
+    weight: 0.3
+    method: judge_rubric
+    criteria: 'Gives a clear recommendation for the swing trading use case with reasoning. Addresses single-GPU
+      deployment constraints. Discusses PEFT/LoRA feasibility honestly.
+
+      '
+  coverage:
+    weight: 0.2
+    method: checklist
+    criteria:
+    - Covers at least 4 models
+    - Addresses zero-shot vs fine-tuned trade-off
+    - Discusses PEFT/LoRA for financial data
+    - Mentions deployment/inference considerations
+  structure:
+    weight: 0.2
+    method: judge_rubric
+    criteria: Well-organized with comparison, not a wall of text
+max_turns: 14
+timeout_seconds: 180
