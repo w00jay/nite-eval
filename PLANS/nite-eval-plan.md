@@ -41,7 +41,7 @@ The system decomposes into five layers, each backed by a proven framework and ta
 > single-call, parallel-call, and argument validation — just without BFCL's multi-turn
 > and irrelevance-detection test corpus.
 
-**Layer 4 — Custom practical tasks** uses a purpose-built harness (detailed below) for Hermes-format tool calling, research synthesis, planning, and coding tasks that reflect real usage patterns rather than academic benchmarks. These tasks use the Prometheus 2 judge on the RTX 3060 for rubric-based scoring.
+**Layer 4 — Custom practical tasks** uses a purpose-built harness (detailed below) for Hermes-format tool calling, research synthesis, planning, and coding tasks that reflect real usage patterns rather than academic benchmarks. These tasks use dimension-routed judges on the RTX 3060 (Flow-Judge for agentic dimensions, RewardAnything for research/planning) for rubric-based scoring.
 
 **Layer 5 — Head-to-head comparison (DEFERRED).** Arena-Hard-Auto v2.0 provides pairwise model ranking via 500 challenging real-world prompts with Bradley-Terry scoring. It achieves **87.4% separability** and **90.8% agreement** with human preferences — but these metrics were measured with GPT-4-Turbo as the judge. A 7B local judge exhibits severe position bias and substantially lower separability, making the rankings unreliable.
 
@@ -92,14 +92,14 @@ groups:
     exclusive: true  # Only one target model loaded at a time
 ```
 
-Start the judge model directly, since it never changes:
+Start the judge models via a second llama-swap instance on GPU 1, which hot-swaps between Flow-Judge and RewardAnything based on the model name in the request:
 
 ```bash
-CUDA_VISIBLE_DEVICES=1 llama-server \
-  -m /models/selene-1-mini-llama-3.1-8b-Q6_K.gguf \
-  --port 8081 -ngl 999 --ctx-size 8192 \
-  -fa on --no-webui
+CUDA_VISIBLE_DEVICES=1 /home/woojay/T/llama-swap/llama-swap \
+  --config config/judge_swap_config.yaml --listen :8081
 ```
+
+See `config/judge_swap_config.yaml` for the judge model definitions. The `RoutedJudgeClient` in `judge.py` automatically selects the right judge model per scoring dimension.
 
 For vLLM support (needed for some models with custom architectures), the orchestrator detects the backend from the eval config and spawns either `llama-server` or `vllm serve` via subprocess. The readiness check differs: poll `/health` for llama.cpp, but poll `/v1/models` for vLLM (since vLLM's `/health` returns 200 before the model is loaded). The key constraint with vLLM is that stopping a model requires killing the entire process — there is no hot-swap API.
 
@@ -107,28 +107,24 @@ For vLLM support (needed for some models with custom architectures), the orchest
 
 ## The judge model on RTX 3060
 
-### Primary recommendation: Atla Selene-1-Mini (8B)
+### Calibration results and routing decision (2026-04-05)
 
-**Atla Selene-1-Mini** (`AtlaAI/Selene-1-Mini-Llama-3.1-8B`) is the recommended judge model. It is the **#1 ranked 8B generative model on RewardBench**, outperforming GPT-4o on RewardBench, EvalBiasBench, and AutoJ benchmarks. At Q6_K quantization it requires ~6.5GB VRAM, leaving ample room for context on the RTX 3060's 12GB.
+The calibration shootout tested three judge candidates on 10 hand-scored examples across 13 dimensions. **No single judge passed** (κ > 0.6 required), but two judges showed complementary strengths:
 
-Key advantages over the previous candidate (Prometheus 2):
-- **Stronger base model**: Llama 3.1 8B vs Mistral 7B v0.2 (two generations behind)
-- **All three evaluation modes**: absolute rubric scoring, binary classification, AND pairwise comparison — Prometheus 2 lacks classification
-- **128K context window**: vs ~8K for Prometheus 2 — critical for evaluating long model outputs
-- **14 GGUF quantizations** available (vs 2 community quants for Prometheus 2)
-- **Official prompt templates** at `github.com/atla-ai/selene-mini` for all evaluation modes
+| Judge | Overall κ | Bias | Strengths | Weaknesses |
+|-------|-----------|------|-----------|------------|
+| **Selene-1-Mini** (8B) | 0.077 FAIL | Mixed; severe over-scoring on risk_awareness | error_handling only | Worst overall; eliminated |
+| **Flow-Judge** (3.8B) | 0.154 FAIL | 5-bias (over-scores) | reasoning_quality (3/3 perfect), practical_output (2/3) | Over-scores research/planning dimensions |
+| **RewardAnything** (8B) | 0.385 FAIL | 3-bias (conservative) | recommendation_quality, completeness, dependency_correctness, feasibility, error_handling (all perfect) | Cannot recognize excellence; under-scores agentic dimensions |
 
-### Calibration candidates
+**Decision: dimension-routed dual-judge.** The two surviving judges have complementary error profiles — Flow-Judge's 5-bias is correct when the true score is 5 (agentic excellence), while RewardAnything's 3-bias is correct when the true score is 3 (research/planning adequacy). Routing by dimension exploits both biases:
 
-Before locking in the judge, Phase 1 includes a calibration shootout with 50 hand-scored examples across 3 candidates:
+- **Flow-Judge** → `reasoning_quality`, `practical_output` (agentic dimensions where excellence is common and the 5-bias helps)
+- **RewardAnything** → all other dimensions (research, planning, coding dimensions where the 3-bias aligns with typical scores)
 
-| Candidate | Params | VRAM (Q6_K) | Strength | Weakness |
-|-----------|--------|-------------|----------|----------|
-| **Selene-1-Mini** | 8B | ~6.5GB | Best overall; all 3 modes; #1 RewardBench 8B | Newer, less community validation |
-| **Flow-Judge v0.1** | 3.8B | ~2.5GB | 0.919 Pearson on 5-Likert rubrics; tiny | Not trained on code/math eval; 8K context |
-| **RewardAnything-8B** | 8B | ~6.7GB | Define criteria in natural language; Qwen3 base | Reward scorer, not traditional rubric judge |
+Both models are served via llama-swap on GPU 1 (port 8081). Flow-Judge (~2.5GB) and RewardAnything (~6.7GB) total ~9.2GB — tight on the 12GB RTX 3060 but llama-swap handles swapping, so only one is loaded at a time.
 
-Measure Cohen's κ per scoring dimension. Selene is expected to win overall, but Flow-Judge may outperform on text-focused rubrics (research/planning quality) despite being 2x smaller. If Flow-Judge proves strong on text dimensions, consider running both: Flow-Judge for research/planning rubrics (~2.5GB) and Selene for code quality and general scoring (~6.5GB) — both fit on the RTX 3060 simultaneously if needed.
+**Known blind spots (both judges):** Neither reliably detects score=1 (poor quality), and both struggle with `accuracy` and `code_quality`. These dimensions should rely on deterministic scoring where possible (test suites, AST matching) rather than judge evaluation.
 
 ### Other models evaluated and rejected
 
@@ -165,26 +161,35 @@ This reinforces the plan's core design: **deterministic scoring for code and too
 
 ### Judge prompt templates
 
-Use Selene's official prompt templates from `github.com/atla-ai/selene-mini`. For rubric-based absolute scoring, the template follows this structure:
+Both judges use the same rubric-based prompt template (calibrated during the shootout):
 
 ```
-You are evaluating {dimension_name}. Analyze step by step, then score.
+You are a strict evaluator scoring "{dimension_name}" on a 3-point scale.
 
-## Rubric
-1 (Poor): {concrete behavioral description}
-3 (Acceptable): {concrete behavioral description}  
-5 (Excellent): {concrete behavioral description}
+IMPORTANT: Be critical. Most responses deserve a 3. Only give 5 for truly
+exceptional work. Only give 1 for clear failures. If in doubt, score 3.
 
-## Input
-Task: {task_description}
-Response: {model_response}
+## Scoring Scale
+1 = Poor (clear failures, major gaps)
+3 = Acceptable (adequate, meets basic requirements)
+5 = Excellent (exceptional, goes above and beyond)
 
-Output ONLY: {"reasoning": "...", "score": N}
+You MUST pick exactly 1, 3, or 5. No other scores.
+
+## Rubric for {dimension_name}
+{rubric}
+
+## Task
+{task_description}
+
+## Response to Evaluate
+{model_response}
+
+First write 2-3 sentences of reasoning, then output your score.
+Output ONLY valid JSON: {"reasoning": "your 2-3 sentence analysis", "score": N}
 ```
 
-> **Note:** Adapt to Selene's official template format during Phase 1. The structure above
-> is illustrative — Selene has specific prompt templates for absolute, classification,
-> and pairwise modes that should be used for best results.
+The `RoutedJudgeClient` selects the judge model per dimension automatically. The prompt is identical for both; the routing exploits their different bias profiles, not different prompt formats.
 
 ---
 
@@ -286,7 +291,8 @@ For **cross-model comparison** in the MVP, models are ranked by their composite 
 llm-eval-suite/
 ├── config/
 │   ├── eval_config.yaml          # Master config: models, GPUs, backends, timeouts
-│   ├── llama_swap_config.yaml    # llama-swap model definitions
+│   ├── llama_swap_config.yaml    # llama-swap model definitions (target models, GPU 0)
+│   ├── judge_swap_config.yaml    # llama-swap for judge models (GPU 1): Flow-Judge + RewardAnything
 │   ├── models.yaml               # Model registry (name, path, format, backend)
 │   └── scoring_weights.yaml      # Dimension weights for composite score
 ├── tasks/
@@ -319,7 +325,7 @@ llm-eval-suite/
 │   ├── hermes_parser.py          # Parse/validate Hermes-format tool calls
 │   ├── mock_tools.py             # Deterministic tool response simulator
 │   ├── conversation_runner.py    # Multi-turn agent loop with tool execution
-│   ├── judge.py                  # Judge client: send to Selene-1-Mini on port 8081
+│   ├── judge.py                  # Judge client: RoutedJudgeClient routes dimensions to Flow-Judge / RewardAnything
 │   ├── scoring.py                # Aggregate scores, compute composite, normalize
 │   └── report_generator.py       # Markdown/HTML comparison reports
 ├── judges/
@@ -457,7 +463,7 @@ A simplified version of the core loop:
 def run_evaluation(config_path: str):
     config = load_config(config_path)
     db = init_database(config.results_dir)
-    judge = JudgeClient(base_url="http://localhost:8081/v1")
+    judge = RoutedJudgeClient(base_url="http://localhost:8081/v1")
     target = TargetClient(base_url="http://localhost:8080/v1")
     
     for model in config.models:
@@ -498,7 +504,7 @@ Not all benchmarks deserve runtime in an overnight evaluation. Based on practica
 
 **Phase 1 (Week 1–2): Foundation + spikes.** Install llama-swap and llama-server. Set up GPU isolation. Download judge candidates (Selene-1-Mini Q6_K, Flow-Judge v0.1 bf16, RewardAnything-8B Q6_K) to RTX 3060. Write `model_manager.py` (start/stop/health-check) and `hermes_parser.py` (extract and validate tool calls). Validate the basic loop: load model → send prompt → get response → parse tool calls → send to judge → store result.
 
-**Judge calibration shootout (days 1–2 of Phase 1):** Hand-score 50 examples across all scoring dimensions (research quality, plan quality, code quality, tool-calling correctness). Run each judge candidate on the same 50 examples. Measure Cohen's κ per dimension — require κ > 0.6 overall. Expected outcome: Selene-1-Mini wins overall; Flow-Judge may win on text-focused rubrics. Lock in the judge (or judges, if dimension-specific routing proves worthwhile) before proceeding.
+**Judge calibration shootout (days 1–2 of Phase 1): ✅ COMPLETE.** Hand-scored 10 examples across 13 scoring dimensions. Ran all three candidates (Selene-1-Mini, Flow-Judge, RewardAnything). No single judge reached κ > 0.6, but complementary strengths identified. **Decision: dimension-routed dual-judge** — Flow-Judge for agentic dimensions (reasoning_quality, practical_output), RewardAnything for everything else. Selene-1-Mini eliminated (worst overall κ = 0.077). See "Calibration results and routing decision" section above for full data.
 
 **BFCL spike (days 3–4 of Phase 1):** Clone `github.com/ShishirPatil/gorilla`, confirm current version and install method, test with a llama.cpp `/v1/chat/completions` endpoint, and assess effort to add a Hermes-format handler. **Go/no-go decision at end of day 4:** if BFCL integrates in ≤2 days of handler work, proceed with it in Phase 2. If not, build the custom Hermes AST comparator (~200 lines, validates `<tool_call>` output against gold-standard sequences using the parser from `hermes_parser.py`).
 

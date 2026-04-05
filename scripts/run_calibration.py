@@ -15,6 +15,7 @@ Usage:
 
 import argparse
 import json
+import logging
 import math
 import subprocess
 import sys
@@ -28,6 +29,7 @@ from rich.table import Table
 from nite_eval.judge import JudgeClient, JudgeResult
 from nite_eval.model_manager import check_health
 
+logger = logging.getLogger(__name__)
 console = Console()
 
 CALIBRATION_PATH = Path("judges/calibration/calibration_set.jsonl")
@@ -187,6 +189,15 @@ def correlation(human_scores: list[int], judge_scores: list[int]) -> float:
     return numerator / denom
 
 
+def _snap_ternary(score: int) -> int:
+    """Snap a 1-5 score to the ternary scale (1, 3, 5)."""
+    if score <= 2:
+        return 1
+    if score <= 4:
+        return 3
+    return 5
+
+
 def start_judge_server(gguf_path: str, gpu_id: int = 1) -> subprocess.Popen:
     """Start a judge model server."""
     cmd = [
@@ -270,11 +281,20 @@ def run_judge_on_entries(
             )
 
             if isinstance(result, JudgeResult):
-                # Clamp to 1-5 range
-                score = max(1.0, min(5.0, round(result.score)))
+                # Snap to ternary scale (1, 3, 5)
+                raw_score = result.score
+                if raw_score <= 2.0:
+                    score = 1.0
+                elif raw_score <= 4.0:
+                    score = 3.0
+                else:
+                    score = 5.0
                 entry_scores[dim] = score
             else:
-                console.print("[red]ERR[/red] ", end="")
+                # Log the raw response so we can debug parsing failures
+                raw_preview = result.raw_response[:150].replace("\n", " ")
+                console.print(f"[red]ERR({dim})[/red] ", end="")
+                logger.warning("Parse fail %s/%s: %s", entry["id"], dim, raw_preview)
                 entry_scores[dim] = 3.0  # Default on error
 
         results[entry["id"]] = entry_scores
@@ -324,8 +344,8 @@ def print_comparison_report(
                     continue
                 eid = entry["id"]
                 if eid in judge_data and dim in judge_data[eid]:
-                    human_list.append(int(hs[dim]))
-                    judge_list.append(int(judge_data[eid][dim]))
+                    human_list.append(_snap_ternary(int(hs[dim])))
+                    judge_list.append(_snap_ternary(int(judge_data[eid][dim])))
 
             if not human_list:
                 continue
@@ -356,6 +376,8 @@ def print_comparison_report(
 
 
 def main():
+    logging.basicConfig(level=logging.WARNING, format="%(message)s")
+
     parser = argparse.ArgumentParser(description="Run judge calibration")
     parser.add_argument("--input", default=str(CALIBRATION_PATH))
     parser.add_argument("--judge-model", required=True, help="Judge model name for API calls")

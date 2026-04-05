@@ -1,0 +1,44 @@
+{
+  "cal_research_01": {
+    "coverage": 3.0,
+    "synthesis": 3.0
+  },
+  "cal_research_02": {
+    "accuracy": 5.0,
+    "recommendation_quality": 3.0
+  },
+  "cal_research_03": {
+    "coverage": 3.0,
+    "synthesis": 3.0,
+    "accuracy": 3.0
+  },
+  "cal_planning_01": {
+    "specificity": 3.0,
+    "risk_awareness": 3.0
+  },
+  "cal_planning_02": {
+    "completeness": 3.0,
+    "dependency_correctness": 3.0,
+    "risk_awareness": 3.0
+  },
+  "cal_planning_03": {
+    "specificity": 3.0,
+    "feasibility": 3.0
+  },
+  "cal_coding_01": {
+    "code_quality": 3.0,
+    "error_handling": 3.0
+  },
+  "cal_agentic_01": {
+    "reasoning_quality": 3.0,
+    "practical_output": 3.0
+  },
+  "cal_agentic_02": {
+    "reasoning_quality": 3.0,
+    "practical_output": 3.0
+  },
+  "cal_agentic_03": {
+    "reasoning_quality": 3.0,
+    "practical_output": 3.0
+  }
+}
