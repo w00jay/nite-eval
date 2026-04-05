@@ -166,7 +166,6 @@ mock_responses:
   get_price_data:
   - match:
       symbol: NVDA
-      period: 3mo
     response:
       content:
         current_price: 142.5

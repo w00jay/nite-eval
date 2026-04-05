@@ -51,6 +51,15 @@ mock_responses:
             Catalog/registry. Profile-based server grouping. Apache 2.0 license.
           url: https://github.com/docker/mcp-gateway
   - match:
+      query_contains: Docker MCP
+    response:
+      content:
+        results:
+        - title: docker/mcp-gateway GitHub
+          snippet: Go-based MCP proxy. Runs servers in isolated containers. Supports Streamable HTTP.
+            Catalog/registry. Profile-based server grouping. Apache 2.0 license.
+          url: https://github.com/docker/mcp-gateway
+  - match:
       query_contains: microsoft mcp-gateway
     response:
       content:
@@ -59,6 +68,23 @@ mock_responses:
           snippet: .NET-based. K8s-native with session affinity. Control plane for MCP server lifecycle.
             Enterprise telemetry, access control, observability. Designed for K8s from start.
           url: https://github.com/microsoft/mcp-gateway
+  - match:
+      query_contains: Microsoft MCP
+    response:
+      content:
+        results:
+        - title: microsoft/mcp-gateway GitHub
+          snippet: .NET-based. K8s-native with session affinity. Control plane for MCP server lifecycle.
+            Enterprise telemetry, access control, observability. Designed for K8s from start.
+          url: https://github.com/microsoft/mcp-gateway
+  - match:
+      query_contains: MCP gateway
+    response:
+      content:
+        results:
+        - title: MCP Gateway Comparison
+          snippet: Two major open-source MCP gateways available. Docker's is Go-based with container
+            isolation. Microsoft's is .NET-based, K8s-native. Both support tool aggregation and auth injection.
   fetch_url:
   - match:
       url_contains: docker

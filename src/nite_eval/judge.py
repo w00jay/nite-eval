@@ -175,6 +175,11 @@ class JudgeClient:
             confidence=1.0 - min(score_variance / 2.0, 1.0),  # High variance = low confidence
         )
 
+    # Max characters for model response in judge prompt (~1500 tokens ≈ 6000 chars).
+    # Leaves room for system prompt (~200 tokens), rubric, task description, and
+    # judge output (max_tokens) within the judge's 4096 context window.
+    MAX_RESPONSE_CHARS = 6000
+
     def _build_prompt(
         self,
         dimension: str,
@@ -182,6 +187,12 @@ class JudgeClient:
         task_description: str,
         model_response: str,
     ) -> str:
+        # Truncate long responses to fit judge context window
+        if len(model_response) > self.MAX_RESPONSE_CHARS:
+            model_response = (
+                model_response[: self.MAX_RESPONSE_CHARS] + "\n\n[... response truncated for evaluation ...]"
+            )
+
         return f"""You are a strict evaluator scoring "{dimension}" on a 3-point scale.
 
 IMPORTANT: Be critical. Most responses deserve a 3. Only give 5 for truly
