@@ -14,10 +14,12 @@
 - [x] End-to-end smoke test passing (model → tool calls → mock responses → judge → score)
 - [x] llama-swap config with 3 target models (Qwen 3.5 27B/9B, Gemma 4 26B)
 
+- [x] **BFCL spike** — completed, decision: skip BFCL, build custom Hermes AST comparator. See `PLANS/bfcl-spike-results.md`
+- [x] Download remaining judge candidates (Flow-Judge v0.1, RewardAnything-8B) — in `~/models/`
+
 ### Remaining
-- [ ] **BFCL spike** — clone Gorilla repo, confirm version, test with llama.cpp endpoint, assess Hermes handler effort. Go/no-go after 2 days. Fallback: custom Hermes AST comparator (~200 lines)
+- [ ] **Build custom Hermes AST comparator** (~200 lines) — compare `<tool_call>` output against gold-standard calls, score on function name, argument accuracy, sequence correctness
 - [ ] **Judge calibration shootout** — hand-score 50 examples across scoring dimensions, run Selene + Flow-Judge + RewardAnything, measure Cohen's κ per dimension, require κ > 0.6
-- [ ] Download remaining judge candidates (Flow-Judge v0.1, RewardAnything-8B)
 
 ## Phase 2: Benchmark Integration + Custom Tasks (Weeks 3-5)
 
@@ -26,7 +28,7 @@
 - [ ] **SQLite storage** — results DB schema, checkpointing after each prompt, resume logic with `(model, task_id, prompt_id)` dedup
 - [ ] **Orchestrator** — main loop: iterate models × layers × tasks, store results, handle model swapping via llama-swap
 - [ ] **Integrate lm-evaluation-harness** — configure MMLU-Pro, HumanEval, GPQA via YAML, pipe results to SQLite
-- [ ] **Integrate BFCL or build custom AST comparator** — based on spike results
+- [ ] **Convert 200-500 BFCL test cases** — download from HuggingFace, convert to task YAML format for the custom AST comparator
 - [ ] **Judge prompt templates** — write rubric prompts for research quality, plan quality, code quality, tool-calling
 - [ ] **Write 5-15 more custom tasks** — target 20-30 total (5-8 per dimension, 3 difficulty tiers)
 - [ ] **Nightly runner script** — `scripts/run_eval.sh` with nohup, PID tracking, log rotation
