@@ -5,8 +5,10 @@ target:
   llama_swap_config: "config/llama_swap_config.yaml"
 
 judge:
-  base_url: "http://127.0.0.1:8081"
-  model: "selene-1-mini"
+  base_url: "http://127.0.0.1:9091/v1"
+  judge_swap_config: "config/judge_swap_config.yaml"
+  flow_judge_model: "flow-judge"
+  reward_anything_model: "reward-anything"
   temperature: 0.1
   max_tokens: 1024
 

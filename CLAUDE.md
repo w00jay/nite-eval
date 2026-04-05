@@ -62,3 +62,5 @@ uv run python scripts/smoke_test.py --model qwen3.5-9b
 - `src/nite_eval/scoring.py` — Sequence match, subset match, checklist, composite scoring
 - `src/nite_eval/task_loader.py` — Load task YAML definitions from `tasks/` with filtering
 - `src/nite_eval/results_db.py` — SQLite storage for results, checkpointing, and resume
+- `src/nite_eval/rubrics.py` — Centralized rubric definitions for judge-scored dimensions
+- `src/nite_eval/orchestrator.py` — Main pipeline: load tasks → run models → score → persist
