@@ -5,7 +5,7 @@ Computes Cohen's κ per dimension and overall for each judge candidate.
 Produces a comparison report.
 
 Usage:
-    # Start each judge one at a time on port 8081, run this script for each:
+    # Start each judge one at a time on port 9091, run this script for each:
     uv run python scripts/run_calibration.py --judge-model selene-1-mini \
         --judge-gguf ~/models/Selene-1-Mini-Llama-3.1-8B-Q6_K.gguf
 
@@ -36,7 +36,7 @@ CALIBRATION_PATH = Path("judges/calibration/calibration_set.jsonl")
 RESULTS_DIR = Path("judges/calibration/results")
 
 LLAMA_SERVER = "/home/woojay/P/llama.cpp/build/bin/llama-server"
-JUDGE_PORT = 8081
+JUDGE_PORT = 9091
 
 # Rubric text used for judge prompts (matches score_calibration.py rubrics)
 JUDGE_RUBRICS = {
@@ -382,7 +382,7 @@ def main():
     parser.add_argument("--input", default=str(CALIBRATION_PATH))
     parser.add_argument("--judge-model", required=True, help="Judge model name for API calls")
     parser.add_argument("--judge-gguf", help="Path to GGUF file (starts server automatically)")
-    parser.add_argument("--skip-start", action="store_true", help="Judge already running on :8081")
+    parser.add_argument("--skip-start", action="store_true", help="Judge already running on :9091")
     parser.add_argument("--gpu", type=int, default=1, help="GPU ID for judge server")
     args = parser.parse_args()
 

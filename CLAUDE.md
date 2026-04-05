@@ -5,7 +5,7 @@ Autonomous overnight LLM evaluation pipeline for local models on dual GPUs (RTX 
 ## Architecture
 
 - **GPU 0 (RTX 3090):** Target models via llama-swap on :8080
-- **GPU 1 (RTX 3060):** Judge models via llama-swap on :8081 (dimension-routed: Flow-Judge for agentic, RewardAnything for research/planning)
+- **GPU 1 (RTX 3060):** Judge models via llama-swap on :9091 (dimension-routed: Flow-Judge for agentic, RewardAnything for research/planning)
 - **Orchestrator:** Python pipeline that swaps models, runs evals, stores results in SQLite
 - **4 evaluation layers:** static benchmarks (lm-eval-harness), agentic (Inspect AI), tool-calling (BFCL or custom AST), custom tasks (Hermes format)
 - **Layer 5 (Arena-Hard-Auto):** deferred — requires frontier-class judge
@@ -35,7 +35,7 @@ uv run python -m pytest -v                            # test (use uv's venv, not
 
 # Start servers
 CUDA_VISIBLE_DEVICES=1 /home/woojay/T/llama-swap/llama-swap \
-  --config config/judge_swap_config.yaml --listen :8081
+  --config config/judge_swap_config.yaml --listen :9091
 CUDA_VISIBLE_DEVICES=0 /home/woojay/T/llama-swap/llama-swap \
   --config config/llama_swap_config.yaml --listen :8080
 

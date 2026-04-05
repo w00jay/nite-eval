@@ -5,10 +5,16 @@ and judge-based scoring orchestration. Aggregates per-task scores into per-dimen
 and composite scores.
 """
 
+from __future__ import annotations
+
 import logging
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from nite_eval.judge import JudgeClient, JudgeError, JudgeResult
+
+if TYPE_CHECKING:
+    from nite_eval.judge import RoutedJudgeClient
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +135,7 @@ def score_distractor_avoidance(
 
 
 def score_with_judge(
-    judge: JudgeClient,
+    judge: JudgeClient | RoutedJudgeClient,
     dimension: str,
     rubric: str,
     task_description: str,

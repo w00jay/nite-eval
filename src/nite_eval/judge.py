@@ -1,4 +1,4 @@
-"""Client for the judge model running on RTX 3060 (port 8081).
+"""Client for the judge model running on RTX 3060 (port 9091).
 
 Sends rubric-based evaluation prompts to the judge and parses structured responses.
 Supports retry with averaging for variance reduction.
@@ -18,7 +18,7 @@ JSON_BLOCK_RE = re.compile(r"\{[^{}]*\}", re.DOTALL)
 # Fallback: extract score from patterns like "score": 4 or **Score: 4**
 SCORE_FALLBACK_RE = re.compile(r"(?:\"score\"|score)\s*[:=]\s*(\d(?:\.\d)?)", re.IGNORECASE)
 
-DEFAULT_JUDGE_URL = "http://127.0.0.1:8081/v1"
+DEFAULT_JUDGE_URL = "http://127.0.0.1:9091/v1"
 DEFAULT_JUDGE_MODEL = "selene-1-mini"
 
 
@@ -229,6 +229,89 @@ Output ONLY valid JSON: {{"reasoning": "your 2-3 sentence analysis", "score": N}
         self._client.close()
 
     def __enter__(self) -> "JudgeClient":
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.close()
+
+
+# Dimensions where Flow-Judge outperforms (agentic: 5-bias matches true excellence)
+FLOW_JUDGE_DIMENSIONS = frozenset({"reasoning_quality", "practical_output"})
+
+DEFAULT_FLOW_JUDGE_MODEL = "flow-judge"
+DEFAULT_REWARD_ANYTHING_MODEL = "reward-anything"
+
+
+class RoutedJudgeClient:
+    """Routes evaluation dimensions to the best-performing judge model.
+
+    Flow-Judge handles agentic dimensions (reasoning_quality, practical_output)
+    where its 5-bias correctly identifies excellence. RewardAnything handles
+    all other dimensions where its 3-bias aligns with typical scores.
+
+    Both judges are served via llama-swap on the same port; the model name
+    in the API request triggers the swap.
+    """
+
+    def __init__(
+        self,
+        base_url: str = DEFAULT_JUDGE_URL,
+        flow_judge_model: str = DEFAULT_FLOW_JUDGE_MODEL,
+        reward_anything_model: str = DEFAULT_REWARD_ANYTHING_MODEL,
+        flow_judge_dimensions: frozenset[str] = FLOW_JUDGE_DIMENSIONS,
+        temperature: float = 0.1,
+        max_tokens: int = 1024,
+        timeout: float = 120.0,
+    ):
+        self._flow_dims = flow_judge_dimensions
+        self._flow = JudgeClient(
+            base_url=base_url,
+            model=flow_judge_model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout=timeout,
+        )
+        self._reward = JudgeClient(
+            base_url=base_url,
+            model=reward_anything_model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout=timeout,
+        )
+
+    def _select(self, dimension: str) -> JudgeClient:
+        return self._flow if dimension in self._flow_dims else self._reward
+
+    def evaluate(
+        self,
+        dimension: str,
+        rubric: str,
+        task_description: str,
+        model_response: str,
+    ) -> JudgeResult | JudgeError:
+        """Route to the best judge for this dimension."""
+        judge = self._select(dimension)
+        logger.debug("Routing %s → %s", dimension, judge.model)
+        return judge.evaluate(dimension, rubric, task_description, model_response)
+
+    def evaluate_with_averaging(
+        self,
+        dimension: str,
+        rubric: str,
+        task_description: str,
+        model_response: str,
+        n_runs: int = 3,
+    ) -> JudgeResult | JudgeError:
+        """Route to the best judge for this dimension, with variance reduction."""
+        judge = self._select(dimension)
+        logger.debug("Routing %s → %s (n=%d)", dimension, judge.model, n_runs)
+        return judge.evaluate_with_averaging(dimension, rubric, task_description, model_response, n_runs)
+
+    def close(self) -> None:
+        self._flow.close()
+        self._reward.close()
+
+    def __enter__(self) -> "RoutedJudgeClient":
         return self
 
     def __exit__(self, *args: object) -> None:

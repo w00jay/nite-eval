@@ -2,13 +2,13 @@
 """End-to-end smoke test for the nite-eval pipeline.
 
 Tests the full loop: load a task → run conversation → score results.
-Requires: judge model on :8081, llama-swap on :8080 with at least one target model.
+Requires: judge model on :9091, llama-swap on :8080 with at least one target model.
 
 Usage:
     # 1. Start judge on GPU 1:
     CUDA_VISIBLE_DEVICES=1 /home/woojay/P/llama.cpp/build/bin/llama-server \
         -m <judge-model-path>.gguf \
-        --port 8081 -ngl 999 --ctx-size 8192 -fa on --no-webui
+        --port 9091 -ngl 999 --ctx-size 8192 -fa on --no-webui
 
     # 2. Start llama-swap on GPU 0:
     CUDA_VISIBLE_DEVICES=0 /home/woojay/T/llama-swap/llama-swap \
@@ -32,7 +32,7 @@ from nite_eval.scoring import (
 )
 
 TARGET_URL = "http://127.0.0.1:8080"
-JUDGE_URL = "http://127.0.0.1:8081"
+JUDGE_URL = "http://127.0.0.1:9091"
 
 # Inline smoke test task (the simple wooj-brain thought capture from tasks YAML)
 SMOKE_TASK = {
@@ -259,7 +259,7 @@ def main():
             print("\nBoth servers must be running. Start them with:")
             print("  # GPU 1 - Judge:")
             print("  CUDA_VISIBLE_DEVICES=1 /home/woojay/P/llama.cpp/build/bin/llama-server \\")
-            print("    -m <judge>.gguf --port 8081 -ngl 999 --ctx-size 8192 -fa on --no-webui")
+            print("    -m <judge>.gguf --port 9091 -ngl 999 --ctx-size 8192 -fa on --no-webui")
             print("  # GPU 0 - Target:")
             print("  CUDA_VISIBLE_DEVICES=0 /home/woojay/T/llama-swap/llama-swap \\")
             print("    --config config/llama_swap_config.yaml --listen :8080")
