@@ -206,24 +206,38 @@ You MUST pick exactly 1, 3, or 5. No other scores.
 First write 2-3 sentences of reasoning, then output your score.
 Output ONLY valid JSON: {{"reasoning": "your 2-3 sentence analysis", "score": N}}"""
 
-    def _call(self, prompt: str) -> JudgeResult | JudgeError:
-        try:
-            resp = self._client.post(
-                f"{self.base_url}/chat/completions",
-                json={
-                    "model": self.model,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": self.temperature,
-                    "max_tokens": self.max_tokens,
-                },
-            )
-            resp.raise_for_status()
-        except httpx.HTTPError as e:
-            return JudgeError(error=f"http_error: {e}", raw_response="")
+    def _call(self, prompt: str, max_retries: int = 3) -> JudgeResult | JudgeError:
+        last_error = ""
+        for attempt in range(1, max_retries + 1):
+            try:
+                resp = self._client.post(
+                    f"{self.base_url}/chat/completions",
+                    json={
+                        "model": self.model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": self.temperature,
+                        "max_tokens": self.max_tokens,
+                    },
+                )
+                resp.raise_for_status()
+            except httpx.HTTPError as e:
+                last_error = f"http_error: {e}"
+                if attempt < max_retries:
+                    import time
 
-        data = resp.json()
-        raw = data["choices"][0]["message"]["content"]
-        return _parse_judge_response(raw)
+                    wait = 5 * attempt
+                    logger.warning(
+                        "Judge call failed (attempt %d/%d), retrying in %ds: %s", attempt, max_retries, wait, e
+                    )
+                    time.sleep(wait)
+                    continue
+                return JudgeError(error=last_error, raw_response="")
+
+            data = resp.json()
+            raw = data["choices"][0]["message"]["content"]
+            return _parse_judge_response(raw)
+
+        return JudgeError(error=last_error, raw_response="")
 
     def close(self) -> None:
         self._client.close()

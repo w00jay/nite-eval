@@ -6,7 +6,7 @@ models:
     cmd: >
       /home/woojay/P/llama.cpp/build/bin/llama-server
       -m /home/woojay/models/Flow-Judge-v0.1.Q6_K.gguf
-      --port ${PORT} -ngl 999 --ctx-size 8192
+      --port ${PORT} -ngl 999 --ctx-size 4096
       -fa on --no-webui
     group: "judge-gpu"
 
@@ -14,8 +14,8 @@ models:
     cmd: >
       /home/woojay/P/llama.cpp/build/bin/llama-server
       -m /home/woojay/models/RewardAnything-8B-v1.Q6_K.gguf
-      --port ${PORT} -ngl 999 --ctx-size 8192
-      -fa on --no-webui
+      --port ${PORT} -ngl 999 --ctx-size 4096
+      --cache-type-k q8_0 --cache-type-v q8_0 --no-webui
     group: "judge-gpu"
 
 groups:

@@ -189,7 +189,7 @@ def run_task(
     console.print(f"    [bold]{task.id}[/bold] ({task.difficulty})", end="")
 
     # Set up mock environment
-    mock_env = MockToolEnv(task.mock_responses)
+    mock_env = MockToolEnv.from_task_yaml(task.mock_responses)
 
     # Run conversation
     conv = run_conversation(
