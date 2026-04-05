@@ -17,8 +17,9 @@
 - [x] **BFCL spike** — completed, decision: skip BFCL, build custom Hermes AST comparator. See `PLANS/bfcl-spike-results.md`
 - [x] Download remaining judge candidates (Flow-Judge v0.1, RewardAnything-8B) — in `~/models/`
 
+- [x] **Build custom Hermes AST comparator** — `ast_comparator.py` (230 lines, 20 tests). Scores: function name, arg name/value accuracy, sequence correctness, call count. Supports ordered + unordered matching, fuzzy args, nested dicts/lists, required-arg subsets.
+
 ### Remaining
-- [ ] **Build custom Hermes AST comparator** (~200 lines) — compare `<tool_call>` output against gold-standard calls, score on function name, argument accuracy, sequence correctness
 - [ ] **Judge calibration shootout** — hand-score 50 examples across scoring dimensions, run Selene + Flow-Judge + RewardAnything, measure Cohen's κ per dimension, require κ > 0.6
 
 ## Phase 2: Benchmark Integration + Custom Tasks (Weeks 3-5)
