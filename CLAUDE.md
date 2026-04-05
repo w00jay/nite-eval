@@ -61,3 +61,4 @@ uv run python scripts/smoke_test.py --model qwen3.5-9b
 - `src/nite_eval/conversation_runner.py` — Multi-turn agent loop with Hermes tool execution
 - `src/nite_eval/scoring.py` — Sequence match, subset match, checklist, composite scoring
 - `src/nite_eval/task_loader.py` — Load task YAML definitions from `tasks/` with filtering
+- `src/nite_eval/results_db.py` — SQLite storage for results, checkpointing, and resume
