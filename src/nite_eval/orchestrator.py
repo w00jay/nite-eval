@@ -26,6 +26,7 @@ from nite_eval.conversation_runner import ConversationResult, run_conversation
 from nite_eval.judge import FLOW_JUDGE_DIMENSIONS, RoutedJudgeClient
 from nite_eval.mock_tools import MockToolEnv
 from nite_eval.model_manager import check_health, warm_up_model
+from nite_eval.report import save_report  # noqa: TC001
 from nite_eval.results_db import ResultsDB
 from nite_eval.rubrics import get_rubric
 from nite_eval.scoring import (
@@ -441,6 +442,10 @@ def main() -> None:
 
         db.finish_run(run_id)
         print_results(db, run_id, models, weights)
+
+        # Generate Markdown report
+        report_path = save_report(db, run_id, results_dir, weights)
+        console.print(f"\nReport saved to [bold]{report_path}[/bold]")
 
     except KeyboardInterrupt:
         console.print("\n[yellow]Interrupted — progress saved, resume with --resume {run_id}[/yellow]")
