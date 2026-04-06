@@ -115,7 +115,7 @@ start_judge() {
     fi
 
     echo "Starting $name on :$port (GPU $JUDGE_GPU)..."
-    CUDA_VISIBLE_DEVICES="$JUDGE_GPU" "$LLAMA_SERVER" \
+    CUDA_VISIBLE_DEVICES="${NITE_JUDGE_UUID:-GPU-219f27f6-0447-4906-2a3c-d4d24d2903a6}" "$LLAMA_SERVER" \
         -m "$model_path" \
         --port "$port" \
         -ngl 999 --ctx-size 4096 -np 1 --no-webui \

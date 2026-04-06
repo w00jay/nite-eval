@@ -5,7 +5,7 @@
 models:
   "qwen3.5-27b":
     cmd: >
-      env CUDA_VISIBLE_DEVICES=1
+      env CUDA_VISIBLE_DEVICES=GPU-d5346770-8aa7-8069-e875-bf874014dfaa
       /home/woojay/P/llama.cpp/build/bin/llama-server
       -m /home/woojay/P/llama.cpp/build/bin/Qwen3.5-27B.Q4_K_M.gguf
       --port ${PORT} -ngl 999 --ctx-size 8192
@@ -14,7 +14,7 @@ models:
 
   "qwen3.5-9b":
     cmd: >
-      env CUDA_VISIBLE_DEVICES=1
+      env CUDA_VISIBLE_DEVICES=GPU-d5346770-8aa7-8069-e875-bf874014dfaa
       /home/woojay/P/llama.cpp/build/bin/llama-server
       -m /home/woojay/P/llama.cpp/build/bin/Qwen3.5-9B-Q4_K_M.gguf
       --port ${PORT} -ngl 999 --ctx-size 8192
@@ -23,7 +23,7 @@ models:
 
   "gemma4-26b-a4b":
     cmd: >
-      env CUDA_VISIBLE_DEVICES=1
+      env CUDA_VISIBLE_DEVICES=GPU-d5346770-8aa7-8069-e875-bf874014dfaa
       /home/woojay/P/llama.cpp/build/bin/llama-server
       -m /home/woojay/P/llama.cpp/build/bin/gemma-4-26b-a4b-it-Q4_K_M.gguf
       --port ${PORT} -ngl 999 --ctx-size 8192
