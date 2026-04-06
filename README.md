@@ -23,10 +23,10 @@ Each task runs as a multi-turn conversation with mock tools, scored by a mix of 
 
 ### Quick run (on-demand)
 
-Prerequisite: target llama-swap must be running on :9080.
+No prerequisites beyond having models downloaded. The script starts all servers and cleans them up on exit.
 
 ```bash
-# Run all models — starts judges, evaluates, generates report, cleans up
+# Run all models — starts target + judges, evaluates, generates report, cleans up
 ./scripts/run_nightly.sh
 
 # Single model
@@ -39,7 +39,7 @@ NITE_DIMENSION="agentic" ./scripts/run_nightly.sh
 NITE_MODELS="qwen3.5-27b qwen3.5-9b" NITE_DIMENSION="agentic" ./scripts/run_nightly.sh
 ```
 
-The script starts judge servers on GPU 2, runs the orchestrator, and cleans up judges on exit. Ctrl-C saves progress (resumable).
+The script starts target llama-swap (GPU 1) and both judge servers (GPU 2), runs the orchestrator, and cleans up all servers on exit. Skips starting any server already running. Ctrl-C saves progress (resumable).
 
 ### Overnight (unattended)
 
@@ -81,8 +81,8 @@ uv run python -m nite_eval.orchestrator --resume run-20260405-232559
 | `NITE_MODELS` | all from config | Space-separated model list |
 | `NITE_DIMENSION` | all | Filter to one dimension |
 | `NITE_CONFIG` | `config/eval_config.yaml` | Config path |
+| `NITE_TARGET_GPU` | `1` | GPU ID for target llama-swap |
 | `NITE_JUDGE_GPU` | `2` | GPU ID for judge servers |
-| `NITE_TARGET_URL` | `http://127.0.0.1:9080` | Target server URL |
 
 ## Target Models
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Nightly evaluation runner for nite-eval
 #
-# Starts judge servers, runs the full eval pipeline, generates report.
-# Designed for unattended overnight execution via nohup or cron.
+# Starts all servers (target + judges), runs the eval pipeline, generates
+# report, and cleans up all servers on exit.
 #
 # Usage:
 #   # Interactive (foreground):
@@ -15,15 +15,15 @@
 #   NITE_MODELS="qwen3.5-9b" ./scripts/run_nightly.sh
 #
 # Prerequisites:
-#   - Target llama-swap must be running on :9080 (GPU 1 / RTX 3090)
 #   - UV environment set up (uv sync)
+#   - GGUF models in expected paths
 #
 # Environment variables:
 #   NITE_MODELS       Space-separated model list (default: all from config)
 #   NITE_DIMENSION    Filter to one dimension (default: all)
 #   NITE_CONFIG       Config path (default: config/eval_config.yaml)
+#   NITE_TARGET_GPU   GPU ID for target llama-swap (default: 1)
 #   NITE_JUDGE_GPU    GPU ID for judge servers (default: 2)
-#   NITE_TARGET_URL   Target server URL (default: http://127.0.0.1:9080)
 
 set -euo pipefail
 
@@ -31,32 +31,38 @@ PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_DIR"
 
 # Config
+TARGET_GPU="${NITE_TARGET_GPU:-1}"
 JUDGE_GPU="${NITE_JUDGE_GPU:-2}"
-TARGET_URL="${NITE_TARGET_URL:-http://127.0.0.1:9080}"
 CONFIG="${NITE_CONFIG:-config/eval_config.yaml}"
 LLAMA_SERVER="/home/woojay/P/llama.cpp/build/bin/llama-server"
+LLAMA_SWAP="/home/woojay/T/llama-swap/llama-swap"
+LLAMA_SWAP_CONFIG="config/llama_swap_config.yaml"
 REWARD_MODEL="/home/woojay/models/RewardAnything-8B-v1.Q6_K.gguf"
 FLOW_MODEL="/home/woojay/models/Flow-Judge-v0.1.Q6_K.gguf"
+TARGET_PORT=9080
 REWARD_PORT=9091
 FLOW_PORT=9092
 
-# PID tracking for cleanup
-REWARD_PID=""
-FLOW_PID=""
+# Track what we started (only clean up what we own)
+STARTED_TARGET=""
+STARTED_REWARD=""
+STARTED_FLOW=""
 
 cleanup() {
     echo ""
     echo "=== Cleaning up ==="
-    if [ -n "$REWARD_PID" ] && kill -0 "$REWARD_PID" 2>/dev/null; then
-        echo "Stopping reward-anything (PID $REWARD_PID)"
-        kill "$REWARD_PID" 2>/dev/null || true
-        wait "$REWARD_PID" 2>/dev/null || true
-    fi
-    if [ -n "$FLOW_PID" ] && kill -0 "$FLOW_PID" 2>/dev/null; then
-        echo "Stopping flow-judge (PID $FLOW_PID)"
-        kill "$FLOW_PID" 2>/dev/null || true
-        wait "$FLOW_PID" 2>/dev/null || true
-    fi
+    for desc_pid in \
+        "llama-swap:$STARTED_TARGET" \
+        "reward-anything:$STARTED_REWARD" \
+        "flow-judge:$STARTED_FLOW"; do
+        local desc="${desc_pid%%:*}"
+        local pid="${desc_pid##*:}"
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            echo "Stopping $desc (PID $pid)"
+            kill "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+        fi
+    done
     echo "Cleanup complete"
 }
 trap cleanup EXIT INT TERM
@@ -67,16 +73,36 @@ echo "Project: $PROJECT_DIR"
 echo "Config: $CONFIG"
 echo ""
 
-# Check target server
-echo "Checking target server at $TARGET_URL..."
-if ! curl -sf "$TARGET_URL/health" > /dev/null 2>&1; then
-    echo "ERROR: Target server not responding at $TARGET_URL"
-    echo "Start with: CUDA_VISIBLE_DEVICES=1 /home/woojay/T/llama-swap/llama-swap --config config/llama_swap_config.yaml --listen :9080"
-    exit 1
-fi
-echo "Target server OK"
+mkdir -p results
 
-# Start a judge server if not already running
+# --- Start target llama-swap if not running ---
+echo "Checking target server on :$TARGET_PORT..."
+if curl -sf "http://127.0.0.1:$TARGET_PORT/health" > /dev/null 2>&1; then
+    echo "Target llama-swap already running on :$TARGET_PORT"
+else
+    echo "Starting llama-swap on :$TARGET_PORT (GPU $TARGET_GPU)..."
+    CUDA_VISIBLE_DEVICES="$TARGET_GPU" "$LLAMA_SWAP" \
+        --config "$LLAMA_SWAP_CONFIG" --listen ":$TARGET_PORT" \
+        > "results/llama-swap.log" 2>&1 &
+    STARTED_TARGET=$!
+    echo "llama-swap started (PID $STARTED_TARGET)"
+
+    # Wait for ready
+    deadline=$((SECONDS + 30))
+    while [ $SECONDS -lt $deadline ]; do
+        if curl -sf "http://127.0.0.1:$TARGET_PORT/health" > /dev/null 2>&1; then
+            echo "Target llama-swap ready"
+            break
+        fi
+        sleep 1
+    done
+    if ! curl -sf "http://127.0.0.1:$TARGET_PORT/health" > /dev/null 2>&1; then
+        echo "ERROR: llama-swap failed to start within 30s"
+        exit 1
+    fi
+fi
+
+# --- Start judge servers if not running ---
 start_judge() {
     local model_path="$1"
     local port="$2"
@@ -84,6 +110,7 @@ start_judge() {
 
     if curl -sf "http://127.0.0.1:$port/health" > /dev/null 2>&1; then
         echo "$name already running on :$port"
+        _STARTED_PID=""
         return 0
     fi
 
@@ -94,8 +121,8 @@ start_judge() {
         -ngl 999 --ctx-size 4096 -np 1 --no-webui \
         > "results/${name}.log" 2>&1 &
 
-    local pid=$!
-    echo "$name started (PID $pid)"
+    _STARTED_PID=$!
+    echo "$name started (PID $_STARTED_PID)"
 
     # Wait for ready
     local deadline=$((SECONDS + 120))
@@ -108,17 +135,16 @@ start_judge() {
     done
 
     echo "ERROR: $name failed to start within 120s"
-    kill "$pid" 2>/dev/null || true
+    kill "$_STARTED_PID" 2>/dev/null || true
+    _STARTED_PID=""
     exit 1
 }
 
-mkdir -p results
-
 start_judge "$REWARD_MODEL" "$REWARD_PORT" "reward-anything"
-REWARD_PID=$(pgrep -f "llama-server.*--port $REWARD_PORT" || true)
+STARTED_REWARD="$_STARTED_PID"
 
 start_judge "$FLOW_MODEL" "$FLOW_PORT" "flow-judge"
-FLOW_PID=$(pgrep -f "llama-server.*--port $FLOW_PORT" || true)
+STARTED_FLOW="$_STARTED_PID"
 
 echo ""
 echo "=== Starting evaluation ==="
