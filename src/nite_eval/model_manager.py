@@ -154,7 +154,7 @@ class LlamaSwapConfig:
     """Configuration for llama-swap proxy."""
 
     config_path: str
-    port: int = 9080
+    port: int = 9070
     process: subprocess.Popen | None = None
 
     @property

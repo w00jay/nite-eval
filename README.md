@@ -16,7 +16,7 @@ Each task runs as a multi-turn conversation with mock tools, scored by a mix of 
 
 | GPU | Device | Role | Port |
 |-----|--------|------|------|
-| 1 | RTX 3090 (24GB) | Target models via llama-swap | :9080 |
+| 1 | RTX 3090 (24GB) | Target models via llama-swap | :9070 |
 | 2 | Tesla P40 (24GB) | Judge models (both run simultaneously) | :9091, :9092 |
 
 ## Usage
@@ -54,7 +54,7 @@ If you manage servers yourself:
 ```bash
 # Start target llama-swap (GPU 1)
 CUDA_VISIBLE_DEVICES=1 /home/woojay/T/llama-swap/llama-swap \
-  --config config/llama_swap_config.yaml --listen :9080
+  --config config/llama_swap_config.yaml --listen :9070
 
 # Start judges (GPU 2)
 CUDA_VISIBLE_DEVICES=2 /home/woojay/P/llama.cpp/build/bin/llama-server \

@@ -39,7 +39,7 @@ LLAMA_SWAP="/home/woojay/T/llama-swap/llama-swap"
 LLAMA_SWAP_CONFIG="config/llama_swap_config.yaml"
 REWARD_MODEL="/home/woojay/models/RewardAnything-8B-v1.Q6_K.gguf"
 FLOW_MODEL="/home/woojay/models/Flow-Judge-v0.1.Q6_K.gguf"
-TARGET_PORT=9080
+TARGET_PORT=9070
 REWARD_PORT=9091
 FLOW_PORT=9092
 
