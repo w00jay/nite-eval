@@ -115,7 +115,7 @@ def run_conversation(
                 total_tool_calls += 1
                 mock_result = mock_env.call(tc.name, tc.arguments)
                 tool_resp = format_tool_response(tc.name, mock_result)
-                turn.tool_responses.append({"name": tc.name, "result": mock_result})
+                turn.tool_responses.append({"name": tc.name, "arguments": tc.arguments, "result": mock_result})
                 messages.append(Message(role="tool", content=tool_resp))
 
             turns.append(turn)
