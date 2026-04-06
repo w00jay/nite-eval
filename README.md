@@ -16,14 +16,14 @@ Each task runs as a multi-turn conversation with mock tools, scored by a mix of 
 
 | GPU | Device | Role | Port |
 |-----|--------|------|------|
-| 1 | RTX 3090 (24GB) | Target models via llama-swap | :8080 |
+| 1 | RTX 3090 (24GB) | Target models via llama-swap | :9080 |
 | 2 | Tesla P40 (24GB) | Judge models (both run simultaneously) | :9091, :9092 |
 
 ## Usage
 
 ### Quick run (on-demand)
 
-Prerequisite: target llama-swap must be running on :8080.
+Prerequisite: target llama-swap must be running on :9080.
 
 ```bash
 # Run all models — starts judges, evaluates, generates report, cleans up
@@ -54,7 +54,7 @@ If you manage servers yourself:
 ```bash
 # Start target llama-swap (GPU 1)
 CUDA_VISIBLE_DEVICES=1 /home/woojay/T/llama-swap/llama-swap \
-  --config config/llama_swap_config.yaml --listen :8080
+  --config config/llama_swap_config.yaml --listen :9080
 
 # Start judges (GPU 2)
 CUDA_VISIBLE_DEVICES=2 /home/woojay/P/llama.cpp/build/bin/llama-server \
@@ -82,7 +82,7 @@ uv run python -m nite_eval.orchestrator --resume run-20260405-232559
 | `NITE_DIMENSION` | all | Filter to one dimension |
 | `NITE_CONFIG` | `config/eval_config.yaml` | Config path |
 | `NITE_JUDGE_GPU` | `2` | GPU ID for judge servers |
-| `NITE_TARGET_URL` | `http://127.0.0.1:8080` | Target server URL |
+| `NITE_TARGET_URL` | `http://127.0.0.1:9080` | Target server URL |
 
 ## Target Models
 

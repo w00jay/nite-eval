@@ -1,7 +1,7 @@
 # nite-eval master configuration
 
 target:
-  base_url: "http://127.0.0.1:8080"
+  base_url: "http://127.0.0.1:9080"
   llama_swap_config: "config/llama_swap_config.yaml"
 
 judge:

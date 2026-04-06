@@ -31,7 +31,7 @@ from nite_eval.scoring import (
     score_subset_match,
 )
 
-TARGET_URL = "http://127.0.0.1:8080"
+TARGET_URL = "http://127.0.0.1:9080"
 JUDGE_URL = "http://127.0.0.1:9091"
 
 # Inline smoke test task (the simple wooj-brain thought capture from tasks YAML)

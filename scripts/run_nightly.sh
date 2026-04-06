@@ -15,7 +15,7 @@
 #   NITE_MODELS="qwen3.5-9b" ./scripts/run_nightly.sh
 #
 # Prerequisites:
-#   - Target llama-swap must be running on :8080 (GPU 1 / RTX 3090)
+#   - Target llama-swap must be running on :9080 (GPU 1 / RTX 3090)
 #   - UV environment set up (uv sync)
 #
 # Environment variables:
@@ -23,7 +23,7 @@
 #   NITE_DIMENSION    Filter to one dimension (default: all)
 #   NITE_CONFIG       Config path (default: config/eval_config.yaml)
 #   NITE_JUDGE_GPU    GPU ID for judge servers (default: 2)
-#   NITE_TARGET_URL   Target server URL (default: http://127.0.0.1:8080)
+#   NITE_TARGET_URL   Target server URL (default: http://127.0.0.1:9080)
 
 set -euo pipefail
 
@@ -32,7 +32,7 @@ cd "$PROJECT_DIR"
 
 # Config
 JUDGE_GPU="${NITE_JUDGE_GPU:-2}"
-TARGET_URL="${NITE_TARGET_URL:-http://127.0.0.1:8080}"
+TARGET_URL="${NITE_TARGET_URL:-http://127.0.0.1:9080}"
 CONFIG="${NITE_CONFIG:-config/eval_config.yaml}"
 LLAMA_SERVER="/home/woojay/P/llama.cpp/build/bin/llama-server"
 REWARD_MODEL="/home/woojay/models/RewardAnything-8B-v1.Q6_K.gguf"
@@ -71,7 +71,7 @@ echo ""
 echo "Checking target server at $TARGET_URL..."
 if ! curl -sf "$TARGET_URL/health" > /dev/null 2>&1; then
     echo "ERROR: Target server not responding at $TARGET_URL"
-    echo "Start with: CUDA_VISIBLE_DEVICES=1 /home/woojay/T/llama-swap/llama-swap --config config/llama_swap_config.yaml --listen :8080"
+    echo "Start with: CUDA_VISIBLE_DEVICES=1 /home/woojay/T/llama-swap/llama-swap --config config/llama_swap_config.yaml --listen :9080"
     exit 1
 fi
 echo "Target server OK"

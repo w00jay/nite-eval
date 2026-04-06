@@ -4,7 +4,7 @@ Autonomous overnight LLM evaluation pipeline for local models on dual GPUs (RTX 
 
 ## Architecture
 
-- **GPU 0 (RTX 3090):** Target models via llama-swap on :8080
+- **GPU 0 (RTX 3090):** Target models via llama-swap on :9080
 - **GPU 2 (Tesla P40):** Judge models as direct llama-server instances — RewardAnything on :9091, Flow-Judge on :9092
 - **Orchestrator:** Python pipeline that swaps models, runs evals, stores results in SQLite
 - **4 evaluation layers:** static benchmarks (lm-eval-harness), agentic (Inspect AI), tool-calling (BFCL or custom AST), custom tasks (Hermes format)
@@ -36,7 +36,7 @@ uv run python -m pytest -v                            # test (use uv's venv, not
 # Start servers
 # Target models (GPU 1 = RTX 3090)
 CUDA_VISIBLE_DEVICES=1 /home/woojay/T/llama-swap/llama-swap \
-  --config config/llama_swap_config.yaml --listen :8080
+  --config config/llama_swap_config.yaml --listen :9080
 
 # Judge models (GPU 2 = Tesla P40, both fit simultaneously)
 CUDA_VISIBLE_DEVICES=2 /home/woojay/P/llama.cpp/build/bin/llama-server \
