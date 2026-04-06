@@ -48,6 +48,11 @@ CUDA_VISIBLE_DEVICES=2 /home/woojay/P/llama.cpp/build/bin/llama-server \
 
 # Smoke test
 uv run python scripts/smoke_test.py --model qwen3.5-9b
+
+# Nightly eval (starts judges, runs all models, generates report)
+nohup ./scripts/run_nightly.sh > results/nightly.log 2>&1 &
+# Or with specific models:
+NITE_MODELS="qwen3.5-9b gemma4-26b-a4b" ./scripts/run_nightly.sh
 ```
 
 ## Conventions
