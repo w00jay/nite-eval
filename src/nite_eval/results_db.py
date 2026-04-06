@@ -170,7 +170,9 @@ class ResultsDB:
             for task_id, dimension, difficulty in tasks
         ]
         self._conn.executemany(
-            "INSERT OR IGNORE INTO task_results (run_id, model_name, task_id, dimension, difficulty) VALUES (?, ?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO task_results"
+            " (run_id, model_name, task_id, dimension, difficulty)"
+            " VALUES (?, ?, ?, ?, ?)",
             rows,
         )
         self._conn.commit()

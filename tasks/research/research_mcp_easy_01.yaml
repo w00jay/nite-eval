@@ -85,6 +85,15 @@ mock_responses:
         - title: MCP Gateway Comparison
           snippet: Two major open-source MCP gateways available. Docker's is Go-based with container
             isolation. Microsoft's is .NET-based, K8s-native. Both support tool aggregation and auth injection.
+  - match:
+      query_contains: Model Context Protocol
+    response:
+      content:
+        results:
+        - title: Model Context Protocol (MCP) Gateway Implementations
+          snippet: MCP standardizes tool access for AI agents. Two gateway implementations exist -
+            Docker (Go, container-based) and Microsoft (.NET, K8s-native). Both provide tool aggregation,
+            auth injection, and telemetry.
   fetch_url:
   - match:
       url_contains: docker

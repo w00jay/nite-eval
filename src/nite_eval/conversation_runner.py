@@ -56,6 +56,7 @@ def run_conversation(
     user_message: str,
     mock_env: MockToolEnv,
     max_turns: int = 10,
+    max_tool_calls: int = 20,
     timeout_seconds: float = 120.0,
     temperature: float = 0.0,
     max_tokens: int = 2048,
@@ -64,6 +65,7 @@ def run_conversation(
 
     The system prompt gets tool definitions injected via <tools> tags.
     Each turn: send messages → get response → if tool calls, execute and loop.
+    Stops early if max_tool_calls is reached to prevent search loops.
     """
     full_system = format_tool_definitions(tools) + "\n\n" + system_prompt.rstrip()
 
@@ -117,6 +119,10 @@ def run_conversation(
                 messages.append(Message(role="tool", content=tool_resp))
 
             turns.append(turn)
+
+            if total_tool_calls >= max_tool_calls:
+                logger.warning("Hit max_tool_calls (%d), stopping early", max_tool_calls)
+                break
 
         # Reached max turns — find the best final response by walking back
         # through turns to find the last one with meaningful text content

@@ -35,7 +35,15 @@ class ParsedResponse:
 
 def _fix_json(raw: str) -> str:
     """Attempt to fix common JSON malformations."""
-    return TRAILING_COMMA_RE.sub(r"\1", raw.strip())
+    fixed = TRAILING_COMMA_RE.sub(r"\1", raw.strip())
+
+    # Fix missing closing braces — count open vs close
+    open_braces = fixed.count("{")
+    close_braces = fixed.count("}")
+    if open_braces > close_braces:
+        fixed += "}" * (open_braces - close_braces)
+
+    return fixed
 
 
 def extract_tool_calls(response: str) -> ParsedResponse:
