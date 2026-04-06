@@ -80,8 +80,8 @@ echo "Checking target server on :$TARGET_PORT..."
 if curl -sf "http://127.0.0.1:$TARGET_PORT/health" > /dev/null 2>&1; then
     echo "Target llama-swap already running on :$TARGET_PORT"
 else
-    echo "Starting llama-swap on :$TARGET_PORT (GPU $TARGET_GPU)..."
-    CUDA_VISIBLE_DEVICES="$TARGET_GPU" "$LLAMA_SWAP" \
+    echo "Starting llama-swap on :$TARGET_PORT..."
+    "$LLAMA_SWAP" \
         --config "$LLAMA_SWAP_CONFIG" --listen ":$TARGET_PORT" \
         > "results/llama-swap.log" 2>&1 &
     STARTED_TARGET=$!

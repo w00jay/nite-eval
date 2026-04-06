@@ -1,2 +1,56 @@
-llama-swap listening on http://:9080
-2026/04/06 03:39:39 Fatal server error: listen tcp :9080: bind: address already in use
+llama-swap listening on http://:9070
+[INFO] Request 127.0.0.1 "GET /health HTTP/1.1" 200 2 "curl/8.5.0" 25.894µs
+[INFO] Request 127.0.0.1 "GET /health HTTP/1.1" 200 2 "curl/8.5.0" 70.977µs
+[INFO] Request 127.0.0.1 "GET /health HTTP/1.1" 200 2 "python-httpx/0.28.1" 67.511µs
+[WARN] <qwen3.5-27b> ExitError >> exit status 1, exit code: 1
+[INFO] <qwen3.5-27b> process exited but not StateStopping, current state: starting
+[WARN] metrics skipped, HTTP status=502, path=/v1/chat/completions
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 502 78 "python-httpx/0.28.1" 5.254131036s
+[INFO] <qwen3.5-9b> Health check passed on http://localhost:5802/health
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 666 "python-httpx/0.28.1" 5.459175018s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 1388 "python-httpx/0.28.1" 3.883978516s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 1153 "python-httpx/0.28.1" 3.162745859s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 1817 "python-httpx/0.28.1" 6.00437403s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 1839 "python-httpx/0.28.1" 5.352424542s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 1694 "python-httpx/0.28.1" 7.302716244s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 2512 "python-httpx/0.28.1" 12.89420917s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 1263 "python-httpx/0.28.1" 3.636775763s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 1055 "python-httpx/0.28.1" 3.263780062s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 988 "python-httpx/0.28.1" 1.598721609s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 1027 "python-httpx/0.28.1" 1.750834718s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 1078 "python-httpx/0.28.1" 2.06393021s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 1028 "python-httpx/0.28.1" 2.190045382s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 910 "python-httpx/0.28.1" 1.452962872s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 1689 "python-httpx/0.28.1" 6.926774362s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 1551 "python-httpx/0.28.1" 5.562067227s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 1846 "python-httpx/0.28.1" 6.904257122s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 2788 "python-httpx/0.28.1" 11.724913057s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 9006 "python-httpx/0.28.1" 43.537014116s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 7676 "python-httpx/0.28.1" 37.215384988s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 2053 "python-httpx/0.28.1" 7.509537762s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 3339 "python-httpx/0.28.1" 14.16480378s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 7563 "python-httpx/0.28.1" 38.675168381s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 8289 "python-httpx/0.28.1" 43.217651108s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 3198 "python-httpx/0.28.1" 13.068476283s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 11761 "python-httpx/0.28.1" 43.895440085s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 1661 "python-httpx/0.28.1" 5.274984783s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 1887 "python-httpx/0.28.1" 6.370384107s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 8423 "python-httpx/0.28.1" 35.932511691s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 3009 "python-httpx/0.28.1" 11.549950111s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 4675 "python-httpx/0.28.1" 20.791299487s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 1821 "python-httpx/0.28.1" 6.203410999s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 1446 "python-httpx/0.28.1" 3.623004377s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 1245 "python-httpx/0.28.1" 2.894565891s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 1315 "python-httpx/0.28.1" 3.162999373s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 1168 "python-httpx/0.28.1" 2.36796991s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 1580 "python-httpx/0.28.1" 5.724635354s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 1322 "python-httpx/0.28.1" 3.389417003s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 1352 "python-httpx/0.28.1" 3.511865513s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 1286 "python-httpx/0.28.1" 3.336557322s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 1332 "python-httpx/0.28.1" 3.636508537s
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 5960 "python-httpx/0.28.1" 22.227811722s
+[WARN] <gemma4-26b-a4b> ExitError >> exit status 1, exit code: 1
+[INFO] <gemma4-26b-a4b> process exited but not StateStopping, current state: starting
+[WARN] metrics skipped, HTTP status=502, path=/v1/chat/completions
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 502 78 "python-httpx/0.28.1" 5.918638655s
+Received signal terminated, shutting down...

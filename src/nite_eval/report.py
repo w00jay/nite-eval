@@ -133,8 +133,13 @@ def generate_report(
     lines.append("")
     for model in models:
         scores = db.get_model_scores(run_id, model)
-        best = max(scores, key=lambda s: s["weighted_score"] or 0)
-        worst = min(scores, key=lambda s: s["weighted_score"] or 0)
+        completed = [s for s in scores if s["weighted_score"] is not None]
+        if not completed:
+            lines.append(f"**{model}:** skipped (no completed tasks)")
+            lines.append("")
+            continue
+        best = max(completed, key=lambda s: s["weighted_score"])
+        worst = min(completed, key=lambda s: s["weighted_score"])
         lines.append(f"**{model}:**")
         lines.append(f"- Best: {best['task_id']} ({best['weighted_score']:.2f})")
         lines.append(f"- Worst: {worst['task_id']} ({worst['weighted_score']:.2f})")
