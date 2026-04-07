@@ -3,5 +3,17 @@ __pycache__/
 .venv/
 .pytest_cache/
 *.egg-info/
-results/runs/
-results/*.log
+results/
+*.log
+
+# Local environment
+.env
+
+# Local llama-swap configs (copy from *.example.yaml and edit)
+config/llama_swap_config.yaml
+config/judge_swap_config.yaml
+
+# Personal notes / planning (not part of the public project)
+CLAUDE.md
+PLANS/
+TODO.md

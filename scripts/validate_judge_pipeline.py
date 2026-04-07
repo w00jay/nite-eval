@@ -12,7 +12,7 @@ Requires judge llama-swap running on :9091 with both models configured.
 
 Usage:
     # Start judge llama-swap first:
-    CUDA_VISIBLE_DEVICES=1 /home/woojay/T/llama-swap/llama-swap \
+    CUDA_VISIBLE_DEVICES=1 $LLAMA_SWAP_BIN \
       --config config/judge_swap_config.yaml --listen :9091
 
     # Run validation:
@@ -25,9 +25,6 @@ import argparse
 import logging
 import sys
 
-from rich.console import Console
-from rich.table import Table
-
 from nite_eval.judge import (
     FLOW_JUDGE_DIMENSIONS,
     JudgeResult,
@@ -35,6 +32,8 @@ from nite_eval.judge import (
 )
 from nite_eval.model_manager import check_health
 from nite_eval.task_loader import TaskDefinition, load_tasks
+from rich.console import Console
+from rich.table import Table
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -411,7 +410,7 @@ def main():
     if not check_health(f"http://127.0.0.1:{args.port}"):
         console.print(f"[red]No judge server on :{args.port}[/red]")
         console.print(
-            "Start with: CUDA_VISIBLE_DEVICES=1 /home/woojay/T/llama-swap/llama-swap "
+            "Start with: CUDA_VISIBLE_DEVICES=1 $LLAMA_SWAP_BIN "
             "--config config/judge_swap_config.yaml --listen :9091"
         )
         sys.exit(1)

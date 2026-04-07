@@ -38,7 +38,7 @@ results:
   db_name: "eval_results.db"
 
 hardware:
-  target_gpu: 0  # RTX 3090
-  judge_gpu: 1   # RTX 3060
-  llama_server_path: "/home/woojay/P/llama.cpp/build/bin/llama-server"
-  llama_swap_path: "/home/woojay/T/llama-swap/llama-swap"
+  # Default GPU indices; override via NITE_TARGET_GPU / NITE_JUDGE_GPU env vars.
+  # Binary paths come from the .env file (LLAMA_SERVER_BIN, LLAMA_SWAP_BIN).
+  target_gpu: 0
+  judge_gpu: 1

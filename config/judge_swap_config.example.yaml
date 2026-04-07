@@ -1,0 +1,28 @@
+# llama-swap configuration for nite-eval judge models (legacy — direct
+# llama-server is the default; this file is kept for users who want to swap
+# judges through llama-swap instead).
+#
+# Copy this file to `config/judge_swap_config.yaml` and edit paths.
+# The live file is gitignored.
+
+models:
+  "flow-judge":
+    cmd: >
+      /ABS/PATH/TO/llama.cpp/build/bin/llama-server
+      -m /ABS/PATH/TO/judge-models/Flow-Judge-v0.1.Q6_K.gguf
+      --port ${PORT} -ngl 999 --ctx-size 4096
+      -fa on --no-webui
+    group: "judge-gpu"
+
+  "reward-anything":
+    cmd: >
+      /ABS/PATH/TO/llama.cpp/build/bin/llama-server
+      -m /ABS/PATH/TO/judge-models/RewardAnything-8B-v1.Q6_K.gguf
+      --port ${PORT} -ngl 999 --ctx-size 4096
+      --cache-type-k q8_0 --cache-type-v q8_0 --no-webui
+      --sleep-idle-seconds -1
+    group: "judge-gpu"
+
+groups:
+  "judge-gpu":
+    exclusive: true

@@ -8,6 +8,7 @@ Handles:
 """
 
 import logging
+import os
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -17,7 +18,8 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-LLAMA_SERVER_PATH = Path("/home/woojay/P/llama.cpp/build/bin/llama-server")
+# Resolve from env (set in `.env` or shell). Falls back to PATH lookup.
+LLAMA_SERVER_PATH = Path(os.environ.get("LLAMA_SERVER_BIN", "llama-server"))
 HEALTH_POLL_INTERVAL = 1.0
 HEALTH_POLL_TIMEOUT = 120.0
 

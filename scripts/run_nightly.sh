@@ -30,18 +30,33 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_DIR"
 
+# Load .env if present (paths, GPUs, ports)
+if [ -f "$PROJECT_DIR/.env" ]; then
+    set -a
+    # shellcheck disable=SC1091
+    . "$PROJECT_DIR/.env"
+    set +a
+fi
+
 # Config
-TARGET_GPU="${NITE_TARGET_GPU:-1}"
-JUDGE_GPU="${NITE_JUDGE_GPU:-2}"
+TARGET_GPU="${NITE_TARGET_GPU:-${TARGET_GPU:-1}}"
+JUDGE_GPU="${NITE_JUDGE_GPU:-${JUDGE_GPU:-2}}"
 CONFIG="${NITE_CONFIG:-config/eval_config.yaml}"
-LLAMA_SERVER="/home/woojay/P/llama.cpp/build/bin/llama-server"
-LLAMA_SWAP="/home/woojay/T/llama-swap/llama-swap"
+LLAMA_SERVER="${LLAMA_SERVER_BIN:?LLAMA_SERVER_BIN not set — copy .env.example to .env}"
+LLAMA_SWAP="${LLAMA_SWAP_BIN:?LLAMA_SWAP_BIN not set — copy .env.example to .env}"
 LLAMA_SWAP_CONFIG="config/llama_swap_config.yaml"
-REWARD_MODEL="/home/woojay/models/RewardAnything-8B-v1.Q6_K.gguf"
-FLOW_MODEL="/home/woojay/models/Flow-Judge-v0.1.Q6_K.gguf"
-TARGET_PORT=9070
-REWARD_PORT=9091
-FLOW_PORT=9092
+JUDGE_MODEL_DIR="${JUDGE_MODEL_DIR:?JUDGE_MODEL_DIR not set — copy .env.example to .env}"
+REWARD_MODEL="${JUDGE_MODEL_DIR%/}/${REWARD_MODEL_FILE:-RewardAnything-8B-v1.Q6_K.gguf}"
+FLOW_MODEL="${JUDGE_MODEL_DIR%/}/${FLOW_MODEL_FILE:-Flow-Judge-v0.1.Q6_K.gguf}"
+TARGET_PORT="${TARGET_PORT:-9070}"
+REWARD_PORT="${REWARD_PORT:-9091}"
+FLOW_PORT="${FLOW_PORT:-9092}"
+
+if [ ! -f "$LLAMA_SWAP_CONFIG" ]; then
+    echo "ERROR: $LLAMA_SWAP_CONFIG not found."
+    echo "Copy config/llama_swap_config.example.yaml to $LLAMA_SWAP_CONFIG and edit paths."
+    exit 1
+fi
 
 # Track what we started (only clean up what we own)
 STARTED_TARGET=""
@@ -115,7 +130,7 @@ start_judge() {
     fi
 
     echo "Starting $name on :$port (GPU $JUDGE_GPU)..."
-    CUDA_VISIBLE_DEVICES="${NITE_JUDGE_UUID:-GPU-219f27f6-0447-4906-2a3c-d4d24d2903a6}" "$LLAMA_SERVER" \
+    CUDA_VISIBLE_DEVICES="${JUDGE_GPU_UUID:-${NITE_JUDGE_UUID:-$JUDGE_GPU}}" "$LLAMA_SERVER" \
         -m "$model_path" \
         --port "$port" \
         -ngl 999 --ctx-size 4096 -np 1 --no-webui \

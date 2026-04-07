@@ -6,12 +6,12 @@ Requires: judge model on :9091, llama-swap on :8080 with at least one target mod
 
 Usage:
     # 1. Start judge on GPU 1:
-    CUDA_VISIBLE_DEVICES=1 /home/woojay/P/llama.cpp/build/bin/llama-server \
+    CUDA_VISIBLE_DEVICES=1 $LLAMA_SERVER_BIN \
         -m <judge-model-path>.gguf \
         --port 9091 -ngl 999 --ctx-size 8192 -fa on --no-webui
 
     # 2. Start llama-swap on GPU 0:
-    CUDA_VISIBLE_DEVICES=0 /home/woojay/T/llama-swap/llama-swap \
+    CUDA_VISIBLE_DEVICES=0 $LLAMA_SWAP_BIN \
         --config config/llama_swap_config.yaml --listen :8080
 
     # 3. Run this script:
@@ -258,10 +258,10 @@ def main():
         else:
             print("\nBoth servers must be running. Start them with:")
             print("  # GPU 1 - Judge:")
-            print("  CUDA_VISIBLE_DEVICES=1 /home/woojay/P/llama.cpp/build/bin/llama-server \\")
+            print("  CUDA_VISIBLE_DEVICES=1 $LLAMA_SERVER_BIN \\")
             print("    -m <judge>.gguf --port 9091 -ngl 999 --ctx-size 8192 -fa on --no-webui")
             print("  # GPU 0 - Target:")
-            print("  CUDA_VISIBLE_DEVICES=0 /home/woojay/T/llama-swap/llama-swap \\")
+            print("  CUDA_VISIBLE_DEVICES=0 $LLAMA_SWAP_BIN \\")
             print("    --config config/llama_swap_config.yaml --listen :8080")
             sys.exit(1)
 

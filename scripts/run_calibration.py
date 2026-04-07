@@ -17,17 +17,17 @@ import argparse
 import json
 import logging
 import math
+import os
 import subprocess
 import sys
 import time
 from collections import defaultdict
 from pathlib import Path
 
-from rich.console import Console
-from rich.table import Table
-
 from nite_eval.judge import JudgeClient, JudgeResult
 from nite_eval.model_manager import check_health
+from rich.console import Console
+from rich.table import Table
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -35,7 +35,7 @@ console = Console()
 CALIBRATION_PATH = Path("judges/calibration/calibration_set.jsonl")
 RESULTS_DIR = Path("judges/calibration/results")
 
-LLAMA_SERVER = "/home/woojay/P/llama.cpp/build/bin/llama-server"
+LLAMA_SERVER = os.environ.get("LLAMA_SERVER_BIN", "llama-server")
 JUDGE_PORT = 9091
 
 # Rubric text used for judge prompts (matches score_calibration.py rubrics)
