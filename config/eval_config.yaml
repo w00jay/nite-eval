@@ -22,13 +22,14 @@ models:
     backend: "llama.cpp"
   - name: "qwen3.6-35b-a3b"
     backend: "llama.cpp"
+    # Qwen3-family chat-template trigger that disables <think> output.
+    # Without this, qwen3.6 burns the entire max_tokens budget on
+    # reasoning and never emits a final answer on coding tasks.
+    system_suffix: "/no_think"
 
 evaluation:
   temperature: 0.0
-  # Reasoning-mode models (Qwen3.6) spend ~4k tokens inside <think>...</think>
-  # alone on coding tasks before any final content. 8192 gives them room to
-  # think and still emit an answer within max_tokens.
-  max_tokens: 8192
+  max_tokens: 4096
   warm_up: true  # Send a warm-up prompt after each model swap
 
 scoring:

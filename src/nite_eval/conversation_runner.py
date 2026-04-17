@@ -60,14 +60,21 @@ def run_conversation(
     timeout_seconds: float = 120.0,
     temperature: float = 0.0,
     max_tokens: int = 2048,
+    system_suffix: str = "",
 ) -> ConversationResult:
     """Run a multi-turn conversation with Hermes-format tool calling.
 
     The system prompt gets tool definitions injected via <tools> tags.
     Each turn: send messages → get response → if tool calls, execute and loop.
     Stops early if max_tool_calls is reached to prevent search loops.
+
+    `system_suffix` is appended to the system prompt — used for model-specific
+    chat-template triggers like Qwen3's `/no_think` that disable the thinking
+    budget and let the model emit a final answer directly.
     """
     full_system = format_tool_definitions(tools) + "\n\n" + system_prompt.rstrip()
+    if system_suffix:
+        full_system = full_system.rstrip() + "\n\n" + system_suffix.strip()
 
     messages: list[Message] = [
         Message(role="system", content=full_system),

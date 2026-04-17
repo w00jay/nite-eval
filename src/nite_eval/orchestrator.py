@@ -184,6 +184,7 @@ def run_task(
     db: ResultsDB,
     run_id: str,
     eval_cfg: dict,
+    system_suffix: str = "",
 ) -> float:
     """Run a single task for a model and persist results. Returns weighted score."""
     db.mark_task_running(run_id, model_name, task.id)
@@ -205,6 +206,7 @@ def run_task(
         timeout_seconds=task.timeout_seconds,
         temperature=eval_cfg.get("temperature", 0.0),
         max_tokens=eval_cfg.get("max_tokens", 2048),
+        system_suffix=system_suffix,
     )
 
     if conv.error:
@@ -344,10 +346,15 @@ def main() -> None:
     results_dir = Path(cfg.get("results", {}).get("dir", "results/runs"))
     db_name = cfg.get("results", {}).get("db_name", "eval_results.db")
 
-    models = args.models or [m["name"] for m in cfg.get("models", [])]
+    models_cfg = cfg.get("models", [])
+    models = args.models or [m["name"] for m in models_cfg]
     if not models:
         console.print("[red]No models configured[/red]")
         sys.exit(1)
+
+    # Per-model system-prompt suffix (e.g. "/no_think" for Qwen3 models).
+    # Applied to every task for that model via chat-template trigger.
+    system_suffix_by_model: dict[str, str] = {m["name"]: m.get("system_suffix", "") for m in models_cfg}
 
     # Check servers
     if not args.skip_server_check:
@@ -425,7 +432,16 @@ def main() -> None:
                 if task.id not in pending_ids:
                     continue
                 try:
-                    run_task(task, model, target_url, judge, db, run_id, eval_cfg)
+                    run_task(
+                        task,
+                        model,
+                        target_url,
+                        judge,
+                        db,
+                        run_id,
+                        eval_cfg,
+                        system_suffix=system_suffix_by_model.get(model, ""),
+                    )
                 except Exception:
                     logger.exception("Task %s failed for %s", task.id, model)
                     db.save_task_result(
