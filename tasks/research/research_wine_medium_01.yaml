@@ -137,6 +137,31 @@ mock_responses:
     response:
       content:
         status: saved
+  fetch_url:
+  - match:
+      url_contains: vivino
+    response:
+      content:
+        title: Vivino
+        body: "70M+ users. Core AI: computer-vision label scan. 200M+ community ratings power recommendations. Taste profile built from ratings. Business focus has shifted toward marketplace/commerce; cellar management and drinking-window intelligence are not core."
+  - match:
+      url_contains: cellartracker
+    response:
+      content:
+        title: CellarTracker / CellarChat
+        body: "1M+ users, 4.5M wines. CellarChat is an LLM assistant wired into the user's personal collection. Answers questions about owned bottles, drinking windows, community tasting notes. Interaction is reactive Q&A — user asks, app answers. No push/proactive alerts."
+  - match:
+      url_contains: cellarmate
+    response:
+      content:
+        title: CellarMate.ai
+        body: "GPT-4 powered conversational sommelier. 14 specialized wine functions. Photo label scanning, receipt OCR, restaurant menu scanning. Early stage, thousands of users. Conversational-first; no autonomous cellar monitoring."
+  - match:
+      url_contains: any
+    response:
+      content:
+        title: Fetched page
+        body: "Page content not available in mock environment."
 scoring:
   coverage:
     weight: 0.3

@@ -94,6 +94,45 @@ mock_responses:
           snippet: MCP standardizes tool access for AI agents. Two gateway implementations exist -
             Docker (Go, container-based) and Microsoft (.NET, K8s-native). Both provide tool aggregation,
             auth injection, and telemetry.
+  # Specific org/repo forms used by models that cite the GitHub path.
+  - match:
+      query_contains: docker/mcp-gateway
+    response:
+      content:
+        results:
+        - title: docker/mcp-gateway GitHub
+          snippet: Go-based MCP proxy. Streamable HTTP transport. Container-isolated servers.
+            OAuth2 and API-key auth for downstream MCP servers. Configured via YAML. Apache 2.0.
+          url: https://github.com/docker/mcp-gateway
+  - match:
+      query_contains: microsoft/mcp-gateway
+    response:
+      content:
+        results:
+        - title: microsoft/mcp-gateway GitHub
+          snippet: .NET-based MCP gateway, K8s-native with session affinity. OIDC + RBAC auth.
+            Streamable HTTP and SSE transports. Helm chart for deploy. Enterprise telemetry via OpenTelemetry.
+          url: https://github.com/microsoft/mcp-gateway
+  # Fallback: any mcp-gateway query (hyphenated form) resolves to the comparison.
+  - match:
+      query_contains: mcp-gateway
+    response:
+      content:
+        results:
+        - title: MCP Gateway Comparison
+          snippet: "Two open-source MCP gateways: docker/mcp-gateway (Go, container-isolated,
+            Streamable HTTP, OAuth2/API-key) and microsoft/mcp-gateway (.NET, K8s-native,
+            session affinity, OIDC+RBAC, Streamable HTTP + SSE, Helm-based deployment)."
+  # Absolute fallback so exploratory queries never miss.
+  - match:
+      query_contains: any
+    response:
+      content:
+        results:
+        - title: MCP Gateway Comparison
+          snippet: "Two open-source MCP gateways: docker/mcp-gateway (Go, container-isolated,
+            Streamable HTTP, OAuth2/API-key) and microsoft/mcp-gateway (.NET, K8s-native,
+            session affinity, OIDC+RBAC, Streamable HTTP + SSE, Helm-based deployment)."
   fetch_url:
   - match:
       url_contains: docker

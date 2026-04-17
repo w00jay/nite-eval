@@ -25,7 +25,10 @@ models:
 
 evaluation:
   temperature: 0.0
-  max_tokens: 2048
+  # Reasoning-mode models (Qwen3.6) spend ~4k tokens inside <think>...</think>
+  # alone on coding tasks before any final content. 8192 gives them room to
+  # think and still emit an answer within max_tokens.
+  max_tokens: 8192
   warm_up: true  # Send a warm-up prompt after each model swap
 
 scoring:

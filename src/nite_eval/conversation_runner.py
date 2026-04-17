@@ -168,11 +168,62 @@ def run_conversation(
             turns.append(turn)
 
             if total_tool_calls >= max_tool_calls:
-                logger.warning("Hit max_tool_calls (%d), stopping early", max_tool_calls)
+                logger.warning("Hit max_tool_calls (%d), nudging for synthesis", max_tool_calls)
+                messages.append(
+                    Message(
+                        role="user",
+                        content=(
+                            f"You have used all {max_tool_calls} available tool calls. "
+                            "Do not call any more tools. Based on everything you've gathered, "
+                            "write your final answer to the original question now."
+                        ),
+                    )
+                )
+                nudge_start = time.monotonic()
+                nudged_text = _call_model(client, base_url, model_name, messages, temperature, max_tokens)
+                nudge_latency = (time.monotonic() - nudge_start) * 1000
+                total_latency += nudge_latency
+                nudge_parsed = extract_tool_calls(nudged_text)
+                turns.append(
+                    TurnResult(
+                        turn=turn_num + 1,
+                        response=nudged_text,
+                        parsed=nudge_parsed,
+                        latency_ms=nudge_latency,
+                    )
+                )
                 break
 
-        # Reached max turns — find the best final response by walking back
-        # through turns to find the last one with meaningful text content
+        # Reached max turns. If every turn emitted tool calls and never
+        # produced a free-text answer, nudge once for synthesis — symmetric
+        # with the max_tool_calls branch above. Skip if we already nudged
+        # in the cap branch (that branch breaks out before reaching here).
+        if turns and all(t.parsed.tool_calls for t in turns):
+            logger.warning("Hit max_turns (%d) with no free-text turn, nudging for synthesis", max_turns)
+            messages.append(
+                Message(
+                    role="user",
+                    content=(
+                        f"You have used all {max_turns} available turns. "
+                        "Do not call any more tools. Based on everything you've gathered, "
+                        "write your final answer to the original question now."
+                    ),
+                )
+            )
+            nudge_start = time.monotonic()
+            nudged_text = _call_model(client, base_url, model_name, messages, temperature, max_tokens)
+            nudge_latency = (time.monotonic() - nudge_start) * 1000
+            total_latency += nudge_latency
+            nudge_parsed = extract_tool_calls(nudged_text)
+            turns.append(
+                TurnResult(
+                    turn=max_turns + 1,
+                    response=nudged_text,
+                    parsed=nudge_parsed,
+                    latency_ms=nudge_latency,
+                )
+            )
+
         final = _extract_best_final_response(turns)
         return ConversationResult(
             turns=turns,
@@ -229,7 +280,14 @@ def _call_model(
     temperature: float,
     max_tokens: int,
 ) -> str:
-    """Send messages to the model and return the response text."""
+    """Send messages to the model and return the response text.
+
+    Some llama-server builds route Qwen-style thinking output to a separate
+    `reasoning_content` field when the model emits `<think>...</think>` blocks.
+    If `content` is empty, fall back to `reasoning_content` so we don't treat
+    a thought-only answer as a silent stall. Also logs the raw message keys
+    and finish_reason once so diagnostic info lands in the run log.
+    """
     resp = client.post(
         f"{base_url}/v1/chat/completions",
         json={
@@ -241,4 +299,19 @@ def _call_model(
     )
     resp.raise_for_status()
     data = resp.json()
-    return data["choices"][0]["message"]["content"]
+    choice = data["choices"][0]
+    msg = choice.get("message", {})
+    content = msg.get("content") or ""
+    if not content.strip():
+        reasoning = msg.get("reasoning_content") or ""
+        finish = choice.get("finish_reason")
+        logger.warning(
+            "Empty content from %s (finish=%s, msg_keys=%s, reasoning_len=%d)",
+            model_name,
+            finish,
+            sorted(msg.keys()),
+            len(reasoning),
+        )
+        if reasoning.strip():
+            return reasoning
+    return content
