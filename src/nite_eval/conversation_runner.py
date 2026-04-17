@@ -38,6 +38,14 @@ class TurnResult:
     latency_ms: float = 0.0
 
 
+# Per-HTTP-request read timeout — decoupled from task wall-clock budget.
+# A single generation on a slow model (e.g. qwen3.5-27b at 4096 tokens) can
+# exceed a short task-level timeout; giving httpx its own generous ceiling
+# prevents ReadTimeout errors on tasks whose YAML timeout was tuned for
+# smaller generations.
+HTTP_READ_TIMEOUT = 600.0
+
+
 @dataclass
 class ConversationResult:
     turns: list[TurnResult]
@@ -57,7 +65,7 @@ def run_conversation(
     mock_env: MockToolEnv,
     max_turns: int = 10,
     max_tool_calls: int = 20,
-    timeout_seconds: float = 120.0,
+    timeout_seconds: float = 120.0,  # noqa: ARG001 — retained for API stability; see HTTP_READ_TIMEOUT
     temperature: float = 0.0,
     max_tokens: int = 2048,
     system_suffix: str = "",
@@ -85,7 +93,12 @@ def run_conversation(
     total_tool_calls = 0
     total_latency = 0.0
 
-    client = httpx.Client(timeout=timeout_seconds)
+    # Use the module-level HTTP timeout, not the task's timeout_seconds.
+    # Tasks' timeout_seconds was historically both a task-level bound and the
+    # per-request read timeout; conflating the two caused spurious
+    # ReadTimeouts on slow models (qwen3.5-27b) when a single generation
+    # exceeded the task YAML's short timeout.
+    client = httpx.Client(timeout=HTTP_READ_TIMEOUT)
 
     try:
         for turn_num in range(1, max_turns + 1):
