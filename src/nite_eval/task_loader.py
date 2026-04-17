@@ -29,6 +29,7 @@ class TaskDefinition:
     user_message: str
     scoring: dict[str, Any]
     max_turns: int = 8
+    max_tool_calls: int = 20
     timeout_seconds: int = 90
     source_project: str = ""
     mock_responses: dict[str, Any] = field(default_factory=dict)
@@ -77,6 +78,7 @@ def load_task(path: Path) -> TaskDefinition:
         user_message=data["user_message"],
         scoring=data.get("scoring", {}),
         max_turns=data.get("max_turns", 8),
+        max_tool_calls=data.get("max_tool_calls", 20),
         timeout_seconds=data.get("timeout_seconds", 90),
         source_project=data.get("source_project", ""),
         mock_responses=data.get("mock_responses", {}),

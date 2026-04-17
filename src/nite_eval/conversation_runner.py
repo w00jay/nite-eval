@@ -98,7 +98,49 @@ def run_conversation(
             )
 
             if not parsed.tool_calls:
-                # No tool calls — model is done
+                # No tool calls — model is done (or silently stalled)
+                if not response_text.strip() and total_tool_calls > 0:
+                    # Empty response after prior tool calls: nudge once to elicit
+                    # a final synthesis instead of silently accepting an empty answer.
+                    logger.warning("Empty response on turn %d after %d tool calls; nudging", turn_num, total_tool_calls)
+                    turns.append(turn)
+                    messages.append(Message(role="assistant", content=response_text))
+                    messages.append(
+                        Message(
+                            role="user",
+                            content=(
+                                "Your last response was empty. Based on the tool results above, "
+                                "please provide your final answer to the original question now — "
+                                "do not call more tools."
+                            ),
+                        )
+                    )
+                    nudge_start = time.monotonic()
+                    nudged_text = _call_model(client, base_url, model_name, messages, temperature, max_tokens)
+                    nudge_latency = (time.monotonic() - nudge_start) * 1000
+                    total_latency += nudge_latency
+                    nudge_parsed = extract_tool_calls(nudged_text)
+                    nudge_turn = TurnResult(
+                        turn=turn_num + 1,
+                        response=nudged_text,
+                        parsed=nudge_parsed,
+                        latency_ms=nudge_latency,
+                    )
+                    turns.append(nudge_turn)
+                    final = nudged_text.strip() or (
+                        f"[Model returned empty response on turn {turn_num} after {total_tool_calls} tool calls; "
+                        "nudge also returned empty]"
+                    )
+                    if not nudged_text.strip():
+                        logger.warning("Nudge also produced empty response")
+                    return ConversationResult(
+                        turns=turns,
+                        final_response=final,
+                        total_tool_calls=total_tool_calls,
+                        total_latency_ms=total_latency,
+                        reached_max_turns=False,
+                    )
+
                 turns.append(turn)
                 final = response_text.strip() or (
                     f"[Model returned empty response on turn {turn_num} with no tool calls]"

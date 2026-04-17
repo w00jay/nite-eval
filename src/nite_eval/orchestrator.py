@@ -201,6 +201,7 @@ def run_task(
         user_message=task.user_message,
         mock_env=mock_env,
         max_turns=task.max_turns,
+        max_tool_calls=task.max_tool_calls,
         timeout_seconds=task.timeout_seconds,
         temperature=eval_cfg.get("temperature", 0.0),
         max_tokens=eval_cfg.get("max_tokens", 2048),
