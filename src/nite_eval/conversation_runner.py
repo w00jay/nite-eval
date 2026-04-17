@@ -100,9 +100,14 @@ def run_conversation(
             if not parsed.tool_calls:
                 # No tool calls — model is done
                 turns.append(turn)
+                final = response_text.strip() or (
+                    f"[Model returned empty response on turn {turn_num} with no tool calls]"
+                )
+                if not response_text.strip():
+                    logger.warning("Empty response on turn %d with no tool calls", turn_num)
                 return ConversationResult(
                     turns=turns,
-                    final_response=response_text,
+                    final_response=final,
                     total_tool_calls=total_tool_calls,
                     total_latency_ms=total_latency,
                     reached_max_turns=False,
@@ -157,16 +162,21 @@ def _extract_best_final_response(turns: list[TurnResult]) -> str:
 
     Walks backwards through turns to find one with meaningful text
     (not just tool_call tags). Strips tool_call tags from the response.
+    If no turn has text, synthesizes a diagnostic marker so downstream
+    scoring (judge) has context instead of an empty string.
     """
     for turn in reversed(turns):
-        # Strip tool_call tags to get the text portion
         text = TOOL_CALL_TAG_RE.sub("", turn.response).strip()
         if len(text) > 20:
             return text
-    # Fallback: return last turn's raw response stripped of tool calls
-    if turns:
-        return TOOL_CALL_TAG_RE.sub("", turns[-1].response).strip()
-    return ""
+    # Fallback 1: any non-empty text across turns (prefer latest)
+    for turn in reversed(turns):
+        text = TOOL_CALL_TAG_RE.sub("", turn.response).strip()
+        if text:
+            return text
+    # Fallback 2: all turns were tool-call-only — synthesize marker
+    tc_count = sum(len(t.tool_responses) for t in turns)
+    return f"[No text answer produced after {len(turns)} turns / {tc_count} tool calls]"
 
 
 def _call_model(

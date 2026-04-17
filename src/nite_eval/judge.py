@@ -245,7 +245,22 @@ Output ONLY valid JSON: {{"reasoning": "your 2-3 sentence analysis", "score": N}
                 return JudgeError(error=last_error, raw_response="")
 
             data = resp.json()
-            raw = data["choices"][0]["message"]["content"]
+            raw = data["choices"][0]["message"]["content"] or ""
+            if not raw.strip():
+                last_error = "empty_response"
+                if attempt < max_retries:
+                    import time
+
+                    wait = 2 * attempt
+                    logger.warning(
+                        "Judge returned empty content (attempt %d/%d), retrying in %ds",
+                        attempt,
+                        max_retries,
+                        wait,
+                    )
+                    time.sleep(wait)
+                    continue
+                return JudgeError(error=last_error, raw_response="")
             return _parse_judge_response(raw)
 
         return JudgeError(error=last_error, raw_response="")

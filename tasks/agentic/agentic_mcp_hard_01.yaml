@@ -114,6 +114,28 @@ mock_responses:
         - title: MCP Gateway POC Scope
           id: page_def456
           last_edited: '2026-03-08'
+  - match:
+      server: notion
+      tool: get_page
+    response:
+      content:
+        id: page_abc123
+        title: MCP Gateway Design Doc
+        body: 'Design document for the MCP Gateway POC. Covers transport (Streamable HTTP),
+          auth injection (per-server OAuth2/API key), server lifecycle, and telemetry.
+          Target: K8s deployment with session affinity.'
+  - match:
+      server: notion
+      tool_contains: any
+    response:
+      error: 'Unsupported notion tool; only search and get_page are available'
+  restart_server:
+  - match:
+      server: notion
+    response:
+      content:
+        status: restarted
+        note: 'Server restarted, but auth_injection errors persist — check credentials, not process state'
   check_server_health:
   - match:
       server: notion

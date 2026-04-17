@@ -98,6 +98,34 @@ mock_responses:
         estimate_hours: 6
         complexity: medium
         notes: Interactive grid component, drag-to-place, position state management.
+  - match:
+      task_contains: navigation
+    response:
+      content:
+        estimate_hours: 6
+        complexity: medium
+        notes: React Navigation stack + tabs, auth-gated routes, camera screen wiring.
+  - match:
+      task_contains: camera
+    response:
+      content:
+        estimate_hours: 4
+        complexity: medium
+        notes: expo-camera or react-native-vision-camera, permissions, capture + upload path.
+  - match:
+      task_contains: consumption
+    response:
+      content:
+        estimate_hours: 5
+        complexity: medium
+        notes: Consume-bottle event, inventory decrement, write-through to events table, undo.
+  - match:
+      task_contains: any
+    response:
+      content:
+        estimate_hours: 4
+        complexity: medium
+        notes: Default estimate for unspecified tasks; refine once scope is pinned.
 scoring:
   dependency_correctness:
     weight: 0.3

@@ -161,6 +161,51 @@ mock_responses:
           snippet: Foundation models provide zero-shot baselines. Fine-tuning on 2-5 years of daily data
             improves 10-20%. Key challenges - regime changes, non-stationarity, transaction costs.
             Ensemble approaches (foundation + specialist) show best risk-adjusted returns.
+  - match:
+      query_contains: GPU
+    response:
+      content:
+        results:
+        - title: Time-Series Foundation Model GPU Requirements
+          snippet: TimesFM-200M inference <4GB VRAM; fits on consumer GPUs. Chronos-Small (20M) <1GB.
+            Chronos-Large (710M) ~3GB inference, 12-16GB training. Moirai-Base ~2GB. Lag-Llama tiny.
+            LoRA fine-tuning adds <1GB overhead on top of base model.
+  - match:
+      query_contains: VRAM
+    response:
+      content:
+        results:
+        - title: Transformer Time-Series VRAM Footprint Single-GPU
+          snippet: 24GB GPU (e.g., 3090/4090) comfortably handles inference for all major open foundation
+            models. LoRA/QLoRA fine-tuning of 200M-710M params feasible with batch 16-32. Full fine-tune
+            of 710M requires 40GB+.
+  - match:
+      query_contains: non-stationarity
+    response:
+      content:
+        results:
+        - title: Handling Non-stationarity and Regime Change
+          snippet: Financial time series are non-stationary; regime shifts degrade models. Mitigations -
+            rolling retraining, regime-conditional features (VIX bucket, yield-curve state), ensembling
+            foundation + specialist models, drift monitoring on held-out forecast error.
+  - match:
+      query_contains: deployment
+    response:
+      content:
+        results:
+        - title: Single-GPU Deployment Considerations
+          snippet: Batch inference preferred for daily bars. Quantization (INT8) roughly halves VRAM with
+            minor accuracy loss. PyTorch 2.x + torch.compile helps. For live swing trading, latency is
+            dominated by data pipeline, not model inference.
+  - match:
+      query_contains: any
+    response:
+      content:
+        results:
+        - title: Time-Series Forecasting Literature Overview
+          snippet: Transformer-based time-series models split into zero-shot foundation models (TimesFM,
+            Chronos, Moirai, Lag-Llama) and fine-tunable specialists (TFT, PatchTST). Trade-offs revolve
+            around data volume, domain specificity, and deployment constraints.
   summarize_findings:
   - match:
       topic_contains: any

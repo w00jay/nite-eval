@@ -220,6 +220,24 @@ mock_responses:
           date: '2026-03-15'
           excerpt: 'Maintain Overweight. PT $175. Key risk: China export restrictions could impact 12-15%
             of data center revenue.'
+  - match:
+      query_contains: NVDA
+    response:
+      content:
+        documents:
+        - type: earnings_transcript
+          date: '2026-02-26'
+          excerpt: Data center revenue grew 65% YoY. CEO highlighted sovereign AI demand. Guided Q2 revenue
+            $44B ± 2%, above consensus.
+        - type: analyst_report
+          date: '2026-03-15'
+          excerpt: 'Maintain Overweight. PT $175. Key risk: China export restrictions could impact 12-15%
+            of data center revenue.'
+  - match:
+      query_contains: any
+    response:
+      content:
+        documents: []
   get_macro_indicators:
   - match:
       indicators_contains: vix
