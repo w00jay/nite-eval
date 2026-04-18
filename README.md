@@ -15,6 +15,22 @@ Evaluates local models across 4 dimensions (15 tasks total):
 
 Each task runs as a multi-turn conversation with mock tools (deterministic responses defined in YAML). Scoring is a mix of deterministic methods (checklist, sequence match, subset match) and LLM judges (rubric-based ternary scoring). Results persist to SQLite with checkpoint/resume.
 
+## Sample results
+
+Run `run-20260418-042455` on the reference hardware, 4 models × 15 tasks, `max_tokens=4096`, qwen3.6 with `/no_think`:
+
+| Model | Research | Planning | Coding | Agentic | Composite |
+|-------|---------:|---------:|-------:|--------:|----------:|
+| **qwen3.6-35b-a3b** | 0.82 | 0.93 | 0.28 | 0.81 | **0.71** |
+| qwen3.5-27b | 0.70 | 0.72 | 0.21 | 0.81 | 0.61 |
+| qwen3.5-9b | 0.70 | 0.69 | 0.24 | 0.77 | 0.60 |
+| gemma4-26b-a4b | 0.72 | 0.69 | 0.28 | 0.69 | 0.60 |
+
+Notes:
+- Qwen models use the standard Hermes tool-call format. Gemma 4 emits tool calls in a Harmony-style format (`<|tool_call>call:FUNC{…}<tool_call|>`); the parser handles both.
+- Reasoning-mode models (Qwen 3.6 MoE) need `/no_think` appended to the system prompt — without it, the model consumes the entire token budget inside `<think>…</think>` before producing an answer. Configure per-model via the `system_suffix` field in `config/eval_config.yaml`.
+- Coding scores cluster at 0.21–0.28 across all models — a rubric ceiling (tasks ask for complete implementations within a 4096-token budget), not a per-model weakness.
+
 ## Hardware (reference setup)
 
 | GPU | Role | Port |
@@ -96,13 +112,14 @@ Path/binary configuration lives in `.env` (see `.env.example`).
 
 ## Default target models
 
-| Name | Model | Quant |
-|------|-------|-------|
-| `qwen3.5-27b` | Qwen 3.5 27B | Q4_K_M |
-| `qwen3.5-9b` | Qwen 3.5 9B | Q4_K_M |
-| `gemma4-26b-a4b` | Gemma 4 26B-A4B | Q4_K_M |
+| Name | Model | Quant | Notes |
+|------|-------|-------|-------|
+| `qwen3.5-27b` | Qwen 3.5 27B | Q4_K_M | |
+| `qwen3.5-9b` | Qwen 3.5 9B | Q4_K_M | |
+| `gemma4-26b-a4b` | Gemma 4 26B-A4B | Q4_K_M | Emits Harmony-style tool calls |
+| `qwen3.6-35b-a3b` | Qwen 3.6 35B-A3B | UD-Q4_K_S | MoE reasoning; needs `system_suffix: "/no_think"` |
 
-Add or replace models by editing `config/llama_swap_config.yaml` and the `models:` block in `config/eval_config.yaml`.
+Add or replace models by editing `config/llama_swap_config.yaml` and the `models:` block in `config/eval_config.yaml`. The `models:` block accepts an optional `system_suffix` per model for chat-template triggers like `/no_think`.
 
 ## Judges
 
