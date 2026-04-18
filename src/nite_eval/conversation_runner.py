@@ -176,15 +176,30 @@ def run_conversation(
                     reached_max_turns=False,
                 )
 
-            # Execute tool calls and build response messages
+            # Execute tool calls and build response messages. Gemma-family
+            # models frequently batch 50+ tool calls into a single response;
+            # stop executing inside the turn once we hit max_tool_calls so
+            # we don't balloon the message history past the server's
+            # ctx-size before the synthesis nudge gets a chance to fire.
             messages.append(Message(role="assistant", content=response_text))
 
+            dropped = 0
             for tc in parsed.tool_calls:
+                if total_tool_calls >= max_tool_calls:
+                    dropped = len(parsed.tool_calls) - len(turn.tool_responses)
+                    break
                 total_tool_calls += 1
                 mock_result = mock_env.call(tc.name, tc.arguments)
                 tool_resp = format_tool_response(tc.name, mock_result)
                 turn.tool_responses.append({"name": tc.name, "arguments": tc.arguments, "result": mock_result})
                 messages.append(Message(role="tool", content=tool_resp))
+
+            if dropped > 0:
+                logger.info(
+                    "Turn %d: cap reached mid-response, dropped %d remaining tool calls",
+                    turn_num,
+                    dropped,
+                )
 
             turns.append(turn)
 
