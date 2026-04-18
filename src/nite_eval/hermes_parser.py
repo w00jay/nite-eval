@@ -119,6 +119,14 @@ def _extract_gemma_tool_calls(response: str) -> tuple[list[ToolCall], list[dict]
         if not isinstance(args, dict):
             errors.append({"error": "invalid_arguments_type", "raw": args_raw})
             continue
+        # Gemma sometimes mixes Hermes-style wrapping into its own format:
+        #   call:web_search{arguments:{query:"..."}}
+        # If the outer dict has exactly one key "arguments" containing a dict,
+        # unwrap it so mocks see the real args. Preserves legitimate cases
+        # like call:call_mcp_tool{arguments:{...},server:"..."} where
+        # "arguments" is a real parameter alongside others.
+        if len(args) == 1 and isinstance(args.get("arguments"), dict):
+            args = args["arguments"]
         calls.append(ToolCall(name=name, arguments=args, raw=raw))
     return calls, errors
 

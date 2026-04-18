@@ -247,6 +247,28 @@ def test_gemma_multiple_calls():
     assert parsed.scratch_pad == "thought\nthinking"
 
 
+def test_gemma_unwraps_hermes_style_wrapping():
+    """Gemma sometimes emits call:fn{arguments:{...}} — unwrap the single key."""
+    response = '<|tool_call>call:web_search{arguments:{query:<|"|>abc<|"|>}}<tool_call|>'
+    parsed = extract_tool_calls(response)
+    assert len(parsed.tool_calls) == 1
+    assert parsed.tool_calls[0].arguments == {"query": "abc"}
+
+
+def test_gemma_preserves_arguments_as_real_param():
+    """When 'arguments' is one of several keys, it's a real parameter — no unwrap."""
+    response = (
+        "<|tool_call>call:call_mcp_tool"
+        '{arguments:{server:<|"|>notion<|"|>,tool:<|"|>search<|"|>},'
+        'server:<|"|>notion<|"|>}<tool_call|>'
+    )
+    parsed = extract_tool_calls(response)
+    assert len(parsed.tool_calls) == 1
+    tc = parsed.tool_calls[0]
+    assert tc.arguments["server"] == "notion"
+    assert tc.arguments["arguments"] == {"server": "notion", "tool": "search"}
+
+
 def test_gemma_hermes_priority():
     """When both formats present, Hermes wins (Gemma is fallback only)."""
     response = (

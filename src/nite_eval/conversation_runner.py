@@ -92,6 +92,7 @@ def run_conversation(
     turns: list[TurnResult] = []
     total_tool_calls = 0
     total_latency = 0.0
+    cap_nudged = False  # Set when the max_tool_calls nudge fires so the max_turns nudge doesn't double-nudge.
 
     # Use the module-level HTTP timeout, not the task's timeout_seconds.
     # Tasks' timeout_seconds was historically both a task-level bound and the
@@ -189,59 +190,46 @@ def run_conversation(
 
             if total_tool_calls >= max_tool_calls:
                 logger.warning("Hit max_tool_calls (%d), nudging for synthesis", max_tool_calls)
-                messages.append(
-                    Message(
-                        role="user",
-                        content=(
-                            f"You have used all {max_tool_calls} available tool calls. "
-                            "Do not call any more tools. Based on everything you've gathered, "
-                            "write your final answer to the original question now."
-                        ),
-                    )
+                nudge_content = (
+                    f"You have used all {max_tool_calls} available tool calls. "
+                    "Do not call any more tools. Based on everything you've gathered, "
+                    "write your final answer to the original question now."
                 )
-                nudge_start = time.monotonic()
-                nudged_text = _call_model(client, base_url, model_name, messages, temperature, max_tokens)
-                nudge_latency = (time.monotonic() - nudge_start) * 1000
-                total_latency += nudge_latency
-                nudge_parsed = extract_tool_calls(nudged_text)
-                turns.append(
-                    TurnResult(
-                        turn=turn_num + 1,
-                        response=nudged_text,
-                        parsed=nudge_parsed,
-                        latency_ms=nudge_latency,
-                    )
+                total_latency += _try_nudge(
+                    client,
+                    base_url,
+                    model_name,
+                    messages,
+                    temperature,
+                    max_tokens,
+                    nudge_content,
+                    turn_num + 1,
+                    turns,
                 )
+                cap_nudged = True
                 break
 
         # Reached max turns. If every turn emitted tool calls and never
         # produced a free-text answer, nudge once for synthesis — symmetric
         # with the max_tool_calls branch above. Skip if we already nudged
-        # in the cap branch (that branch breaks out before reaching here).
-        if turns and all(t.parsed.tool_calls for t in turns):
+        # in the cap branch (regardless of whether that nudge succeeded).
+        if not cap_nudged and turns and all(t.parsed.tool_calls for t in turns):
             logger.warning("Hit max_turns (%d) with no free-text turn, nudging for synthesis", max_turns)
-            messages.append(
-                Message(
-                    role="user",
-                    content=(
-                        f"You have used all {max_turns} available turns. "
-                        "Do not call any more tools. Based on everything you've gathered, "
-                        "write your final answer to the original question now."
-                    ),
-                )
+            nudge_content = (
+                f"You have used all {max_turns} available turns. "
+                "Do not call any more tools. Based on everything you've gathered, "
+                "write your final answer to the original question now."
             )
-            nudge_start = time.monotonic()
-            nudged_text = _call_model(client, base_url, model_name, messages, temperature, max_tokens)
-            nudge_latency = (time.monotonic() - nudge_start) * 1000
-            total_latency += nudge_latency
-            nudge_parsed = extract_tool_calls(nudged_text)
-            turns.append(
-                TurnResult(
-                    turn=max_turns + 1,
-                    response=nudged_text,
-                    parsed=nudge_parsed,
-                    latency_ms=nudge_latency,
-                )
+            total_latency += _try_nudge(
+                client,
+                base_url,
+                model_name,
+                messages,
+                temperature,
+                max_tokens,
+                nudge_content,
+                max_turns + 1,
+                turns,
             )
 
         final = _extract_best_final_response(turns)
@@ -268,6 +256,45 @@ def run_conversation(
 
 
 TOOL_CALL_TAG_RE = re.compile(r"<tool_call>.*?</tool_call>", re.DOTALL)
+
+
+def _try_nudge(
+    client: httpx.Client,
+    base_url: str,
+    model_name: str,
+    messages: list[Message],
+    temperature: float,
+    max_tokens: int,
+    nudge_content: str,
+    turn_number: int,
+    turns: list[TurnResult],
+) -> float:
+    """Append a synthesis-nudge user message and collect the model's reply.
+
+    Returns the nudge's latency in ms. HTTP-level failures (e.g. 400 when
+    context exceeds the server's ctx-size after many tool responses) are
+    logged and swallowed so the outer conversation can fall back to the
+    best already-collected response instead of erroring out the whole task.
+    """
+    messages.append(Message(role="user", content=nudge_content))
+    nudge_start = time.monotonic()
+    try:
+        nudged_text = _call_model(client, base_url, model_name, messages, temperature, max_tokens)
+    except httpx.HTTPStatusError as e:
+        nudge_latency = (time.monotonic() - nudge_start) * 1000
+        logger.warning("Nudge call failed with HTTP %s; proceeding with best-of-turns", e.response.status_code)
+        return nudge_latency
+    nudge_latency = (time.monotonic() - nudge_start) * 1000
+    nudge_parsed = extract_tool_calls(nudged_text)
+    turns.append(
+        TurnResult(
+            turn=turn_number,
+            response=nudged_text,
+            parsed=nudge_parsed,
+            latency_ms=nudge_latency,
+        )
+    )
+    return nudge_latency
 
 
 def _extract_best_final_response(turns: list[TurnResult]) -> str:
