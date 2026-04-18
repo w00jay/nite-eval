@@ -17,6 +17,15 @@ TOOL_CALL_RE = re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.DOTALL)
 SCRATCH_PAD_RE = re.compile(r"<scratch_pad>\s*(.*?)\s*</scratch_pad>", re.DOTALL)
 TRAILING_COMMA_RE = re.compile(r",\s*([}\]])")
 
+# Gemma's chat template emits a Harmony-like format:
+#   <|tool_call>call:FUNC{key:<|"|>val<|"|>,key:[<|"|>a<|"|>,<|"|>b<|"|>]}<tool_call|>
+# with `<|channel>thought...<channel|>` blocks as scratchpad.
+# Some variants use "..." for strings instead of <|"|>...<|"|>.
+GEMMA_TOOL_CALL_RE = re.compile(r"<\|tool_call>(.*?)<tool_call\|>", re.DOTALL)
+GEMMA_CHANNEL_RE = re.compile(r"<\|channel>(.*?)<channel\|>", re.DOTALL)
+GEMMA_CALL_PREFIX_RE = re.compile(r"\s*call:([A-Za-z_][A-Za-z0-9_]*)\s*(\{.*\})\s*$", re.DOTALL)
+GEMMA_STRING_DELIM = '<|"|>'
+
 
 @dataclass
 class ToolCall:
@@ -46,17 +55,92 @@ def _fix_json(raw: str) -> str:
     return fixed
 
 
+def _quote_bare_keys(s: str) -> str:
+    """Quote bare identifiers that appear as JSON keys.
+
+    Walks the string tracking inside-string state (delimiter `"`, respecting
+    backslash escapes). Any `[A-Za-z_]\\w*` immediately followed by `:` and
+    found *outside* a string is wrapped in quotes. Needed because Gemma's
+    tool-call args look like `{key:"value"}` — valid-ish but missing key quotes.
+    """
+    out: list[str] = []
+    i = 0
+    in_string = False
+    ident_re = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)(\s*:)")
+    while i < len(s):
+        ch = s[i]
+        if in_string:
+            if ch == "\\" and i + 1 < len(s):
+                out.append(ch)
+                out.append(s[i + 1])
+                i += 2
+                continue
+            if ch == '"':
+                in_string = False
+            out.append(ch)
+            i += 1
+            continue
+        if ch == '"':
+            in_string = True
+            out.append(ch)
+            i += 1
+            continue
+        m = ident_re.match(s, i)
+        if m and (not out or out[-1] not in ('"',)):
+            ident, colon = m.group(1), m.group(2)
+            out.append(f'"{ident}"{colon}')
+            i = m.end()
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _extract_gemma_tool_calls(response: str) -> tuple[list[ToolCall], list[dict]]:
+    """Extract Gemma-format tool calls. Returns (calls, errors)."""
+    calls: list[ToolCall] = []
+    errors: list[dict] = []
+    for raw in GEMMA_TOOL_CALL_RE.findall(response):
+        m = GEMMA_CALL_PREFIX_RE.match(raw)
+        if not m:
+            errors.append({"error": "malformed_gemma_call", "raw": raw})
+            continue
+        name = m.group(1)
+        args_raw = m.group(2)
+        # Normalize Gemma string delimiters to standard "
+        args_norm = args_raw.replace(GEMMA_STRING_DELIM, '"')
+        # Quote bare keys so JSON can parse
+        args_json = _quote_bare_keys(args_norm)
+        try:
+            args = json.loads(_fix_json(args_json))
+        except json.JSONDecodeError:
+            errors.append({"error": "malformed_gemma_json", "raw": args_raw})
+            continue
+        if not isinstance(args, dict):
+            errors.append({"error": "invalid_arguments_type", "raw": args_raw})
+            continue
+        calls.append(ToolCall(name=name, arguments=args, raw=raw))
+    return calls, errors
+
+
 def extract_tool_calls(response: str) -> ParsedResponse:
-    """Extract all tool calls and scratch pad from a Hermes-format response."""
+    """Extract all tool calls and scratch pad from a Hermes-format response.
+
+    Falls back to Gemma/Harmony-style `<|tool_call>call:FUNC{…}<tool_call|>`
+    when no Hermes tool calls are present — lets gemma4 models participate
+    in tool-driven tasks instead of being silently handicapped.
+    """
     result = ParsedResponse()
 
     scratch_match = SCRATCH_PAD_RE.search(response)
     if scratch_match:
         result.scratch_pad = scratch_match.group(1).strip()
 
-    # Text is everything outside tool_call and scratch_pad tags
+    # Text is everything outside tool_call, scratch_pad, and Gemma-channel tags
     text = TOOL_CALL_RE.sub("", response)
     text = SCRATCH_PAD_RE.sub("", text)
+    text = GEMMA_TOOL_CALL_RE.sub("", text)
+    text = GEMMA_CHANNEL_RE.sub("", text)
     result.text = text.strip()
 
     matches = TOOL_CALL_RE.findall(response)
@@ -78,6 +162,17 @@ def extract_tool_calls(response: str) -> ParsedResponse:
             continue
 
         result.tool_calls.append(ToolCall(name=name, arguments=arguments, raw=raw_match))
+
+    # Gemma fallback only runs when the Hermes path found nothing — avoids
+    # double-parsing in the mixed-format case (unlikely but safe).
+    if not result.tool_calls and GEMMA_TOOL_CALL_RE.search(response):
+        gemma_calls, gemma_errors = _extract_gemma_tool_calls(response)
+        result.tool_calls.extend(gemma_calls)
+        result.errors.extend(gemma_errors)
+        if result.scratch_pad is None:
+            channel_match = GEMMA_CHANNEL_RE.search(response)
+            if channel_match:
+                result.scratch_pad = channel_match.group(1).strip()
 
     return result
 

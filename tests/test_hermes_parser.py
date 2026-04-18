@@ -181,3 +181,78 @@ def test_format_tool_response():
     formatted = format_tool_response("web_search", {"results": ["a", "b"]})
     assert "<tool_response>" in formatted
     assert "web_search" in formatted
+
+
+# --- Gemma/Harmony-format parsing (gemma4-26b-a4b) ---
+
+
+def test_gemma_simple_string_delim():
+    """Gemma variant that uses <|"|> as string delimiter."""
+    response = '<|tool_call>call:get_price_data{period:<|"|>1mo<|"|>,symbol:<|"|>NVDA<|"|>}<tool_call|>'
+    parsed = extract_tool_calls(response)
+    assert len(parsed.tool_calls) == 1
+    assert parsed.tool_calls[0].name == "get_price_data"
+    assert parsed.tool_calls[0].arguments == {"period": "1mo", "symbol": "NVDA"}
+
+
+def test_gemma_json_string_delim():
+    """Gemma variant that uses standard " for strings."""
+    response = '<|tool_call>call:run_code{command: "ls -R"}<tool_call|>'
+    parsed = extract_tool_calls(response)
+    assert len(parsed.tool_calls) == 1
+    assert parsed.tool_calls[0].name == "run_code"
+    assert parsed.tool_calls[0].arguments == {"command": "ls -R"}
+
+
+def test_gemma_array_argument():
+    """Array with Gemma string delims."""
+    response = (
+        "<|tool_call>call:get_technical_indicators"
+        '{indicators:[<|"|>rsi<|"|>,<|"|>macd<|"|>,<|"|>bollinger<|"|>],'
+        'symbol:<|"|>NVDA<|"|>}<tool_call|>'
+    )
+    parsed = extract_tool_calls(response)
+    assert len(parsed.tool_calls) == 1
+    tc = parsed.tool_calls[0]
+    assert tc.name == "get_technical_indicators"
+    assert tc.arguments["symbol"] == "NVDA"
+    assert tc.arguments["indicators"] == ["rsi", "macd", "bollinger"]
+
+
+def test_gemma_nested_object():
+    response = (
+        "<|tool_call>call:call_mcp_tool"
+        '{arguments:{server:<|"|>notion<|"|>,tool:<|"|>search<|"|>},'
+        'server:<|"|>notion<|"|>}<tool_call|>'
+    )
+    parsed = extract_tool_calls(response)
+    assert len(parsed.tool_calls) == 1
+    tc = parsed.tool_calls[0]
+    assert tc.name == "call_mcp_tool"
+    assert tc.arguments["server"] == "notion"
+    assert tc.arguments["arguments"] == {"server": "notion", "tool": "search"}
+
+
+def test_gemma_multiple_calls():
+    response = (
+        '<|tool_call>call:web_search{query:<|"|>A<|"|>}<tool_call|>'
+        "<|tool_response>\n<|channel>thought\nthinking<channel|>"
+        '<|tool_call>call:web_search{query:<|"|>B<|"|>}<tool_call|>'
+    )
+    parsed = extract_tool_calls(response)
+    assert len(parsed.tool_calls) == 2
+    assert parsed.tool_calls[0].arguments == {"query": "A"}
+    assert parsed.tool_calls[1].arguments == {"query": "B"}
+    # Channel block captured as scratch-pad fallback
+    assert parsed.scratch_pad == "thought\nthinking"
+
+
+def test_gemma_hermes_priority():
+    """When both formats present, Hermes wins (Gemma is fallback only)."""
+    response = (
+        '<tool_call>{"name": "web_search", "arguments": {"query": "hermes"}}</tool_call>'
+        '<|tool_call>call:web_search{query:<|"|>gemma<|"|>}<tool_call|>'
+    )
+    parsed = extract_tool_calls(response)
+    assert len(parsed.tool_calls) == 1
+    assert parsed.tool_calls[0].arguments == {"query": "hermes"}
