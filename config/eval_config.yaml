@@ -26,6 +26,9 @@ models:
     # Without this, qwen3.6 burns the entire max_tokens budget on
     # reasoning and never emits a final answer on coding tasks.
     system_suffix: "/no_think"
+  - name: "qwen3.6-35b-a3b-strix"
+    backend: "llama.cpp"
+    system_suffix: "/no_think"
 
 evaluation:
   temperature: 0.0

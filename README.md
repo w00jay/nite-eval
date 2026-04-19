@@ -17,19 +17,21 @@ Each task runs as a multi-turn conversation with mock tools (deterministic respo
 
 ## Sample results
 
-Run `run-20260418-042455` on the reference hardware, 4 models × 15 tasks, `max_tokens=4096`, qwen3.6 with `/no_think`:
+Run `run-20260418-234519` on the reference hardware, 5 models × 15 tasks, `max_tokens=4096`, qwen3.6 with `/no_think`:
 
 | Model | Research | Planning | Coding | Agentic | Composite |
 |-------|---------:|---------:|-------:|--------:|----------:|
-| **qwen3.6-35b-a3b** | 0.82 | 0.93 | 0.28 | 0.81 | **0.71** |
-| qwen3.5-27b | 0.70 | 0.72 | 0.21 | 0.81 | 0.61 |
-| qwen3.5-9b | 0.70 | 0.69 | 0.24 | 0.77 | 0.60 |
-| gemma4-26b-a4b | 0.72 | 0.69 | 0.28 | 0.69 | 0.60 |
+| **qwen3.6-35b-a3b** (UD-Q4_K_S) | 0.82 | 0.90 | 0.28 | 0.78 | **0.70** |
+| qwen3.6-35b-a3b-strix (Q4_K_M) | 0.77 | 0.77 | 0.21 | 0.77 | 0.63 |
+| qwen3.5-27b | 0.75 | 0.69 | 0.21 | 0.82 | 0.62 |
+| qwen3.5-9b | 0.75 | 0.69 | 0.28 | 0.74 | 0.62 |
+| gemma4-26b-a4b | 0.68 | 0.69 | 0.28 | 0.67 | 0.58 |
 
 Notes:
 - Qwen models use the standard Hermes tool-call format. Gemma 4 emits tool calls in a Harmony-style format (`<|tool_call>call:FUNC{…}<tool_call|>`); the parser handles both.
 - Reasoning-mode models (Qwen 3.6 MoE) need `/no_think` appended to the system prompt — without it, the model consumes the entire token budget inside `<think>…</think>` before producing an answer. Configure per-model via the `system_suffix` field in `config/eval_config.yaml`.
-- Coding scores cluster at 0.21–0.28 across all models — a rubric ceiling (tasks ask for complete implementations within a 4096-token budget), not a per-model weakness.
+- Coding scores cluster at 0.15–0.42 across all models — a rubric ceiling (tasks ask for complete implementations within a 4096-token budget), not a per-model weakness.
+- The two Qwen3.6 entries above use the same base model with different quants (unsloth UD-Q4_K_S vs Sero/Strix Q4_K_M). Wikitext-2 perplexity is statistically identical (5.91 vs 5.92, ±0.04) — see [`docs/comparisons/qwen3-family-2026-04-19.md`](docs/comparisons/qwen3-family-2026-04-19.md) for the full investigation (PPL, GGUF metadata diff, chat-template diff, and verdict on what actually drives the eval-score gap).
 
 ## Hardware (reference setup)
 
@@ -96,6 +98,31 @@ nohup ./scripts/run_nightly.sh > results/nightly.log 2>&1 &
 
 ```bash
 uv run python -m nite_eval.orchestrator --resume run-20260405-232559
+```
+
+### Comparing two quants of the same model
+
+When eval scores diverge between two GGUF quants (e.g. unsloth UD-Q4_K_S vs vanilla Q4_K_M of the same base), `compare_quants.sh` decomposes the gap into structural vs behavioral causes:
+
+```bash
+# Full comparison (~10 min): metadata diff + xxh64 + determinism + wikitext-2 perplexity
+./scripts/compare_quants.sh
+
+# Compare an arbitrary pair
+./scripts/compare_quants.sh /path/to/A.gguf label_a /path/to/B.gguf label_b
+
+# Skip the slow steps
+./scripts/compare_quants.sh --skip-perplexity              # metadata + determinism only
+./scripts/compare_quants.sh --skip-determinism             # metadata + perplexity only
+./scripts/compare_quants.sh --system-suffix ""             # for non-thinking models
+```
+
+Outputs land in `results/quant-compare/<timestamp>/`. The metadata diff alone (Step 1) usually reveals the headline difference — different tensor-quant placements, missing imatrix calibration, divergent chat templates — before you spend time on perplexity. See the [Qwen 3.x family comparison](docs/comparisons/qwen3-family-2026-04-19.md) for a worked example.
+
+`scripts/gguf_meta_diff.py` is callable standalone if all you want is the metadata diff:
+
+```bash
+uv run --with gguf python scripts/gguf_meta_diff.py A.gguf B.gguf --labels A B
 ```
 
 ### Environment variables
@@ -169,6 +196,9 @@ scripts/
   smoke_test.py              # quick pipeline check
   validate_judge_pipeline.py # judge sanity check with synthetic responses
   run_calibration.py         # judge calibration against human scores
+  compare_quants.sh          # compare two GGUF quants: metadata, determinism, perplexity
+  gguf_meta_diff.py          # standalone GGUF metadata + per-tensor quant diff
+docs/comparisons/            # writeups from past comparison runs
 ```
 
 ## License
