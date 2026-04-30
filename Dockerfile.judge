@@ -1,0 +1,59 @@
+# nite-eval judge image
+# Runs llama.cpp's llama-server directly. One image, two Deployments
+# (Flow-Judge + RewardAnything), differentiated by JUDGE_MODEL_PATH and PORT env.
+#
+# Built for both Tesla P40 (sm_61) and RTX 3090 (sm_86) so the same image
+# works on either GPU. Single-arch builds shave size/build time but lose
+# portability across the homelab's mixed GPUs.
+
+ARG LLAMACPP_REF=master
+ARG CUDA_ARCHITECTURES="61;86"
+
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS builder
+
+ARG LLAMACPP_REF
+ARG CUDA_ARCHITECTURES
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        build-essential cmake git ca-certificates curl libcurl4-openssl-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+RUN git clone --depth 1 --branch ${LLAMACPP_REF} https://github.com/ggerganov/llama.cpp.git
+
+WORKDIR /src/llama.cpp
+RUN cmake -B build \
+        -DGGML_CUDA=ON \
+        -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES}" \
+        -DLLAMA_CURL=ON \
+        -DBUILD_SHARED_LIBS=OFF \
+        -DCMAKE_BUILD_TYPE=Release \
+ && cmake --build build --target llama-server --config Release -j
+
+
+FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS runtime
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl ca-certificates tini libgomp1 \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /src/llama.cpp/build/bin/llama-server /usr/local/bin/llama-server
+
+# Defaults; overridden per-Deployment via env
+ENV JUDGE_MODEL_PATH="" \
+    PORT=9091 \
+    NGL=999 \
+    CTX_SIZE=4096 \
+    NPARALLEL=1 \
+    EXTRA_FLAGS=""
+
+EXPOSE 9091
+EXPOSE 9092
+
+# Use shell form so env vars expand. tini reaps zombies + forwards SIGTERM.
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["/bin/sh", "-c", "exec llama-server -m \"$JUDGE_MODEL_PATH\" --port \"$PORT\" -ngl \"$NGL\" --ctx-size \"$CTX_SIZE\" -np \"$NPARALLEL\" --no-webui $EXTRA_FLAGS"]

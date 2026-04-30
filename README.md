@@ -166,6 +166,14 @@ Results live in `results/runs/`:
 - `eval_results.db` — SQLite with all results, scores, tool calls
 - `run-YYYYMMDD-HHMMSS.md` — Markdown comparison report
 
+## K8s deployment
+
+For unattended operation on a single-node k3s homelab, the same pipeline runs as a CronJob. Three container images (`nite-eval-orchestrator`, `nite-eval-judge`, `nite-eval-target`) plus manifests in [`k8s/base/`](k8s/base/) reproduce the bare-metal layout: judges as long-running Deployments on the P40, target llama-swap as a Deployment on the 3090, orchestrator as a nightly Job. SQLite checkpoints persist on a PVC so a mid-run pod kill resumes cleanly.
+
+See [`k8s/README.md`](k8s/README.md) for build, push, GPU-UUID config, apply, and ops procedures.
+
+The bare-metal `scripts/run_nightly.sh` flow above remains the supported fallback path.
+
 ## Development
 
 ```bash

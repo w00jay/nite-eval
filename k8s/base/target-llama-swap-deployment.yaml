@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: target-llama-swap
+  namespace: nite-eval
+  labels:
+    app.kubernetes.io/name: target-llama-swap
+    app.kubernetes.io/part-of: nite-eval
+    app.kubernetes.io/component: target
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: target-llama-swap
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: target-llama-swap
+        app.kubernetes.io/part-of: nite-eval
+        app.kubernetes.io/component: target
+    spec:
+      runtimeClassName: nvidia
+      terminationGracePeriodSeconds: 120
+      containers:
+        - name: llama-swap
+          image: ghcr.io/w00jay/nite-eval-target:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 9070
+          env:
+            - name: PORT
+              value: "9070"
+            - name: MODELS_DIR
+              value: "/models"
+            - name: LLAMA_SERVER_BIN
+              value: "/usr/local/bin/llama-server"
+            - name: LLAMA_SWAP_TEMPLATE
+              value: "/workspace/config/llama_swap_config.tmpl.yaml"
+            - name: NVIDIA_VISIBLE_DEVICES
+              valueFrom:
+                secretKeyRef:
+                  name: nite-eval-gpu-pinning
+                  key: TARGET_GPU_UUID
+            - name: NVIDIA_DRIVER_CAPABILITIES
+              value: "compute,utility"
+          resources:
+            requests:
+              cpu: "4"
+              memory: 24Gi
+            limits:
+              cpu: "8"
+              memory: 32Gi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 9070
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9070
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            failureThreshold: 3
+          volumeMounts:
+            - name: target-models
+              mountPath: /models
+              readOnly: true
+            - name: llama-swap-config
+              mountPath: /workspace/config
+              readOnly: true
+      volumes:
+        - name: target-models
+          hostPath:
+            # Host directory containing target GGUFs (Qwen, Gemma, etc).
+            # The path here must match the GGUF_DIR on the cluster node.
+            path: /home/woojay/models
+            type: Directory
+        - name: llama-swap-config
+          configMap:
+            name: llama-swap-config
+            items:
+              - key: llama_swap_config.tmpl.yaml
+                path: llama_swap_config.tmpl.yaml

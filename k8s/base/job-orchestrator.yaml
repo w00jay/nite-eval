@@ -1,0 +1,73 @@
+# Manual-trigger Job for the orchestrator. Same PodSpec as the CronJob,
+# minus the CronJob wrapper. Use this to run on demand without waiting for
+# the schedule:
+#
+#   # Apply (creates a Job named nite-eval-orchestrator-manual; delete the
+#   # prior one first if it still exists):
+#   kubectl -n nite-eval delete job nite-eval-orchestrator-manual --ignore-not-found
+#   kubectl apply -f k8s/base/job-orchestrator.yaml
+#
+#   # Or copy from the CronJob (uses the live CronJob's PodTemplate):
+#   kubectl -n nite-eval create job adhoc-$(date +%Y%m%d-%H%M) \
+#     --from=cronjob/nite-eval-orchestrator
+#
+# Pass orchestrator overrides by editing `args` here (e.g. --models, --resume).
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nite-eval-orchestrator-manual
+  namespace: nite-eval
+  labels:
+    app.kubernetes.io/name: nite-eval-orchestrator
+    app.kubernetes.io/part-of: nite-eval
+    app.kubernetes.io/component: orchestrator
+    nite-eval/trigger: manual
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 36000
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nite-eval-orchestrator
+        app.kubernetes.io/part-of: nite-eval
+        app.kubernetes.io/component: orchestrator
+        nite-eval/trigger: manual
+    spec:
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 3600
+      containers:
+        - name: orchestrator
+          image: ghcr.io/w00jay/nite-eval-orchestrator:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--config"
+            - "/workspace/config/eval_config.yaml"
+          env:
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            - name: TZ
+              value: "America/Los_Angeles"
+          resources:
+            requests:
+              cpu: "1"
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          volumeMounts:
+            - name: eval-config
+              mountPath: /workspace/config
+              readOnly: true
+            - name: results
+              mountPath: /workspace/results
+      volumes:
+        - name: eval-config
+          configMap:
+            name: eval-config
+            items:
+              - key: eval_config.yaml
+                path: eval_config.yaml
+        - name: results
+          persistentVolumeClaim:
+            claimName: nite-eval-results

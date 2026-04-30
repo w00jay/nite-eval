@@ -13,6 +13,9 @@ results/
 config/llama_swap_config.yaml
 config/judge_swap_config.yaml
 
+# K8s GPU-UUID Secret (copy secret.yaml.example, fill UUIDs, never commit)
+k8s/base/secret.yaml
+
 # Personal notes / planning (not part of the public project)
 CLAUDE.md
 PLANS/

@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: judge-reward
+  namespace: nite-eval
+  labels:
+    app.kubernetes.io/name: judge-reward
+    app.kubernetes.io/part-of: nite-eval
+    app.kubernetes.io/component: judge
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: judge-reward
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: judge-reward
+        app.kubernetes.io/part-of: nite-eval
+        app.kubernetes.io/component: judge
+    spec:
+      runtimeClassName: nvidia
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: llama-server
+          image: ghcr.io/w00jay/nite-eval-judge:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 9091
+          env:
+            - name: PORT
+              value: "9091"
+            - name: JUDGE_MODEL_PATH
+              value: "/judge-models/RewardAnything-8B-v1.Q6_K.gguf"
+            - name: NGL
+              value: "999"
+            - name: CTX_SIZE
+              value: "4096"
+            - name: NPARALLEL
+              value: "1"
+            - name: EXTRA_FLAGS
+              value: "--cache-type-k q8_0 --cache-type-v q8_0"
+            - name: NVIDIA_VISIBLE_DEVICES
+              valueFrom:
+                secretKeyRef:
+                  name: nite-eval-gpu-pinning
+                  key: JUDGE_GPU_UUID
+            - name: NVIDIA_DRIVER_CAPABILITIES
+              value: "compute,utility"
+          resources:
+            requests:
+              cpu: "2"
+              memory: 10Gi
+            limits:
+              cpu: "4"
+              memory: 14Gi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 9091
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9091
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            failureThreshold: 3
+          volumeMounts:
+            - name: judge-models
+              mountPath: /judge-models
+              readOnly: true
+      volumes:
+        - name: judge-models
+          hostPath:
+            path: /home/woojay/models
+            type: Directory

@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: eval-config
+  namespace: nite-eval
+data:
+  eval_config.yaml: |
+    # nite-eval cluster configuration.
+    # Service URLs point at in-cluster Services. The orchestrator does not
+    # need to know GPU UUIDs or model paths — those concerns are scoped to
+    # the target / judge Deployments.
+
+    target:
+      base_url: "http://target-llama-swap.nite-eval.svc.cluster.local:9070"
+      llama_swap_config: "/workspace/config/llama_swap_config.yaml"
+
+    judge:
+      base_url: "http://judge-reward.nite-eval.svc.cluster.local:9091/v1"
+      flow_judge_model: "flow-judge"
+      flow_judge_url: "http://judge-flow.nite-eval.svc.cluster.local:9092/v1"
+      reward_anything_model: "reward-anything"
+      reward_anything_url: "http://judge-reward.nite-eval.svc.cluster.local:9091/v1"
+      temperature: 0.1
+      max_tokens: 2048
+
+    models:
+      - name: "qwen3.5-27b"
+        backend: "llama.cpp"
+      - name: "qwen3.5-9b"
+        backend: "llama.cpp"
+      - name: "gemma4-26b-a4b"
+        backend: "llama.cpp"
+      - name: "qwen3.6-35b-a3b"
+        backend: "llama.cpp"
+        system_suffix: "/no_think"
+
+    evaluation:
+      temperature: 0.0
+      max_tokens: 4096
+      warm_up: true
+
+    scoring:
+      dimension_weights:
+        research: 0.25
+        planning: 0.25
+        coding: 0.25
+        agentic: 0.25
+
+    results:
+      dir: "/workspace/results/runs"
+      db_name: "eval_results.db"
+
+    hardware:
+      # GPU isolation handled at the pod level via NVIDIA_VISIBLE_DEVICES.
+      # These indices are placeholders and not consulted in cluster runs.
+      target_gpu: 0
+      judge_gpu: 0

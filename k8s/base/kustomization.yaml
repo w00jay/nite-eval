@@ -1,0 +1,27 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: nite-eval
+
+# Note: secret.yaml.example is a TEMPLATE. Copy it to secret.yaml (gitignored)
+# and apply that out-of-band. It is intentionally NOT listed below.
+#
+# Manual-trigger job-orchestrator.yaml is also intentionally excluded so a
+# bulk apply doesn't fire an ad-hoc run; apply it explicitly when needed.
+resources:
+  - namespace.yaml
+  - configmap-eval.yaml
+  - configmap-llama-swap.yaml
+  - pvc-results.yaml
+  - judge-flow-deployment.yaml
+  - judge-flow-service.yaml
+  - judge-reward-deployment.yaml
+  - judge-reward-service.yaml
+  - target-llama-swap-deployment.yaml
+  - target-llama-swap-service.yaml
+  - cronjob-orchestrator.yaml
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: nite-eval
+    includeSelectors: false

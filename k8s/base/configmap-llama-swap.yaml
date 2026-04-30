@@ -1,0 +1,50 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: llama-swap-config
+  namespace: nite-eval
+data:
+  # Template rendered at container start by the target image's entrypoint.
+  # ${MODELS_DIR} and ${LLAMA_SERVER_BIN} are substituted; ${PORT} is left
+  # literal so llama-swap interpolates it per-model.
+  #
+  # Edit model filenames here to match the GGUFs on the host's $GGUF_DIR.
+  # GPU pinning is handled by the pod's NVIDIA_VISIBLE_DEVICES env (Secret),
+  # not by `env CUDA_VISIBLE_DEVICES=` inside cmd strings.
+  llama_swap_config.tmpl.yaml: |
+    models:
+      "qwen3.5-27b":
+        cmd: >
+          ${LLAMA_SERVER_BIN}
+          -m ${MODELS_DIR}/Qwen3.5-27B.Q4_K_M.gguf
+          --port ${PORT} -ngl 999 --ctx-size 8192
+          -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
+        group: "target-gpu"
+
+      "qwen3.5-9b":
+        cmd: >
+          ${LLAMA_SERVER_BIN}
+          -m ${MODELS_DIR}/Qwen3.5-9B-Q4_K_M.gguf
+          --port ${PORT} -ngl 999 --ctx-size 8192
+          -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
+        group: "target-gpu"
+
+      "gemma4-26b-a4b":
+        cmd: >
+          ${LLAMA_SERVER_BIN}
+          -m ${MODELS_DIR}/gemma-4-26b-a4b-it-Q4_K_M.gguf
+          --port ${PORT} -ngl 999 --ctx-size 8192
+          -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
+        group: "target-gpu"
+
+      "qwen3.6-35b-a3b":
+        cmd: >
+          ${LLAMA_SERVER_BIN}
+          -m ${MODELS_DIR}/Qwen3.6-35B-A3B.Q4_K_M.gguf
+          --port ${PORT} -ngl 999 --ctx-size 8192
+          -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
+        group: "target-gpu"
+
+    groups:
+      "target-gpu":
+        exclusive: true

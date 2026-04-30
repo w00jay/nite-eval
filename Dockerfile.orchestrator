@@ -1,0 +1,56 @@
+# nite-eval orchestrator image
+# Runs the Python eval pipeline. No GPU. Talks to target + judge HTTP endpoints.
+
+FROM python:3.11-slim AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1
+
+# Install uv
+RUN pip install --no-cache-dir uv==0.5.*
+
+WORKDIR /build
+
+# Resolve and install deps with the lockfile for reproducibility
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-install-project --no-dev
+
+# Install the project itself
+COPY src/ src/
+COPY README.md ./
+RUN uv sync --frozen --no-dev
+
+
+FROM python:3.11-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/app/.venv/bin:$PATH"
+
+WORKDIR /workspace
+
+# curl for liveness probes / debug; tini for clean SIGTERM forwarding
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl tini \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /build/.venv /app/.venv
+COPY --from=builder /build/src /app/src
+
+# Task definitions are baked into the image; configs come from ConfigMap mounts
+COPY tasks/ /app/tasks/
+COPY scripts/ /app/scripts/
+
+# Runtime layout (mounted by k8s):
+#   /workspace/config/eval_config.yaml   <- ConfigMap
+#   /workspace/results/                  <- PVC (SQLite + reports)
+RUN mkdir -p /workspace/config /workspace/results
+
+ENV PYTHONPATH=/app/src
+
+WORKDIR /app
+
+ENTRYPOINT ["/usr/bin/tini", "--", "python", "-m", "nite_eval.orchestrator"]
+CMD ["--config", "/workspace/config/eval_config.yaml"]

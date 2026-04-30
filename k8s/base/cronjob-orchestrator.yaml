@@ -1,0 +1,66 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nite-eval-orchestrator
+  namespace: nite-eval
+  labels:
+    app.kubernetes.io/name: nite-eval-orchestrator
+    app.kubernetes.io/part-of: nite-eval
+    app.kubernetes.io/component: orchestrator
+spec:
+  # 23:00 PT (UTC-7) = 06:00 UTC the next day. Adjust for DST as needed.
+  schedule: "0 6 * * *"
+  timeZone: "UTC"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 600
+  jobTemplate:
+    spec:
+      backoffLimit: 0  # Don't auto-retry; resume is checkpoint-driven
+      activeDeadlineSeconds: 36000  # 10h cap on a nightly run
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: nite-eval-orchestrator
+            app.kubernetes.io/part-of: nite-eval
+            app.kubernetes.io/component: orchestrator
+        spec:
+          restartPolicy: Never
+          # SIGTERM gives the orchestrator up to an hour to checkpoint cleanly.
+          terminationGracePeriodSeconds: 3600
+          containers:
+            - name: orchestrator
+              image: ghcr.io/w00jay/nite-eval-orchestrator:latest
+              imagePullPolicy: IfNotPresent
+              args:
+                - "--config"
+                - "/workspace/config/eval_config.yaml"
+              env:
+                - name: PYTHONUNBUFFERED
+                  value: "1"
+                - name: TZ
+                  value: "America/Los_Angeles"
+              resources:
+                requests:
+                  cpu: "1"
+                  memory: 1Gi
+                limits:
+                  cpu: "2"
+                  memory: 2Gi
+              volumeMounts:
+                - name: eval-config
+                  mountPath: /workspace/config
+                  readOnly: true
+                - name: results
+                  mountPath: /workspace/results
+          volumes:
+            - name: eval-config
+              configMap:
+                name: eval-config
+                items:
+                  - key: eval_config.yaml
+                    path: eval_config.yaml
+            - name: results
+              persistentVolumeClaim:
+                claimName: nite-eval-results

@@ -1,0 +1,102 @@
+# nite-eval target image
+# Bundles llama-swap + llama-server. Reads llama_swap_config.yaml from a
+# mounted ConfigMap (path: /workspace/config/llama_swap_config.tmpl.yaml).
+# At container start, env vars are substituted into the template via envsubst
+# so the same image works across hosts with different GPU UUIDs / model paths.
+#
+# Built for both Tesla P40 (sm_61) and RTX 3090 (sm_86).
+
+ARG LLAMACPP_REF=master
+ARG LLAMA_SWAP_VERSION=v118
+ARG CUDA_ARCHITECTURES="61;86"
+
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS llamacpp-builder
+
+ARG LLAMACPP_REF
+ARG CUDA_ARCHITECTURES
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        build-essential cmake git ca-certificates curl libcurl4-openssl-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+RUN git clone --depth 1 --branch ${LLAMACPP_REF} https://github.com/ggerganov/llama.cpp.git
+
+WORKDIR /src/llama.cpp
+RUN cmake -B build \
+        -DGGML_CUDA=ON \
+        -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES}" \
+        -DLLAMA_CURL=ON \
+        -DBUILD_SHARED_LIBS=OFF \
+        -DCMAKE_BUILD_TYPE=Release \
+ && cmake --build build --target llama-server --config Release -j
+
+
+FROM debian:bookworm-slim AS swap-fetcher
+
+ARG LLAMA_SWAP_VERSION
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl ca-certificates tar gzip \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /tmp
+RUN ARCH="$(dpkg --print-architecture)" \
+ && case "$ARCH" in \
+        amd64)  SWAP_ARCH=linux_amd64 ;; \
+        arm64)  SWAP_ARCH=linux_arm64 ;; \
+        *)      echo "unsupported arch: $ARCH" && exit 1 ;; \
+    esac \
+ && curl -fL -o llama-swap.tar.gz \
+        "https://github.com/mostlygeek/llama-swap/releases/download/${LLAMA_SWAP_VERSION}/llama-swap_${LLAMA_SWAP_VERSION#v}_${SWAP_ARCH}.tar.gz" \
+ && tar -xzf llama-swap.tar.gz \
+ && install -m 0755 llama-swap /usr/local/bin/llama-swap
+
+
+FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS runtime
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        curl ca-certificates tini gettext-base libgomp1 \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY --from=llamacpp-builder /src/llama.cpp/build/bin/llama-server /usr/local/bin/llama-server
+COPY --from=swap-fetcher /usr/local/bin/llama-swap /usr/local/bin/llama-swap
+
+# Entrypoint: render template with envsubst, then exec llama-swap
+COPY <<'EOF' /usr/local/bin/target-entrypoint.sh
+#!/usr/bin/env bash
+set -euo pipefail
+
+TEMPLATE="${LLAMA_SWAP_TEMPLATE:-/workspace/config/llama_swap_config.tmpl.yaml}"
+RENDERED="${LLAMA_SWAP_CONFIG:-/tmp/llama_swap_config.yaml}"
+PORT="${PORT:-9070}"
+
+if [ ! -f "$TEMPLATE" ]; then
+    echo "ERROR: llama-swap template not found at $TEMPLATE" >&2
+    exit 1
+fi
+
+# Only substitute known vars so $PORT inside cmd strings (used by llama-swap)
+# is preserved literally.
+export MODELS_DIR="${MODELS_DIR:-/models}"
+export LLAMA_SERVER_BIN="${LLAMA_SERVER_BIN:-/usr/local/bin/llama-server}"
+envsubst '${MODELS_DIR} ${LLAMA_SERVER_BIN}' < "$TEMPLATE" > "$RENDERED"
+
+echo "Rendered llama-swap config -> $RENDERED"
+echo "Listening on :$PORT"
+exec llama-swap --config "$RENDERED" --listen ":$PORT"
+EOF
+RUN chmod +x /usr/local/bin/target-entrypoint.sh
+
+ENV PORT=9070 \
+    MODELS_DIR=/models \
+    LLAMA_SERVER_BIN=/usr/local/bin/llama-server
+
+EXPOSE 9070
+
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/target-entrypoint.sh"]
