@@ -17,9 +17,11 @@ WORKDIR /build
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project --no-dev
 
-# Install the project itself
+# Install the project itself. README.md and LICENSE are pulled in because
+# pyproject.toml references both (`readme`, `license = { file = "LICENSE" }`)
+# — hatchling fails the build without them.
 COPY src/ src/
-COPY README.md ./
+COPY README.md LICENSE ./
 RUN uv sync --frozen --no-dev
 
 
