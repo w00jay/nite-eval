@@ -79,11 +79,17 @@ def parse_test_output(language: str, output: str, exit_code: int) -> tuple[float
 
     # No parseable results. Compilation failure, harness error, or an unknown
     # runner — all of which mean nothing was demonstrated to work.
+    #
+    # The output is retained here because a 0.0 from this branch is ambiguous:
+    # the model's code may be wrong, or it may be correct but not match the
+    # contract the hidden suite compiles against. Without the compiler's message
+    # the two are indistinguishable after the sandbox is gone.
     return (1.0 if exit_code == 0 else 0.0), {
         "passed": None,
         "total": None,
         "exit_code": exit_code,
         "note": "no per-test results parsed; scored from exit code",
+        "output": output[-4000:],
     }
 
 

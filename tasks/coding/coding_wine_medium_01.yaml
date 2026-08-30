@@ -187,5 +187,8 @@ environment:
   # Scoring runs only our files; test_cmd stays broad so the model
   # still sees its own tests when it calls run_tests.
   hidden_test_cmd: deno test --quiet hidden_scan_test.ts 2>&1
+  # Model test files, moved aside before scoring so its helpers cannot
+  # collide with the hidden suite's at compile time.
+  isolate_globs: "*_test.ts *.test.ts"
   language: typescript
   command_timeout: 180

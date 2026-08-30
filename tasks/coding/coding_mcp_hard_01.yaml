@@ -195,11 +195,14 @@ environment:
   test_cmd: go test ./... -v 2>&1
   # Scoring runs only our files; test_cmd stays broad so the model
   # still sees its own tests when it calls run_tests.
-  hidden_test_cmd: go test -run '^TestHidden' ./... -v 2>&1
+  hidden_test_cmd: go test -run '^TestHidden' . -v 2>&1
+  # Model test files, moved aside before scoring so its helpers cannot
+  # collide with the hidden suite's at compile time.
+  isolate_globs: "*_test.go"
   language: go
   command_timeout: 300
   # `go test -race` links the TLS stack with the race runtime; 2g was OOM-killed
   # (container exit 137), which scores identically to a real race failure.
   memory: 4g
   checks:
-    race_detector_clean: go test -race ./...
+    race_detector_clean: go test -race .

@@ -71,6 +71,11 @@ class SandboxSpec:
     # many trivial passing tests dilute the hidden suite toward 1.0. Falls back
     # to test_cmd when a task has no separate scoring command.
     hidden_test_cmd: str = ""
+    # Shell globs for the model's own test files. They are moved aside before
+    # the hidden suite runs: a helper the model happens to name the same as one
+    # of ours collides at compile time and zeroes the whole package, which is a
+    # harness artefact rather than a fact about the model's code.
+    isolate_globs: str = ""
     setup_cmd: str = ""
     memory: str = DEFAULT_MEMORY
     cpus: str = DEFAULT_CPUS
@@ -93,6 +98,7 @@ class SandboxSpec:
             workdir=data.get("workdir", "/workspace"),
             test_cmd=data.get("test_cmd", ""),
             hidden_test_cmd=data.get("hidden_test_cmd", ""),
+            isolate_globs=data.get("isolate_globs", ""),
             setup_cmd=data.get("setup_cmd", ""),
             memory=data.get("memory", DEFAULT_MEMORY),
             network=data.get("network", "none"),
@@ -367,6 +373,19 @@ class SandboxToolEnv:
         """
         if not suite_dir.exists():
             return {"error": f"hidden suite not found: {suite_dir}"}
+
+        # Move the model's own tests out of the way first. coding_mcp_hard_01
+        # declared a `upstream(...)` helper, as did our hidden suite; Go saw
+        # "upstream redeclared in this block", the package failed to compile,
+        # and both test_pass_rate and race_detector_clean scored 0 without a
+        # single test running.
+        if self.spec.isolate_globs:
+            moved = self.exec(
+                f"mkdir -p /tmp/model_tests && for f in {self.spec.isolate_globs}; do "
+                '[ -e "$f" ] && mv "$f" /tmp/model_tests/ || true; done; true'
+            )
+            if moved.exit_code != 0:
+                logger.warning("Could not isolate the model's tests: %s", moved.stderr[:200])
 
         copied = []
         for path in sorted(suite_dir.rglob("*")):

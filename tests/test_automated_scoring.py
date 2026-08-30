@@ -124,3 +124,19 @@ def test_non_automated_criteria_are_ignored():
     )
     assert results == {}
     sandbox.run_hidden_suite.assert_not_called()
+
+
+def test_unparseable_output_is_retained_for_diagnosis():
+    """A 0.0 from the fallback is ambiguous without the compiler's message.
+
+    coding_mcp_hard_01 scored test_pass_rate 0.0 with exit_code 1 and nothing
+    else, leaving no way to tell a wrong implementation from one that simply
+    did not match the contract the hidden suite compiles against.
+    """
+    _, details = parse_test_output("go", "config.go:12:6: undefined: Gateway", exit_code=2)
+    assert details["output"] == "config.go:12:6: undefined: Gateway"
+
+
+def test_retained_output_is_bounded():
+    _, details = parse_test_output("go", "x" * 20000, exit_code=1)
+    assert len(details["output"]) == 4000

@@ -163,6 +163,9 @@ environment:
   # Scoring runs only our files; test_cmd stays broad so the model
   # still sees its own tests when it calls run_tests.
   hidden_test_cmd: python -m pytest test_hidden_horizons.py -q -p no:cacheprovider 2>&1
+  # Model test files, moved aside before scoring so its helpers cannot
+  # collide with the hidden suite's at compile time.
+  isolate_globs: "test_*.py *_test.py"
   language: python
   command_timeout: 180
   checks:
