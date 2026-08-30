@@ -97,7 +97,7 @@ def parse_test_output(language: str, output: str, exit_code: int) -> tuple[float
 
     passed, total = parser(output) if parser else (0, 0)
     if total:
-        details = {"passed": passed, "total": total, "exit_code": exit_code}
+        details: dict[str, object] = {"passed": passed, "total": total, "exit_code": exit_code}
         if passed < total:
             # A partial score alone is not actionable: artemis scored 13/14 and
             # nothing recorded which test failed. Keep the names, and a slice of
