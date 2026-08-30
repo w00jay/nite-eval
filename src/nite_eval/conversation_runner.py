@@ -80,6 +80,11 @@ HTTP_READ_TIMEOUT = 1200.0
 # more would let a broken model burn the whole turn budget on retries.
 MAX_PARSE_RETRIES = 1
 
+# Tool calls larger than this are summarised in conversation history rather than
+# carried verbatim. Sized above a typical search query or shell command so only
+# file-sized payloads are affected.
+COMPACT_TOOL_CALL_OVER = 1500
+
 
 @dataclass
 class ConversationResult:
@@ -333,7 +338,12 @@ def run_conversation(
             # stop executing inside the turn once we hit max_tool_calls so
             # we don't balloon the message history past the server's
             # ctx-size before the synthesis nudge gets a chance to fire.
-            messages.append(Message(role="assistant", content=response_text))
+            messages.append(
+                Message(
+                    role="assistant",
+                    content=compact_tool_call_payloads(response_text, parsed, COMPACT_TOOL_CALL_OVER),
+                )
+            )
 
             dropped = 0
             for tc in parsed.tool_calls:
@@ -444,6 +454,37 @@ def run_conversation(
 
 
 TOOL_CALL_TAG_RE = re.compile(r"<tool_call>.*?</tool_call>", re.DOTALL)
+
+
+def compact_tool_call_payloads(response_text: str, parsed: ParsedResponse, threshold: int) -> str:
+    """Shrink large tool-call arguments before they enter conversation history.
+
+    On coding_mcp_hard_01, `write_file` arguments were 67181 of the 68263
+    characters of tool-call payload — 98% — and each file body sits in the
+    context twice, as the assistant turn that emitted it and again as history.
+    That put the history at roughly 34.5k tokens against a 32768 budget, and
+    the task died at turn 26 with finish_reason=length.
+
+    The emitted call is executed in full; only the copy kept in history is
+    replaced with a summary. The model already knows what it wrote, and can
+    re-read a file through the tools if it needs the text back.
+    """
+    if not parsed.tool_calls:
+        return response_text
+
+    compacted = response_text
+    for call in parsed.tool_calls:
+        if len(call.raw) <= threshold:
+            continue
+        described = ", ".join(
+            f"{key}={value if len(str(value)) <= 60 else f'<{len(str(value))} chars>'}"
+            for key, value in call.arguments.items()
+        )
+        summary = f"<tool_call>\n[{call.name} issued and executed: {described}]\n</tool_call>"
+        compacted = compacted.replace(f"<tool_call>\n{call.raw}\n</tool_call>", summary)
+        if call.raw in compacted:
+            compacted = compacted.replace(call.raw, f"[{call.name} issued and executed: {described}]")
+    return compacted
 
 
 def _try_nudge(

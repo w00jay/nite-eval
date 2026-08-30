@@ -178,3 +178,9 @@ scoring:
     criteria: Gives a clear, reasoned recommendation for the GKE use case
 max_turns: 6
 timeout_seconds: 600
+
+# Global evaluation.max_tokens is 4096. Hard research tasks exceed it: the
+# pre-Wave-1 baseline and run-20260830-064654 both produced exactly 12834 chars
+# for planning_finance_hard_01 and hit finish_reason=length, so every historical
+# research score was computed on truncated output.
+max_tokens: 12288

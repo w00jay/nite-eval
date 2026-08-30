@@ -317,3 +317,9 @@ timeout_seconds: 1200
 
 distractor_tools:
   - social_media_sentiment
+
+# Global evaluation.max_tokens is 4096. Hard agentic tasks exceed it: the
+# pre-Wave-1 baseline and run-20260830-064654 both produced exactly 12834 chars
+# for planning_finance_hard_01 and hit finish_reason=length, so every historical
+# agentic score was computed on truncated output.
+max_tokens: 8192
