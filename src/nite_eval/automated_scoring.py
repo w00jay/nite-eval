@@ -26,7 +26,8 @@ logger = logging.getLogger(__name__)
 GO_TEST_RESULT_RE = re.compile(r"^\s*--- (PASS|FAIL|SKIP): (\S+)", re.MULTILINE)
 # pytest's terminal summary: "3 passed, 1 failed in 0.12s"
 PYTEST_COUNT_RE = re.compile(r"(\d+) (passed|failed|error|errors)")
-# node:test / jest style "Tests:  1 failed, 3 passed"
+# node:test / jest style "Tests:  1 failed, 3 passed", and `deno test`'s
+# "ok | 11 passed | 1 failed".
 JS_COUNT_RE = re.compile(r"(\d+) (passing|failing|passed|failed)")
 
 
@@ -63,7 +64,13 @@ def parse_test_output(language: str, output: str, exit_code: int) -> tuple[float
     Falls back to the exit code when no counts can be parsed — a suite that
     fails to compile produces no per-test lines, and that is a genuine 0.
     """
-    parsers = {"go": _parse_go, "python": _parse_pytest, "typescript": _parse_js, "javascript": _parse_js}
+    parsers = {
+        "go": _parse_go,
+        "python": _parse_pytest,
+        "typescript": _parse_js,
+        "javascript": _parse_js,
+        "deno": _parse_js,
+    }
     parser = parsers.get(language.lower())
 
     passed, total = parser(output) if parser else (0, 0)

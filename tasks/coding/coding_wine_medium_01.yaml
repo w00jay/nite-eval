@@ -58,14 +58,54 @@ tools:
           type: string
       required:
       - command
-user_message: 'Write a Supabase Edge Function (TypeScript, Deno) for the scan-label endpoint. It should:
-  (1) accept a base64 image in the request body, (2) upload the image to Supabase Storage, (3) call Claude
-  Vision to extract: producer, wine_name, vintage, region, varietal, wine_type, (4) search the wines table
-  for a match using trigram similarity on producer + wine_name, (5) return the matched wine or create
-  a new entry if no match above 0.6 similarity. Handle errors gracefully — a failed Claude API call should
-  return a partial result prompting manual entry, not a 500.
+user_message: |-
+  Write a Supabase Edge Function (TypeScript, Deno) for the scan-label endpoint. It should: (1) accept a base64 image in the request body, (2) upload the image to Supabase Storage, (3) call Claude Vision to extract: producer, wine_name, vintage, region, varietal, wine_type, (4) search the wines table for a match using trigram similarity on producer + wine_name, (5) return the matched wine or create a new entry if no match above 0.6 similarity. Handle errors gracefully — a failed Claude API call should return a partial result prompting manual entry, not a 500.
+  
+  Your code is imported and tested against this exact contract, so match it:
+  
+    File: scan_label.ts
+  
+    export interface WineData {
+      producer: string | null;
+      wine_name: string | null;
+      vintage: number | null;
+      region: string | null;
+      varietal: string | null;
+      wine_type: string | null;
+    }
+  
+    export interface Wine extends WineData { id: string; }
+  
+    export interface Deps {
+      uploadImage(bytes: Uint8Array, path: string): Promise<{ url: string }>;
+      extractLabel(base64Image: string): Promise<WineData>;
+      findSimilarWine(producer: string | null, wineName: string | null):
+        Promise<{ wine: Wine; score: number } | null>;
+      createWine(data: WineData, imageUrl: string | null): Promise<Wine>;
+    }
+  
+    export const SIMILARITY_THRESHOLD = 0.6;
+  
+    export function createHandler(deps: Deps): (req: Request) => Promise<Response>;
+  
+  Handler behaviour, all responses JSON:
+  
+    Body is {"image": "<base64>"}.
+    Missing/empty/non-string image, or invalid base64  -> 400
+        {"error": "<user-facing message>"}
+    extractLabel throws                                -> 200
+        {"manual_entry_required": true, "error": "<message>"}   (never 500)
+    findSimilarWine returns score >= SIMILARITY_THRESHOLD -> 200
+        {"wine": <the matched Wine>, "matched": true, "score": <number>}
+    no match, or score below the threshold             -> 200
+        {"wine": <the created Wine>, "matched": false}
+    uploadImage throws                                 -> continue anyway; storage
+        is not fatal. Pass null as imageUrl to createWine.
+  
+  Dependencies are injected, so do not import the Supabase or Anthropic SDKs and
+  do not make network calls — the environment has no network. Write your files
+  under /app/scanlabel.
 
-  '
 test_suite:
   language: typescript
   tests:
@@ -134,3 +174,11 @@ mock_responses:
 # The global 4096 budget truncated mid-string, which the runner used to accept
 # as a final answer (see audit: 56% of coding responses leaked <tool_call>).
 max_tokens: 16384
+
+environment:
+  image: nite-eval-deno:2.1
+  workdir: /app/scanlabel
+  setup_cmd: cp -a /skeleton/. /app/scanlabel/
+  test_cmd: deno test --quiet --no-check=remote 2>&1
+  language: typescript
+  command_timeout: 180
