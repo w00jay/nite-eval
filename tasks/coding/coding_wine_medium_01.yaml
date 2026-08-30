@@ -173,7 +173,11 @@ mock_responses:
 # Coding tasks emit whole source files inside a JSON string in a tool call.
 # The global 4096 budget truncated mid-string, which the runner used to accept
 # as a final answer (see audit: 56% of coding responses leaked <tool_call>).
-max_tokens: 16384
+# Raised again from 16384 after B1: against a real sandbox the model writes the
+# implementation and its tests in one turn. coding_artemis_medium_01 emitted
+# 24725 chars on turn 2 and hit the cap. Under the mocks it wrote less, because
+# it was told its tests passed and stopped.
+max_tokens: 24576
 
 environment:
   image: nite-eval-deno:2.1
