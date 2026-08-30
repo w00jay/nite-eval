@@ -189,6 +189,9 @@ environment:
   workdir: /app/mcpgateway
   setup_cmd: cp -a /skeleton/. /app/mcpgateway/ && sed -i 's|^module .*|module mcpgateway|' /app/mcpgateway/go.mod
   test_cmd: go test ./... -v 2>&1
+  # Scoring runs only our files; test_cmd stays broad so the model
+  # still sees its own tests when it calls run_tests.
+  hidden_test_cmd: go test -run '^TestHidden' ./... -v 2>&1
   language: go
   command_timeout: 300
   # `go test -race` links the TLS stack with the race runtime; 2g was OOM-killed

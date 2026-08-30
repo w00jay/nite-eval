@@ -156,6 +156,9 @@ environment:
   setup_cmd: cp -a /skeleton/. /app/artemis/
   # -p no:cacheprovider: the rootfs is read-only and pytest's cache writes warn.
   test_cmd: python -m pytest -q -p no:cacheprovider 2>&1
+  # Scoring runs only our files; test_cmd stays broad so the model
+  # still sees its own tests when it calls run_tests.
+  hidden_test_cmd: python -m pytest test_hidden_horizons.py -q -p no:cacheprovider 2>&1
   language: python
   command_timeout: 180
   checks:

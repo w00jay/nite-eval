@@ -180,5 +180,8 @@ environment:
   workdir: /app/scanlabel
   setup_cmd: cp -a /skeleton/. /app/scanlabel/
   test_cmd: deno test --quiet --no-check=remote 2>&1
+  # Scoring runs only our files; test_cmd stays broad so the model
+  # still sees its own tests when it calls run_tests.
+  hidden_test_cmd: deno test --quiet hidden_scan_test.ts 2>&1
   language: typescript
   command_timeout: 180

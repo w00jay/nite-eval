@@ -66,6 +66,11 @@ class SandboxSpec:
     image: str
     workdir: str = "/workspace"
     test_cmd: str = ""
+    # Command used for scoring. `test_cmd` collects the whole workspace, which
+    # includes the model's own tests — scoring on that lets a model that writes
+    # many trivial passing tests dilute the hidden suite toward 1.0. Falls back
+    # to test_cmd when a task has no separate scoring command.
+    hidden_test_cmd: str = ""
     setup_cmd: str = ""
     memory: str = DEFAULT_MEMORY
     cpus: str = DEFAULT_CPUS
@@ -87,6 +92,7 @@ class SandboxSpec:
             image=data["image"],
             workdir=data.get("workdir", "/workspace"),
             test_cmd=data.get("test_cmd", ""),
+            hidden_test_cmd=data.get("hidden_test_cmd", ""),
             setup_cmd=data.get("setup_cmd", ""),
             memory=data.get("memory", DEFAULT_MEMORY),
             network=data.get("network", "none"),
@@ -303,10 +309,11 @@ class SandboxToolEnv:
             return {"error": f"could not read {dest}: {result.stderr.strip()}"}
         return {"content": result.stdout}
 
-    def run_tests(self, directory: str = "") -> dict:
-        if not self.spec.test_cmd:
+    def run_tests(self, directory: str = "", command: str = "") -> dict:
+        chosen = command or self.spec.test_cmd
+        if not chosen:
             return {"error": "no test command configured for this task"}
-        cmd = f"cd {directory} && {self.spec.test_cmd}" if directory else self.spec.test_cmd
+        cmd = f"cd {directory} && {chosen}" if directory else chosen
         result = self.exec(cmd)
         return {
             "exit_code": result.exit_code,
@@ -364,8 +371,11 @@ class SandboxToolEnv:
                 return {"error": f"could not install {rel}: {result['error']}"}
             copied.append(rel)
 
-        outcome = self.run_tests()
+        # Scored with hidden_test_cmd, which is scoped to our files. The model
+        # keeps seeing its own tests through its own run_tests calls.
+        outcome = self.run_tests(command=self.spec.hidden_test_cmd or self.spec.test_cmd)
         outcome["hidden_files"] = copied
+        outcome["scoring_command"] = self.spec.hidden_test_cmd or self.spec.test_cmd
         return outcome
 
     def get_call_log(self) -> list[dict]:

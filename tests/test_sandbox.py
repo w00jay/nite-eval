@@ -219,3 +219,51 @@ def test_resource_limits_are_overridable_per_task():
     assert spec.pids == 2048
     assert spec.tmp_size == "4g"
     assert spec.memory == "4g"
+
+
+def test_hidden_test_cmd_defaults_to_test_cmd():
+    spec = SandboxSpec.from_task_yaml({"image": "x", "test_cmd": "go test ./..."})
+    assert spec is not None
+    assert spec.hidden_test_cmd == ""  # falls back at call time
+
+
+def test_hidden_test_cmd_is_separate_from_test_cmd():
+    """Scoring must not run the model's own tests; the model still may."""
+    spec = SandboxSpec.from_task_yaml(
+        {"image": "x", "test_cmd": "go test ./...", "hidden_test_cmd": "go test -run '^TestHidden' ./..."}
+    )
+    assert spec is not None
+    assert spec.test_cmd == "go test ./..."
+    assert spec.hidden_test_cmd == "go test -run '^TestHidden' ./..."
+
+
+@pytestmark_docker
+def test_scoring_ignores_the_models_own_tests():
+    """Regression: `go test ./...` counted 20 tests where the hidden suite has 8.
+
+    A model that writes many trivial passing tests would otherwise dilute the
+    hidden suite toward 1.0 regardless of whether its code is correct.
+    """
+    spec = SandboxSpec(
+        image="python:3.12-alpine",
+        test_cmd="python -m unittest discover -p '*_test.py' 2>&1",
+        hidden_test_cmd="python -m unittest hidden_check 2>&1",
+        command_timeout=60,
+    )
+    hidden = (
+        "import unittest\n\n\nclass H(unittest.TestCase):\n"
+        "    def test_real(self):\n        self.assertEqual(1, 2)\n"  # fails
+    )
+    model_own = "import unittest\n\n\nclass M(unittest.TestCase):\n" + "".join(
+        f"    def test_trivial_{i}(self):\n        self.assertTrue(True)\n" for i in range(10)
+    )
+    with SandboxToolEnv(spec) as sb:
+        sb.call("write_file", {"path": "hidden_check.py", "content": hidden})
+        sb.call("write_file", {"path": "model_own_test.py", "content": model_own})
+
+        scored = sb.run_tests(command=spec.hidden_test_cmd)
+        assert scored["passed"] is False, "the failing hidden test must decide the score"
+
+        # The model's own view still includes its tests.
+        own = sb.run_tests()
+        assert "10" in own["output"] or "test" in own["output"]

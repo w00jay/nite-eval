@@ -118,6 +118,7 @@ def run_automated_checks(
                 continue
             score, details = parse_test_output(language, outcome.get("output", ""), outcome.get("exit_code", 1))
             details["hidden_files"] = outcome.get("hidden_files", [])
+            details["scoring_command"] = outcome.get("scoring_command", "")
             results[name] = (score, details)
             continue
 
