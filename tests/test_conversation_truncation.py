@@ -243,7 +243,7 @@ def test_large_tool_call_is_summarised_in_history():
 
     assert len(compacted) < len(text) / 4
     assert "filler line" not in compacted
-    assert "write_file issued and executed" in compacted
+    assert "called write_file" in compacted
     assert "path=/a.go" in compacted
     # Prose outside the call is preserved.
     assert "Writing the gateway now." in compacted
@@ -340,3 +340,24 @@ def test_short_repetition_is_not_flagged():
     from nite_eval.conversation_runner import detect_degenerate_repetition
 
     assert detect_degenerate_repetition("done." + "-" * 60) is None
+
+
+def test_compaction_summary_is_not_shaped_like_a_tool_call():
+    """The model copies what it sees attributed to itself.
+
+    The summary was originally wrapped in <tool_call> tags, and
+    coding_mcp_hard_01 then emitted the summary format as a call on turn 31:
+    `<tool_call>\\n[write_file issued and executed: ...]\\n</tool_call>`, which
+    is not JSON and failed to parse.
+    """
+    from nite_eval.conversation_runner import compact_tool_call_payloads
+    from nite_eval.hermes_parser import extract_tool_calls
+
+    body = "x" * 4000
+    text = f'<tool_call>\n{{"name": "write_file", "arguments": {{"path": "/a.go", "content": "{body}"}}}}\n</tool_call>'
+    compacted = compact_tool_call_payloads(text, extract_tool_calls(text), threshold=1500)
+
+    assert "<tool_call>" not in compacted, "a summary must not look like a call the model can copy"
+    assert "write_file" in compacted
+    # And feeding the compacted text back through the parser finds no call.
+    assert extract_tool_calls(compacted).tool_calls == []

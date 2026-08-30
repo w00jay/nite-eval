@@ -531,10 +531,19 @@ def compact_tool_call_payloads(response_text: str, parsed: ParsedResponse, thres
             f"{key}={value if len(str(value)) <= 60 else f'<{len(str(value))} chars>'}"
             for key, value in call.arguments.items()
         )
-        summary = f"<tool_call>\n[{call.name} issued and executed: {described}]\n</tool_call>"
+        # The summary must not be wrapped in <tool_call> tags. It first was, and
+        # the model — seeing that shape attributed to its own earlier turns —
+        # imitated it, emitting on turn 31 of coding_mcp_hard_01:
+        #   <tool_call>
+        #   [write_file issued and executed: path=..., content=<1003 chars>]
+        #   </tool_call>
+        # which is not JSON and failed to parse. Compaction rewrites the model's
+        # own words, so whatever shape it leaves behind becomes an example the
+        # model may copy. A plain note cannot be mistaken for a call.
+        summary = f"[earlier turn: called {call.name} with {described}; executed successfully]"
         compacted = compacted.replace(f"<tool_call>\n{call.raw}\n</tool_call>", summary)
         if call.raw in compacted:
-            compacted = compacted.replace(call.raw, f"[{call.name} issued and executed: {described}]")
+            compacted = compacted.replace(call.raw, summary)
     return compacted
 
 
