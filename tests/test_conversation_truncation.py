@@ -295,3 +295,48 @@ def test_executed_call_still_receives_full_content():
 
     assert result.error is None
     assert len(captured["write_file"]["content"]) == 5000
+
+
+# --- degenerate repetition ---
+
+
+def test_degeneration_is_reported_as_such_not_as_truncation():
+    """A looping model is not a budget shortfall.
+
+    qwen3.8 on coding_artemis_medium_01 wrote 276 characters and then emitted
+    12249 consecutive "\\n" escapes. Raising max_tokens 16384 -> 24576 only made
+    the loop longer (8153 -> 12249 repeats, the same 1.50 ratio as the caps).
+    """
+    from nite_eval.conversation_runner import detect_degenerate_repetition
+
+    looped = '{"content": "import json' + ("\\n" * 5000)
+    found = detect_degenerate_repetition(looped)
+    assert found is not None
+    repeats, unit = found
+    assert unit == "\\n"
+    assert repeats >= 200
+
+    result = _run([ModelReply(text=looped, finish_reason="length")])
+    assert result.error is not None
+    assert "degenerate_repetition" in result.error
+    assert "model looped, not a budget shortfall" in result.error
+
+
+def test_healthy_long_response_is_not_called_degenerate():
+    """A genuinely long answer must still be reported as truncated."""
+    from nite_eval.conversation_runner import detect_degenerate_repetition
+
+    prose = "The gateway aggregates tools from every configured upstream. " * 200
+    assert detect_degenerate_repetition(prose) is None
+
+    result = _run([ModelReply(text=prose, finish_reason="length")])
+    assert result.error is not None
+    assert "truncated" in result.error
+    assert "degenerate" not in result.error
+
+
+def test_short_repetition_is_not_flagged():
+    """Ordinary repeated punctuation must not trip the detector."""
+    from nite_eval.conversation_runner import detect_degenerate_repetition
+
+    assert detect_degenerate_repetition("done." + "-" * 60) is None

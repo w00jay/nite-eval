@@ -85,6 +85,17 @@ MAX_PARSE_RETRIES = 1
 # file-sized payloads are affected.
 COMPACT_TOOL_CALL_OVER = 1500
 
+# A response is called degenerate when one short substring repeats enough times
+# to dominate it. qwen3.8 on coding_artemis_medium_01 wrote 276 characters of
+# real content and then emitted 12249 consecutive "\\n" escapes, filling the
+# whole budget. That surfaces as finish_reason=length, which reads as the
+# harness's budget being too small — it is not, and raising max_tokens from
+# 16384 to 24576 simply produced a longer loop (24725 -> 37013 chars, the same
+# 1.51 chars per token both times).
+DEGENERATE_MIN_REPEATS = 200
+DEGENERATE_UNIT_MAX = 8
+DEGENERATE_SHARE = 0.5
+
 
 @dataclass
 class ConversationResult:
@@ -207,6 +218,22 @@ def run_conversation(
             # malformed model output. Fail the task instead of scoring noise.
             if reply.truncated:
                 turns.append(turn)
+                degenerate = detect_degenerate_repetition(response_text)
+                if degenerate:
+                    repeats, unit = degenerate
+                    return ConversationResult(
+                        turns=turns,
+                        final_response="",
+                        total_tool_calls=total_tool_calls,
+                        total_latency_ms=total_latency,
+                        reached_max_turns=False,
+                        repaired_tool_calls=repaired_total,
+                        error=(
+                            f"degenerate_repetition: {unit!r} repeated {repeats} times on turn "
+                            f"{turn_num}, {repeats * len(unit) / len(response_text):.0%} of "
+                            f"{len(response_text)} chars — model looped, not a budget shortfall"
+                        ),
+                    )
                 return ConversationResult(
                     turns=turns,
                     final_response="",
@@ -454,6 +481,30 @@ def run_conversation(
 
 
 TOOL_CALL_TAG_RE = re.compile(r"<tool_call>.*?</tool_call>", re.DOTALL)
+
+
+def detect_degenerate_repetition(text: str) -> tuple[int, str] | None:
+    """Find a short substring repeated enough times to dominate the response.
+
+    Returns (repeat_count, unit) or None. Distinguishes a model stuck in a loop
+    from a model that legitimately needed more room, which the finish_reason
+    alone cannot.
+    """
+    if len(text) < DEGENERATE_MIN_REPEATS:
+        return None
+
+    for unit_len in range(1, DEGENERATE_UNIT_MAX + 1):
+        unit = text[-unit_len:]
+        if not unit:
+            continue
+        repeats = 0
+        pos = len(text)
+        while pos >= unit_len and text[pos - unit_len : pos] == unit:
+            repeats += 1
+            pos -= unit_len
+        if repeats >= DEGENERATE_MIN_REPEATS and (repeats * unit_len) / len(text) >= DEGENERATE_SHARE:
+            return repeats, unit
+    return None
 
 
 def compact_tool_call_payloads(response_text: str, parsed: ParsedResponse, threshold: int) -> str:
