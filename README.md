@@ -19,6 +19,14 @@ Each task runs as a multi-turn conversation with mock tools (deterministic respo
 
 Run `run-20260418-234519` on the reference hardware, 5 models × 15 tasks, `max_tokens=4096`, qwen3.6 with `/no_think`:
 
+> **Stale as of 2026-08-21.** These numbers were produced on llama.cpp build
+> 8642 (`7c7d6ce5c`, 2026-04-03). That build cannot load `qwen3.8-27b`, so
+> llama.cpp was updated to `cd26896c1` (2026-08-20) and a full re-baseline of
+> all 6 models is pending. Scores below are not directly comparable to anything
+> produced on the newer binary — sampler defaults, chat-template handling, and
+> CUDA kernels all changed across those 4.5 months. The `docs/comparisons/`
+> analysis rests on this same baseline.
+
 | Model | Research | Planning | Coding | Agentic | Composite |
 |-------|---------:|---------:|-------:|--------:|----------:|
 | **qwen3.6-35b-a3b** (UD-Q4_K_S) | 0.82 | 0.90 | 0.28 | 0.78 | **0.70** |
@@ -38,7 +46,24 @@ Notes:
 | GPU | Role | Port |
 |-----|------|------|
 | RTX 3090 (24GB) | Target models via llama-swap | `:9070` |
-| Tesla P40 (24GB) | Judge models (both fit simultaneously) | `:9091`, `:9092` |
+| RTX 3060 (12GB) | Judge models (both fit simultaneously) | `:9091`, `:9092` |
+| Tesla P40 (24GB) | *unused during evals* | — |
+
+Judges moved from the P40 to the 3060 on 2026-08-21 so the P40 sits out entirely
+— its throughput is far below the 3090's and it has no usable fp16 path, so
+excluding it keeps run timings comparable. Both judges share the 3060: 6.3GB
+(reward) + 3.0GB (flow) = 9.3GB of weights plus ~1.5GB KV/compute at `ctx 4096`,
+so roughly 10.8GB of 11.8GB usable. It fits, but if a judge OOMs, lower its
+`--ctx-size` in `scripts/run_nightly.sh` before moving it back to a 24GB card.
+
+**Stop Ollama before a run** if it is configured for all GPUs — it squats on the
+3060 where the judges live, and a larger model loading mid-run will OOM them:
+
+```bash
+sudo systemctl stop ollama     # note: breaks bge-m3 embeddings for dependents
+# ... run the eval ...
+sudo systemctl start ollama
+```
 
 You can use any GPU layout — just adjust ports and GPU indices in `.env`. CPU-only also works if you have patience.
 
@@ -145,6 +170,7 @@ Path/binary configuration lives in `.env` (see `.env.example`).
 | `qwen3.5-9b` | Qwen 3.5 9B | Q4_K_M | |
 | `gemma4-26b-a4b` | Gemma 4 26B-A4B | Q4_K_M | Emits Harmony-style tool calls |
 | `qwen3.6-35b-a3b` | Qwen 3.6 35B-A3B | UD-Q4_K_S | MoE reasoning; needs `system_suffix: "/no_think"` |
+| `qwen3.8-27b` | Qwen 3.8 27B | UD-Q4_K_XL | Hybrid attention+SSM (336 SSM tensors, 48 of 65 blocks). **Requires llama.cpp ≥ Aug 2026** — older builds fail with `missing tensor 'blk.64.ssm_conv1d.weight'` because they assume the final layer is an SSM block. **Needs `system_suffix: "/no_think"`** — on long prompts it exhausts the whole `max_tokens` budget inside `reasoning_content` and returns `finish_reason=length` with empty `content`. Observed on all 4 coding tasks in `run-20260829-040649` (11k–16k chars of reasoning, no answer). A short prompt returns `stop` normally, so this does not reproduce on a quick smoke test. Emits some tool calls as `{"function": ...}` instead of the Hermes `{"name": ...}`; the parser accepts both |
 
 Add or replace models by editing `config/llama_swap_config.yaml` and the `models:` block in `config/eval_config.yaml`. The `models:` block accepts an optional `system_suffix` per model for chat-template triggers like `/no_think`.
 
