@@ -57,6 +57,32 @@ Service DNS the orchestrator uses (in-cluster):
 
 ---
 
+
+## Coding tasks need a Docker daemon
+
+Coding tasks execute model-written code in a sandboxed container, built from
+images that are **not** part of this deployment:
+
+```bash
+docker build -f Dockerfile.sandbox-go     -t nite-eval-go:1.23      .
+docker build -f Dockerfile.sandbox-python -t nite-eval-python:3.12  .
+docker build -f Dockerfile.sandbox-deno   -t nite-eval-deno:2.1     .
+```
+
+The orchestrator pod deliberately has no Docker socket mounted. Set `DOCKER_HOST`
+in the CronJob to a daemon that can host sandboxes and has those images built.
+Left unset, every coding task fails with `sandbox_unavailable` — loudly, and
+recorded per task, rather than being skipped or scored on nothing.
+
+The non-coding dimensions (research, planning, agentic) need none of this and
+run normally without it.
+
+Note `--skip-gpu-check` in the manifests: GPU placement verification pins
+devices by UUID for a single-host setup. In-cluster the scheduler assigns
+devices and `TARGET_GPU_UUID` / `JUDGE_GPU_UUID` are unset, so the preflight
+would abort the whole run before any task.
+
+
 ## 1. Build images
 
 From the repo root:

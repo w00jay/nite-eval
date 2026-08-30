@@ -127,6 +127,11 @@ def _docker(args: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
 
 
 def docker_available() -> bool:
+    """Whether a Docker daemon is reachable.
+
+    Honours DOCKER_HOST, so an orchestrator running in a pod can drive a daemon
+    elsewhere rather than needing a socket mounted into it.
+    """
     try:
         return _docker(["info", "--format", "{{.ServerVersion}}"], timeout=15).returncode == 0
     except (OSError, subprocess.SubprocessError):

@@ -36,18 +36,30 @@ spec:
               args:
                 - "--config"
                 - "/workspace/config/eval_config.yaml"
+                # GPU placement is pinned by UUID on a single host; in-cluster
+                # the scheduler assigns devices and TARGET_GPU_UUID /
+                # JUDGE_GPU_UUID are not set. Without this the preflight raises
+                # and the run exits before a single task, not just coding ones.
+                - "--skip-gpu-check"
               env:
                 - name: PYTHONUNBUFFERED
                   value: "1"
                 - name: TZ
                   value: "America/Los_Angeles"
+                # Coding tasks execute model-written code in a container. The
+                # orchestrator pod has no Docker socket by design, so point it
+                # at a daemon that can host sandboxes. Leave unset and coding
+                # tasks fail loudly with sandbox_unavailable rather than being
+                # silently skipped or scored.
+                - name: DOCKER_HOST
+                  value: ""
               resources:
                 requests:
                   cpu: "1"
                   memory: 1Gi
                 limits:
                   cpu: "2"
-                  memory: 2Gi
+                  memory: 4Gi
               volumeMounts:
                 - name: eval-config
                   mountPath: /workspace/config
