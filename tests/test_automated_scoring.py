@@ -140,3 +140,28 @@ def test_unparseable_output_is_retained_for_diagnosis():
 def test_retained_output_is_bounded():
     _, details = parse_test_output("go", "x" * 20000, exit_code=1)
     assert len(details["output"]) == 4000
+
+
+def test_partial_failure_records_which_tests_failed():
+    """13/14 tells you one failed; the name tells you which."""
+    score, details = parse_test_output("go", GO_OUTPUT, exit_code=1)
+    assert score == 2 / 3
+    assert details["failed_tests"] == ["TestHiddenInvalidURLRejected"]
+    assert "expected a validation error" in details["output"]
+
+
+def test_pytest_failure_names_are_captured():
+    output = (
+        "FAILED test_hidden_horizons.py::test_midpoint_is_linearly_interpolated - assert 1 == 2\n"
+        "== 13 passed, 1 failed in 0.4s ==\n"
+    )
+    score, details = parse_test_output("python", output, exit_code=1)
+    assert score == 13 / 14
+    assert details["failed_tests"] == ["test_hidden_horizons.py::test_midpoint_is_linearly_interpolated"]
+
+
+def test_a_full_pass_carries_no_failure_noise():
+    _, details = parse_test_output("go", "--- PASS: TestA (0.00s)\n--- PASS: TestB (0.00s)\nPASS\n", exit_code=0)
+    assert details["passed"] == 2
+    assert "failed_tests" not in details
+    assert "output" not in details

@@ -30,6 +30,28 @@ PYTEST_COUNT_RE = re.compile(r"(\d+) (passed|failed|error|errors)")
 # "ok | 11 passed | 1 failed".
 JS_COUNT_RE = re.compile(r"(\d+) (passing|failing|passed|failed)")
 
+# Which tests failed, per runner. A partial score says how many failed; the
+# names say which, and that is what makes it actionable.
+FAILED_NAME_RES = {
+    "go": re.compile(r"^\s*--- FAIL: (\S+)", re.MULTILINE),
+    "python": re.compile(r"^(?:FAILED|ERROR) (\S+)", re.MULTILINE),
+    "typescript": re.compile(r"^(.+?) (?:\.{3} )?FAILED", re.MULTILINE),
+}
+FAILED_NAME_RES["javascript"] = FAILED_NAME_RES["typescript"]
+FAILED_NAME_RES["deno"] = FAILED_NAME_RES["typescript"]
+
+
+def _failed_test_names(language: str, output: str) -> list[str]:
+    pattern = FAILED_NAME_RES.get(language.lower())
+    if not pattern:
+        return []
+    seen: list[str] = []
+    for name in pattern.findall(output):
+        cleaned = name.strip()
+        if cleaned and cleaned not in seen:
+            seen.append(cleaned)
+    return seen[:20]
+
 
 def _parse_go(output: str) -> tuple[int, int]:
     results = GO_TEST_RESULT_RE.findall(output)
@@ -75,7 +97,14 @@ def parse_test_output(language: str, output: str, exit_code: int) -> tuple[float
 
     passed, total = parser(output) if parser else (0, 0)
     if total:
-        return passed / total, {"passed": passed, "total": total, "exit_code": exit_code}
+        details = {"passed": passed, "total": total, "exit_code": exit_code}
+        if passed < total:
+            # A partial score alone is not actionable: artemis scored 13/14 and
+            # nothing recorded which test failed. Keep the names, and a slice of
+            # output for the assertion behind them.
+            details["failed_tests"] = _failed_test_names(language, output)
+            details["output"] = output[-4000:]
+        return passed / total, details
 
     # No parseable results. Compilation failure, harness error, or an unknown
     # runner — all of which mean nothing was demonstrated to work.
