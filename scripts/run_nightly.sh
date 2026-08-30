@@ -160,6 +160,7 @@ start_judge() {
     local model_path="$1"
     local port="$2"
     local name="$3"
+    local gpu_override="${4:-}"
 
     if curl -sf "http://127.0.0.1:$port/health" > /dev/null 2>&1; then
         echo "$name already running on :$port"
@@ -167,8 +168,9 @@ start_judge() {
         return 0
     fi
 
-    echo "Starting $name on :$port (GPU $JUDGE_GPU)..."
-    CUDA_VISIBLE_DEVICES="${JUDGE_GPU_UUID:-${NITE_JUDGE_UUID:-$JUDGE_GPU}}" "$LLAMA_SERVER" \
+    echo "Starting $name on :$port (GPU ${gpu_override:-$JUDGE_GPU_UUID})..."
+    local gpu="${gpu_override:-${JUDGE_GPU_UUID:-${NITE_JUDGE_UUID:-$JUDGE_GPU}}}"
+    CUDA_VISIBLE_DEVICES="$gpu" "$LLAMA_SERVER" \
         -m "$model_path" \
         --port "$port" \
         -ngl 999 --ctx-size 4096 -np 1 --no-webui \
@@ -193,10 +195,16 @@ start_judge() {
     exit 1
 }
 
-start_judge "$REWARD_MODEL" "$REWARD_PORT" "reward-anything"
+# Judges default to the same GPU. Both together take ~11.4GB of the 3060's 12GB,
+# so a larger judge model or a judge --ctx-size above 4096 will not fit. Set
+# REWARD_GPU_UUID / FLOW_GPU_UUID in .env to split them across cards; the P40
+# sits idle during evals and has 24GB. Splitting affects judge latency, not
+# score comparability — the P40 is excluded from evals because target timings
+# must stay comparable, which does not apply to judges.
+start_judge "$REWARD_MODEL" "$REWARD_PORT" "reward-anything" "${REWARD_GPU_UUID:-}"
 STARTED_REWARD="$_STARTED_PID"
 
-start_judge "$FLOW_MODEL" "$FLOW_PORT" "flow-judge"
+start_judge "$FLOW_MODEL" "$FLOW_PORT" "flow-judge" "${FLOW_GPU_UUID:-}"
 STARTED_FLOW="$_STARTED_PID"
 
 echo ""
