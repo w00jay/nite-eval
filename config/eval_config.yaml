@@ -71,6 +71,12 @@ models:
 evaluation:
   temperature: 0.0
   max_tokens: 4096
+  # Average 3 judge samples per criterion. The target model is essentially
+  # deterministic at temperature 0 (coding_artemis_medium_01 reproduced across
+  # three runs at 600163 / 599702 / 601768 ms with identical scores), so
+  # run-to-run variance comes from the judge. Averaging attacks the actual
+  # source; repeat target runs would buy nothing. Costs 3x judge calls.
+  judge_averaging: true
   warm_up: true  # Send a warm-up prompt after each model swap
 
 scoring:

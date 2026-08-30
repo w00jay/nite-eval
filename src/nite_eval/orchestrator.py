@@ -36,7 +36,7 @@ from nite_eval.scoring import (
     ScoreResult,
     aggregate_task_scores,
     compute_composite,
-    score_checklist,
+    score_checklist_with_judge,
     score_contains_check,
     score_distractor_avoidance,
     score_sequence_match,
@@ -71,6 +71,7 @@ def score_task(
     task: TaskDefinition,
     conv: ConversationResult,
     judge: RoutedJudgeClient,
+    judge_averaging: bool = True,
 ) -> tuple[list[ScoreResult], float]:
     """Score a completed conversation against a task's scoring config.
 
@@ -108,10 +109,25 @@ def score_task(
                 rubric=rubric,
                 task_description=task.user_message,
                 model_response=conv.final_response,
-                use_averaging=False,
+                use_averaging=judge_averaging,
                 evidence=evidence if dim_name in EVIDENCE_DIMENSIONS else "",
             )
-            sr.weight = weight
+            # score_with_judge sets weight=0.0 on JudgeError as an escape hatch.
+            # Unconditionally assigning the task weight here overwrote it, so a
+            # judge that failed to respond scored 0 at full weight — nine
+            # historical criteria carry a 0.0 with no reasoning for this reason.
+            # A failed judge is a missing measurement, not a bad answer.
+            if sr.details.get("error"):
+                logger.warning(
+                    "Judge failed for %s/%s — excluded from weighting: %s",
+                    task.id,
+                    dim_name,
+                    sr.details["error"],
+                )
+                sr.details["unscored"] = True
+                sr.details["declared_weight"] = weight
+            else:
+                sr.weight = weight
             scores.append(sr)
 
         elif method == "sequence_match":
@@ -140,16 +156,27 @@ def score_task(
 
         elif method == "checklist":
             criteria_list = criteria if isinstance(criteria, list) else [criteria]
-            raw = score_checklist(conv.final_response, criteria_list)
-            scores.append(
-                ScoreResult(
-                    dimension=dim_name,
-                    method=method,
-                    score=raw,
-                    weight=weight,
-                    details={"criteria": criteria_list},
-                )
+            raw, details = score_checklist_with_judge(
+                judge=judge,
+                criteria=criteria_list,
+                task_description=task.user_message,
+                response_text=conv.final_response,
             )
+            sr = ScoreResult(
+                dimension=dim_name,
+                method=method,
+                score=raw,
+                weight=weight,
+                details=details,
+            )
+            # A failed checklist judge is a missing measurement. Falling back to
+            # substring matching would quietly restore the scoring this replaced.
+            if details.get("error"):
+                logger.warning("Checklist judge failed for %s/%s: %s", task.id, dim_name, details["error"])
+                sr.weight = 0.0
+                sr.details["unscored"] = True
+                sr.details["declared_weight"] = weight
+            scores.append(sr)
 
         elif method == "contains_check":
             criteria_list = criteria if isinstance(criteria, list) else [criteria]
@@ -312,7 +339,7 @@ def run_task(
         db.save_tool_calls(run_id, model_name, task.id, tool_records)
 
     # Score
-    scores, weighted = score_task(task, conv, judge)
+    scores, weighted = score_task(task, conv, judge, judge_averaging=eval_cfg.get("judge_averaging", True))
 
     # Persist scores
     for sr in scores:

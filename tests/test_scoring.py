@@ -210,3 +210,48 @@ def test_judge_prompt_omits_evidence_section_when_not_supplied():
         model_response="here is code",
     )
     assert "Tool Results" not in prompt
+
+
+# --- Wave 2: checklist scoring by judge instead of substring matching ---
+
+
+class _StubJudge:
+    def __init__(self, met):
+        self._met = met
+        self.calls = []
+
+    def evaluate_checklist(self, criteria, task_description, model_response):
+        self.calls.append(criteria)
+        return self._met
+
+
+def test_checklist_uses_judge_verdicts():
+    from nite_eval.scoring import score_checklist_with_judge
+
+    judge = _StubJudge([True, False, True, False])
+    score, details = score_checklist_with_judge(judge, ["a", "b", "c", "d"], "task", "response")
+    assert score == 0.5
+    assert details["unmet"] == ["b", "d"]
+    # One call for the whole checklist, not one per criterion.
+    assert len(judge.calls) == 1
+
+
+def test_checklist_judge_failure_is_reported_not_silently_downgraded():
+    from nite_eval.judge import JudgeError
+    from nite_eval.scoring import score_checklist_with_judge
+
+    judge = _StubJudge(JudgeError(error="boom", raw_response=""))
+    score, details = score_checklist_with_judge(judge, ["a"], "task", "response")
+    assert score == 0.0
+    assert details["error"] == "boom"
+
+
+def test_old_substring_checklist_would_have_passed_on_a_keyword():
+    """Documents the behaviour that was replaced.
+
+    `score_checklist` counted a criterion as met if any word longer than three
+    characters appeared anywhere in the response.
+    """
+    from nite_eval.scoring import score_checklist
+
+    assert score_checklist("our strategy is unrelated", ["Addresses embedding strategy"]) == 1.0

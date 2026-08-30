@@ -86,7 +86,15 @@ def score_checklist(
 ) -> float:
     """Score whether response text addresses checklist items.
 
-    Simple contains-based check. Returns fraction of criteria found.
+    DEPRECATED — not dispatched by the orchestrator. Use
+    `score_checklist_with_judge`, which asks the judge whether each criterion is
+    genuinely addressed.
+
+    This counts a criterion as met if ANY word longer than three characters from
+    it appears anywhere in the response, so "Addresses embedding strategy" is
+    satisfied by the word "strategy". Every checklist score in the results DB
+    from before 2026-08-30 sits at 0.75-1.0 for this reason. Retained only so
+    those historical scores remain reproducible.
     """
     if not criteria:
         return 1.0
@@ -100,6 +108,32 @@ def score_checklist(
             matched += 1
 
     return matched / len(criteria)
+
+
+def score_checklist_with_judge(
+    judge: JudgeClient | RoutedJudgeClient,
+    criteria: list[str],
+    task_description: str,
+    response_text: str,
+) -> tuple[float, dict]:
+    """Score a checklist by asking the judge which criteria are actually met.
+
+    Returns (fraction_met, details). On judge failure the caller is expected to
+    exclude the criterion rather than fall back to substring matching, which
+    would silently reintroduce the scoring it replaced.
+    """
+    if not criteria:
+        return 1.0, {"criteria": []}
+
+    met = judge.evaluate_checklist(criteria, task_description, response_text)
+    if isinstance(met, JudgeError):
+        return 0.0, {"error": met.error, "raw": met.raw_response}
+
+    return sum(met) / len(criteria), {
+        "criteria": criteria,
+        "met": met,
+        "unmet": [c for c, ok in zip(criteria, met, strict=False) if not ok],
+    }
 
 
 def score_contains_check(
