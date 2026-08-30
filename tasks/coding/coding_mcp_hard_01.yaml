@@ -153,32 +153,6 @@ scoring:
 max_turns: 32
 max_tool_calls: 50
 timeout_seconds: 3600
-mock_responses:
-  write_file:
-  - match:
-      path_contains: any
-    response:
-      content:
-        status: written
-        bytes: 1024
-  run_tests:
-  - match:
-      directory_contains: any
-    error: >-
-      Test execution is not available in this environment. Write the implementation and its tests; correctness is evaluated separately after the conversation ends. Do not retry this tool.
-  run_code:
-  - match:
-      command_contains: any
-    error: >-
-      Shell execution is not available in this environment. Write the implementation and its tests; correctness is evaluated separately after the conversation ends. Do not retry this tool.
-  read_file:
-  - match:
-      path_contains: any
-    response:
-      content:
-        content: // file contents placeholder
-        exists: true
-
 # Coding tasks emit whole source files inside a JSON string in a tool call.
 # The global 4096 budget truncated mid-string, which the runner used to accept
 # as a final answer (see audit: 56% of coding responses leaked <tool_call>).

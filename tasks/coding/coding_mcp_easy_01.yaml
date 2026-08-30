@@ -77,24 +77,6 @@ user_message: |-
   any is invalid or the file cannot be read or parsed. Use gopkg.in/yaml.v3, which
   is already vendored — do not run "go get" or "go mod tidy", the environment has
   no network. Write your files under /app/mcpconfig.
-mock_responses:
-  write_file:
-  - match:
-      path_contains: any
-    response:
-      content:
-        status: written
-        bytes: 1024
-  run_tests:
-  - match:
-      directory_contains: any
-    error: >-
-      Test execution is not available in this environment. Write the implementation and its tests; correctness is evaluated separately after the conversation ends. Do not retry this tool.
-  run_code:
-  - match:
-      command_contains: any
-    error: >-
-      Shell execution is not available in this environment. Write the implementation and its tests; correctness is evaluated separately after the conversation ends. Do not retry this tool.
 test_suite:
   language: go
   tests:
