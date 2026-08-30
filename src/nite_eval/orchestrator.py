@@ -13,6 +13,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import logging
 import sys
@@ -696,6 +697,14 @@ def main() -> None:
     finally:
         judge.close()
         db.close()
+        # A run that ends mid-task — Ctrl-C, an unhandled error, a killed
+        # process — leaves its sandbox container running. Reaping only at
+        # startup meant one could idle for hours holding memory.
+        if docker_available():
+            with contextlib.suppress(Exception):
+                leftover = reap_orphans()
+                if leftover:
+                    console.print(f"[yellow]Cleaned up {len(leftover)} sandbox container(s)[/yellow]")
 
 
 if __name__ == "__main__":

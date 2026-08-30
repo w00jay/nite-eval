@@ -256,3 +256,19 @@ def test_scoring_ignores_the_models_own_tests():
         # The model's own view still includes its tests.
         own = sb.run_tests()
         assert "10" in own["output"] or "test" in own["output"]
+
+
+@pytestmark_docker
+def test_sandbox_is_removed_even_when_the_task_raises():
+    """A run that dies mid-task must not leave a container holding memory."""
+    from nite_eval.sandbox import _docker
+
+    sb = SandboxToolEnv(SandboxSpec(image="python:3.12-alpine"))
+    sb.start()
+    container_id = sb.container_id
+    try:
+        raise RuntimeError("task blew up")
+    except RuntimeError:
+        sb.stop()
+
+    assert _docker(["inspect", container_id], timeout=15).returncode != 0
