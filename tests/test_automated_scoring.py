@@ -165,3 +165,57 @@ def test_a_full_pass_carries_no_failure_noise():
     assert details["passed"] == 2
     assert "failed_tests" not in details
     assert "output" not in details
+
+
+def test_race_failure_records_whether_the_detector_actually_fired():
+    """`go test -race` failing is not the same as a data race being found."""
+    sandbox = MagicMock()
+    sandbox.exec.return_value = MagicMock(
+        exit_code=1, stdout="--- FAIL: TestSomethingUnrelated\nFAIL", stderr="", timed_out=False
+    )
+    results = run_automated_checks(
+        sandbox=sandbox,
+        task_id="coding_x",
+        scoring={"race_detector_clean": {"method": "automated", "weight": 0.15}},
+        suite_root=Path("/tmp"),
+        language="go",
+        checks={"race_detector_clean": "go test -race ."},
+    )
+    _, details = results["race_detector_clean"]
+    assert details["detector_fired"] is False
+    assert "detector never fired" in details["note"]
+
+
+def test_a_real_data_race_is_recorded_as_one():
+    sandbox = MagicMock()
+    sandbox.exec.return_value = MagicMock(
+        exit_code=66, stdout="WARNING: DATA RACE\nWrite at 0x00c000 by goroutine 7:", stderr="", timed_out=False
+    )
+    results = run_automated_checks(
+        sandbox=sandbox,
+        task_id="coding_x",
+        scoring={"race_detector_clean": {"method": "automated", "weight": 0.15}},
+        suite_root=Path("/tmp"),
+        language="go",
+        checks={"race_detector_clean": "go test -race ."},
+    )
+    score, details = results["race_detector_clean"]
+    assert score == 0.0
+    assert details["detector_fired"] is True
+    assert "WARNING: DATA RACE" in details["matched"]
+
+
+def test_a_clean_detector_run_needs_no_extra_fields():
+    sandbox = MagicMock()
+    sandbox.exec.return_value = MagicMock(exit_code=0, stdout="ok", stderr="", timed_out=False)
+    results = run_automated_checks(
+        sandbox=sandbox,
+        task_id="coding_x",
+        scoring={"race_detector_clean": {"method": "automated", "weight": 0.15}},
+        suite_root=Path("/tmp"),
+        language="go",
+        checks={"race_detector_clean": "go test -race ."},
+    )
+    score, details = results["race_detector_clean"]
+    assert score == 1.0
+    assert "detector_fired" not in details

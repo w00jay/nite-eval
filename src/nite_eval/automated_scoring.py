@@ -41,6 +41,14 @@ FAILED_NAME_RES["javascript"] = FAILED_NAME_RES["typescript"]
 FAILED_NAME_RES["deno"] = FAILED_NAME_RES["typescript"]
 
 
+# What a detector actually printing a finding looks like, so a check that fails
+# for an unrelated reason can be told apart from one that found something.
+DETECTOR_SIGNALS = {
+    "race_detector_clean": ("WARNING: DATA RACE", "race detected"),
+    "go_vet_clean": ("vet: ", ".go:"),
+}
+
+
 def _failed_test_names(language: str, output: str) -> list[str]:
     pattern = FAILED_NAME_RES.get(language.lower())
     if not pattern:
@@ -163,14 +171,32 @@ def run_automated_checks(
             continue
 
         exec_result = sandbox.exec(command)
-        results[name] = (
-            1.0 if exec_result.exit_code == 0 else 0.0,
-            {
-                "command": command,
-                "exit_code": exec_result.exit_code,
-                "output": (exec_result.stdout or exec_result.stderr)[:2000],
-                "timed_out": exec_result.timed_out,
-            },
-        )
+        output = exec_result.stdout or exec_result.stderr
+
+        # A check that runs the test suite (`go test -race`) fails for two very
+        # different reasons: the thing it checks for, or the tests failing. Only
+        # the first is what the criterion measures. Without separating them, a
+        # single unrelated test failure scores the race detector 0 and reads as
+        # a data race.
+        score = 1.0 if exec_result.exit_code == 0 else 0.0
+        details = {
+            "command": command,
+            "exit_code": exec_result.exit_code,
+            "output": output[:2000],
+            "timed_out": exec_result.timed_out,
+        }
+        if exec_result.exit_code != 0:
+            signals = DETECTOR_SIGNALS.get(name, ())
+            if signals:
+                hit = [sig for sig in signals if sig in output]
+                details["detector_fired"] = bool(hit)
+                details["matched"] = hit
+                if not hit:
+                    details["note"] = (
+                        f"{name} command failed but its detector never fired; "
+                        "scored as inconclusive rather than as a positive finding"
+                    )
+                    score = 0.0
+        results[name] = (score, details)
 
     return results
