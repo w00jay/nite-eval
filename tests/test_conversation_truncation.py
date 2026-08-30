@@ -361,3 +361,68 @@ def test_compaction_summary_is_not_shaped_like_a_tool_call():
     assert "write_file" in compacted
     # And feeding the compacted text back through the parser finds no call.
     assert extract_tool_calls(compacted).tool_calls == []
+
+
+# --- final answer extraction ---
+
+
+def _turn(n, response, calls):
+    from nite_eval.conversation_runner import TurnResult
+    from nite_eval.hermes_parser import extract_tool_calls
+
+    parsed = extract_tool_calls(response) if calls else extract_tool_calls("")
+    return TurnResult(turn=n, response=response, parsed=parsed)
+
+
+def test_narration_alongside_a_tool_call_is_not_an_answer():
+    """A turn that also called a tool was still working, not answering.
+
+    coding_artemis_medium_01 was judged on "Only 4 tests ran ... Let me check
+    the environment and fix:" — mid-work narration scored as a synthesis.
+    """
+    from nite_eval.conversation_runner import _extract_best_final_response
+
+    call = '<tool_call>\n{"name": "write_file", "arguments": {"path": "/a", "content": "x"}}\n</tool_call>'
+    turns = [_turn(1, "Let me check the environment and fix this now:\n" + call, calls=True)]
+
+    result = _extract_best_final_response(turns)
+    assert "No final answer produced" in result
+    assert "Let me check the environment" not in result
+
+
+def test_a_tool_free_turn_is_the_answer():
+    from nite_eval.conversation_runner import _extract_best_final_response
+
+    call = '<tool_call>\n{"name": "write_file", "arguments": {"path": "/a", "content": "x"}}\n</tool_call>'
+    turns = [
+        _turn(1, "Writing the file now:\n" + call, calls=True),
+        _turn(2, "The parser handles the $$SOE block and interpolates between epochs.", calls=False),
+    ]
+    assert "parser handles" in _extract_best_final_response(turns)
+
+
+def test_the_latest_tool_free_turn_wins():
+    from nite_eval.conversation_runner import _extract_best_final_response
+
+    turns = [
+        _turn(1, "An early partial thought about the design.", calls=False),
+        _turn(2, "The final considered answer, complete and standalone.", calls=False),
+    ]
+    assert "final considered answer" in _extract_best_final_response(turns)
+
+
+def test_a_short_tool_free_turn_still_beats_nothing():
+    from nite_eval.conversation_runner import _extract_best_final_response
+
+    turns = [_turn(1, "Done.", calls=False)]
+    assert _extract_best_final_response(turns) == "Done."
+
+
+def test_the_marker_says_why_there_is_no_answer():
+    from nite_eval.conversation_runner import _extract_best_final_response
+
+    call = '<tool_call>\n{"name": "write_file", "arguments": {"path": "/a", "content": "x"}}\n</tool_call>'
+    turns = [_turn(i, call, calls=True) for i in range(1, 4)]
+    marker = _extract_best_final_response(turns)
+    assert "3 turns" in marker
+    assert "never stopped to answer" in marker

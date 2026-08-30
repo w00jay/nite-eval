@@ -85,6 +85,10 @@ MAX_PARSE_RETRIES = 1
 # file-sized payloads are affected.
 COMPACT_TOOL_CALL_OVER = 1500
 
+# Below this a tool-free turn is treated as a fragment rather than a synthesis,
+# though it is still preferred over no answer at all.
+MIN_FINAL_ANSWER_CHARS = 20
+
 # A response is called degenerate when one short substring repeats enough times
 # to dominate it. qwen3.8 on coding_artemis_medium_01 wrote 276 characters of
 # real content and then emitted 12249 consecutive "\\n" escapes, filling the
@@ -597,25 +601,35 @@ def _try_nudge(
 
 
 def _extract_best_final_response(turns: list[TurnResult]) -> str:
-    """Find the best final response when max_turns is reached.
+    """Find the model's final answer when max_turns is reached.
 
-    Walks backwards through turns to find one with meaningful text
-    (not just tool_call tags). Strips tool_call tags from the response.
-    If no turn has text, synthesizes a diagnostic marker so downstream
-    scoring (judge) has context instead of an empty string.
+    Only turns that made no tool call can hold an answer. Prose emitted
+    alongside a tool call is narration — "Let me write the config now:" — and
+    scoring it as a considered response is how coding_artemis_medium_01 came to
+    be judged on "Only 4 tests ran ... Let me check the environment and fix:".
+
+    The previous rule took any turn's prose once it exceeded twenty characters,
+    so a transitional sentence from mid-conversation was indistinguishable from
+    a synthesis. When no tool-free turn exists the answer is that none was
+    produced, which the judge should see as such rather than as a short one.
     """
-    for turn in reversed(turns):
+    answer_turns = [t for t in turns if not t.parsed.tool_calls]
+
+    for turn in reversed(answer_turns):
         text = TOOL_CALL_TAG_RE.sub("", turn.response).strip()
-        if len(text) > 20:
+        if len(text) > MIN_FINAL_ANSWER_CHARS:
             return text
-    # Fallback 1: any non-empty text across turns (prefer latest)
-    for turn in reversed(turns):
+
+    for turn in reversed(answer_turns):
         text = TOOL_CALL_TAG_RE.sub("", turn.response).strip()
         if text:
             return text
-    # Fallback 2: all turns were tool-call-only — synthesize marker
+
     tc_count = sum(len(t.tool_responses) for t in turns)
-    return f"[No text answer produced after {len(turns)} turns / {tc_count} tool calls]"
+    return (
+        f"[No final answer produced: every one of {len(turns)} turns ended in a tool call "
+        f"({tc_count} calls total), so the model never stopped to answer]"
+    )
 
 
 def _call_model(
