@@ -345,3 +345,47 @@ def test_well_formed_calls_are_not_counted_as_repaired():
 
     assert len(result.tool_calls) == 1
     assert result.repaired == 0
+
+
+def test_valid_json_containing_code_is_not_corrupted():
+    """Regression: _fix_json appended braces counted from inside string values.
+
+    coding_mcp_hard_01 failed at turn 30 of 32 with malformed_json on a payload
+    that json.loads accepts. The tool call carried Go source, so the naive
+    `count("{") > count("}")` check saw an imbalance and appended spurious
+    closing braces, producing "Extra data".
+    """
+    from nite_eval.hermes_parser import extract_tool_calls
+
+    go_source = 'func h(w http.ResponseWriter) {\\n\\twriteJSON(w, map[string]any{\\\"error\\\": \\\"x\\\"})\\n'
+    raw = (
+        '<tool_call>\n{"name": "run_code", "arguments": {"command": "cat > a.go <<EOF\\n'
+        + go_source
+        + '"}}\n</tool_call>'
+    )
+    result = extract_tool_calls(raw)
+
+    assert result.errors == []
+    assert len(result.tool_calls) == 1
+    assert result.tool_calls[0].name == "run_code"
+    assert result.repaired == 0, "valid JSON must not be counted as repaired"
+
+
+def test_unbalanced_braces_inside_strings_are_not_counted():
+    from nite_eval.hermes_parser import _count_unclosed_braces
+
+    # Three opening braces inside a string, none structural.
+    assert _count_unclosed_braces('{"a": "if x { y { z {"}') == 0
+    # A genuinely unclosed structural brace.
+    assert _count_unclosed_braces('{"a": {"b": 1}') == 1
+    # Escaped quotes must not end the string early.
+    assert _count_unclosed_braces('{"a": "he said \\"{\\" loudly"}') == 0
+
+
+def test_genuinely_truncated_json_still_gets_closing_braces():
+    from nite_eval.hermes_parser import _fix_json
+
+    fixed, _ = _fix_json('{"name": "f", "arguments": {"path": "/a"')
+    import json as _json
+
+    assert _json.loads(fixed)["arguments"]["path"] == "/a"

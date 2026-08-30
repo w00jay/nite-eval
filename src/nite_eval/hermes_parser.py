@@ -101,20 +101,61 @@ def _repair_dropped_key_quote(s: str) -> tuple[str, int]:
     return "".join(out), repairs
 
 
+def _count_unclosed_braces(s: str) -> int:
+    """Count braces that are outside string literals.
+
+    A naive `s.count("{") - s.count("}")` counts braces inside JSON string
+    values, and a tool call carrying source code — `map[string]any{...}`, a
+    function body — routinely has more of one than the other inside its strings.
+    """
+    depth = 0
+    in_string = False
+    i = 0
+    while i < len(s):
+        ch = s[i]
+        if in_string:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == '"':
+                in_string = False
+        elif ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+        i += 1
+    return depth
+
+
 def _fix_json(raw: str) -> tuple[str, int]:
     """Attempt to fix common JSON malformations.
 
     Returns (fixed, repair_count). The count is surfaced so a model's rate of
     malformed tool calls stays measurable instead of being silently absorbed.
+
+    Repairs are only attempted on payloads that do not already parse. The
+    previous version always rewrote the text, and its brace balancing counted
+    braces inside string values: a valid `run_code` call carrying Go source was
+    given spurious closing braces, failed to parse as "Extra data", and was
+    recorded as the model emitting malformed JSON. That misattributed a harness
+    bug to the model on any tool call containing code.
     """
-    fixed = TRAILING_COMMA_RE.sub(r"\1", raw.strip())
+    stripped = raw.strip()
+    try:
+        json.loads(stripped)
+    except json.JSONDecodeError:
+        pass
+    else:
+        return stripped, 0
+
+    fixed = TRAILING_COMMA_RE.sub(r"\1", stripped)
     fixed, repairs = _repair_dropped_key_quote(fixed)
 
-    # Fix missing closing braces — count open vs close
-    open_braces = fixed.count("{")
-    close_braces = fixed.count("}")
-    if open_braces > close_braces:
-        fixed += "}" * (open_braces - close_braces)
+    unclosed = _count_unclosed_braces(fixed)
+    if unclosed > 0:
+        fixed += "}" * unclosed
 
     return fixed, repairs
 
