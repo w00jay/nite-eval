@@ -115,5 +115,11 @@ scoring:
     weight: 0.2
     method: automated
     criteria: go vet passes with no issues
-max_turns: 6
-timeout_seconds: 90
+max_turns: 16
+max_tool_calls: 30
+timeout_seconds: 1200
+
+# Coding tasks emit whole source files inside a JSON string in a tool call.
+# The global 4096 budget truncated mid-string, which the runner used to accept
+# as a final answer (see audit: 56% of coding responses leaked <tool_call>).
+max_tokens: 16384

@@ -13,7 +13,7 @@ models:
       env CUDA_VISIBLE_DEVICES=GPU-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
       /ABS/PATH/TO/llama.cpp/build/bin/llama-server
       -m /ABS/PATH/TO/gguf/Qwen3.5-27B.Q4_K_M.gguf
-      --port ${PORT} -ngl 999 --ctx-size 8192
+      --port ${PORT} -ngl 999 --ctx-size 32768
       -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
     group: "target-gpu"
 
@@ -22,7 +22,7 @@ models:
       env CUDA_VISIBLE_DEVICES=GPU-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
       /ABS/PATH/TO/llama.cpp/build/bin/llama-server
       -m /ABS/PATH/TO/gguf/Qwen3.5-9B-Q4_K_M.gguf
-      --port ${PORT} -ngl 999 --ctx-size 8192
+      --port ${PORT} -ngl 999 --ctx-size 32768
       -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
     group: "target-gpu"
 
@@ -31,7 +31,7 @@ models:
       env CUDA_VISIBLE_DEVICES=GPU-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
       /ABS/PATH/TO/llama.cpp/build/bin/llama-server
       -m /ABS/PATH/TO/gguf/gemma-4-26b-a4b-it-Q4_K_M.gguf
-      --port ${PORT} -ngl 999 --ctx-size 8192
+      --port ${PORT} -ngl 999 --ctx-size 32768
       -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
     group: "target-gpu"
 

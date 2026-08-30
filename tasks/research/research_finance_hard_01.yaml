@@ -247,4 +247,4 @@ scoring:
     criteria: Well-organized with comparison, not a wall of text
 max_turns: 14
 max_tool_calls: 14
-timeout_seconds: 180
+timeout_seconds: 1200

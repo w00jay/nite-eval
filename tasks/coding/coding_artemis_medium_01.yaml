@@ -85,8 +85,9 @@ scoring:
     weight: 0.15
     method: judge_rubric
     criteria: TTL logic is correct, thread-safe, doesn't leak memory
-max_turns: 10
-timeout_seconds: 120
+max_turns: 24
+max_tool_calls: 40
+timeout_seconds: 2400
 mock_responses:
   write_file:
   - match:
@@ -118,3 +119,8 @@ mock_responses:
       content:
         content: // file contents placeholder
         exists: true
+
+# Coding tasks emit whole source files inside a JSON string in a tool call.
+# The global 4096 budget truncated mid-string, which the runner used to accept
+# as a final answer (see audit: 56% of coding responses leaked <tool_call>).
+max_tokens: 16384

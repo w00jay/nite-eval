@@ -31,6 +31,11 @@ class TaskDefinition:
     max_turns: int = 8
     max_tool_calls: int = 20
     timeout_seconds: int = 90
+    # Per-task generation budget. None falls back to evaluation.max_tokens.
+    # Coding tasks need far more than the global default: the model writes
+    # whole source files inside a JSON string in a tool call, and running out
+    # mid-string truncates the call so it never parses.
+    max_tokens: int | None = None
     source_project: str = ""
     mock_responses: dict[str, Any] = field(default_factory=dict)
     test_suite: dict[str, Any] = field(default_factory=dict)
@@ -80,6 +85,7 @@ def load_task(path: Path) -> TaskDefinition:
         max_turns=data.get("max_turns", 8),
         max_tool_calls=data.get("max_tool_calls", 20),
         timeout_seconds=data.get("timeout_seconds", 90),
+        max_tokens=data.get("max_tokens"),
         source_project=data.get("source_project", ""),
         mock_responses=data.get("mock_responses", {}),
         test_suite=data.get("test_suite", {}),

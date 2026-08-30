@@ -161,4 +161,4 @@ scoring:
     method: deterministic
     criteria: All stated facts (magnitude, position, timing) match mock data
 max_turns: 10
-timeout_seconds: 90
+timeout_seconds: 900

@@ -114,8 +114,9 @@ scoring:
       boundaries. Handler functions are testable without starting a real server.
 
       '
-max_turns: 14
-timeout_seconds: 180
+max_turns: 32
+max_tool_calls: 50
+timeout_seconds: 3600
 mock_responses:
   write_file:
   - match:
@@ -147,3 +148,8 @@ mock_responses:
       content:
         content: // file contents placeholder
         exists: true
+
+# Coding tasks emit whole source files inside a JSON string in a tool call.
+# The global 4096 budget truncated mid-string, which the runner used to accept
+# as a final answer (see audit: 56% of coding responses leaked <tool_call>).
+max_tokens: 16384

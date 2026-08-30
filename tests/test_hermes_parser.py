@@ -278,3 +278,70 @@ def test_gemma_hermes_priority():
     parsed = extract_tool_calls(response)
     assert len(parsed.tool_calls) == 1
     assert parsed.tool_calls[0].arguments == {"query": "hermes"}
+
+
+def test_function_key_alias():
+    """qwen3.8 emits {"function": name} instead of the Hermes {"name": ...}."""
+    response = (
+        '<tool_call>\n{"function": "web_search", "arguments": {"query": "Vivino AI"}}\n</tool_call>\n'
+        '<tool_call>\n{"function": "get_price_data", "arguments": {"symbol": "NVDA"}}\n</tool_call>'
+    )
+    parsed = extract_tool_calls(response)
+    assert not parsed.errors
+    assert [tc.name for tc in parsed.tool_calls] == ["web_search", "get_price_data"]
+    assert parsed.tool_calls[0].arguments == {"query": "Vivino AI"}
+
+
+def test_function_key_nested_openai_style():
+    response = '<tool_call>{"function": {"name": "web_search", "arguments": {"query": "x"}}}</tool_call>'
+    parsed = extract_tool_calls(response)
+    assert not parsed.errors
+    assert parsed.tool_calls[0].name == "web_search"
+    assert parsed.tool_calls[0].arguments == {"query": "x"}
+
+
+def test_name_key_wins_over_function_key():
+    response = '<tool_call>{"name": "real", "function": "decoy", "arguments": {}}</tool_call>'
+    parsed = extract_tool_calls(response)
+    assert parsed.tool_calls[0].name == "real"
+
+
+def test_dropped_key_quote_is_repaired():
+    """qwen3.8 reproducibly drops the opening quote of the key after the name."""
+    from nite_eval.hermes_parser import extract_tool_calls
+
+    raw = '<tool_call>\n{"name": "write_file",\narguments": {"path": "/a.go", "content": "package main"}}\n</tool_call>'
+    result = extract_tool_calls(raw)
+
+    assert len(result.tool_calls) == 1
+    assert result.tool_calls[0].name == "write_file"
+    assert result.tool_calls[0].arguments["path"] == "/a.go"
+    assert result.repaired == 1
+    assert result.errors == []
+
+
+def test_repair_does_not_corrupt_strings_containing_the_pattern():
+    """A `foo":` sequence inside escaped source must be left alone."""
+    from nite_eval.hermes_parser import extract_tool_calls
+
+    # The content contains `key":` inside a Go string literal.
+    raw = (
+        '<tool_call>\n{"name": "write_file", "arguments": '
+        '{"path": "/a.go", "content": "s := \\"key\\": value\\nx := 1"}}\n</tool_call>'
+    )
+    result = extract_tool_calls(raw)
+
+    assert len(result.tool_calls) == 1
+    assert result.repaired == 0
+    assert '\\"' not in result.tool_calls[0].arguments["content"]
+    assert '"key": value' in result.tool_calls[0].arguments["content"]
+
+
+def test_well_formed_calls_are_not_counted_as_repaired():
+    from nite_eval.hermes_parser import extract_tool_calls
+
+    raw = '<tool_call>\n{"name": "search", "arguments": {"query": "test"}}\n</tool_call>'
+    result = extract_tool_calls(raw)
+
+    assert len(result.tool_calls) == 1
+    assert result.repaired == 0

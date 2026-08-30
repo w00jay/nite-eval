@@ -23,6 +23,8 @@ from rich.console import Console
 from rich.table import Table
 
 from nite_eval.conversation_runner import ConversationResult, run_conversation
+from nite_eval.gpu_check import GpuPlacementError, resolve_expected_uuids, verify_runtime_placement
+from nite_eval.gpu_check import preflight as gpu_preflight
 from nite_eval.judge import FLOW_JUDGE_DIMENSIONS, RoutedJudgeClient
 from nite_eval.mock_tools import MockToolEnv
 from nite_eval.model_manager import check_health, warm_up_model
@@ -185,6 +187,7 @@ def run_task(
     run_id: str,
     eval_cfg: dict,
     system_suffix: str = "",
+    chat_template_kwargs: dict | None = None,
 ) -> float:
     """Run a single task for a model and persist results. Returns weighted score."""
     db.mark_task_running(run_id, model_name, task.id)
@@ -205,23 +208,29 @@ def run_task(
         max_tool_calls=task.max_tool_calls,
         timeout_seconds=task.timeout_seconds,
         temperature=eval_cfg.get("temperature", 0.0),
-        max_tokens=eval_cfg.get("max_tokens", 2048),
+        max_tokens=task.max_tokens or eval_cfg.get("max_tokens", 2048),
         system_suffix=system_suffix,
+        chat_template_kwargs=chat_template_kwargs,
     )
 
     if conv.error:
         console.print(f" [red]ERROR: {conv.error}[/red]")
+        # Persist the last raw response. A failed task with an empty
+        # final_response is undiagnosable after the fact — the offending text
+        # is exactly what you need to tell a model bug from a harness bug.
+        last_response = conv.turns[-1].response if conv.turns else ""
         db.save_task_result(
             run_id=run_id,
             model_name=model_name,
             task_id=task.id,
-            final_response="",
+            final_response=last_response,
             total_turns=len(conv.turns),
             total_tool_calls=conv.total_tool_calls,
             total_latency_ms=conv.total_latency_ms,
             reached_max_turns=conv.reached_max_turns,
             weighted_score=0.0,
             error=conv.error,
+            repaired_tool_calls=conv.repaired_tool_calls,
         )
         return 0.0
 
@@ -280,10 +289,12 @@ def run_task(
         total_latency_ms=conv.total_latency_ms,
         reached_max_turns=conv.reached_max_turns,
         weighted_score=weighted,
+        repaired_tool_calls=conv.repaired_tool_calls,
     )
 
     turns_str = f"{len(conv.turns)}t/{conv.total_tool_calls}tc"
-    console.print(f" → {weighted:.2f} ({turns_str}, {conv.total_latency_ms:.0f}ms)")
+    repaired = f", {conv.repaired_tool_calls} repaired" if conv.repaired_tool_calls else ""
+    console.print(f" → {weighted:.2f} ({turns_str}, {conv.total_latency_ms:.0f}ms{repaired})")
     return weighted
 
 
@@ -336,6 +347,11 @@ def main() -> None:
     parser.add_argument("--difficulty", help="Filter tasks by difficulty")
     parser.add_argument("--resume", help="Resume a previous run by ID")
     parser.add_argument("--skip-server-check", action="store_true", help="Skip server health checks")
+    parser.add_argument(
+        "--skip-gpu-check",
+        action="store_true",
+        help="Skip GPU placement verification (target/judge pinned to the right GPUs)",
+    )
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -356,6 +372,11 @@ def main() -> None:
     # Applied to every task for that model via chat-template trigger.
     system_suffix_by_model: dict[str, str] = {m["name"]: m.get("system_suffix", "") for m in models_cfg}
 
+    # Per-model chat-template kwargs, forwarded to llama-server and into the
+    # Jinja template. Qwen3.8's template has no `/no_think` branch — its only
+    # thinking switch is `{"enable_thinking": false}`.
+    template_kwargs_by_model: dict[str, dict] = {m["name"]: m.get("chat_template_kwargs") or {} for m in models_cfg}
+
     # Check servers
     if not args.skip_server_check:
         console.print("Checking servers...")
@@ -367,6 +388,22 @@ def main() -> None:
             console.print(f"[red]Judge server not responding at {judge_base}[/red]")
             sys.exit(1)
         console.print("[green]Servers OK[/green]")
+
+    # Verify GPU placement. A judge sharing a GPU with the model under
+    # evaluation contends for VRAM and pushes the target's layers to host
+    # memory — the run still completes and still writes scores, but the
+    # latency numbers are meaningless. Fail loudly instead.
+    if not args.skip_gpu_check:
+        console.print("Checking GPU placement...")
+        swap_cfg = Path(cfg.get("target", {}).get("llama_swap_config", "config/llama_swap_config.yaml"))
+        try:
+            _, gpu_warnings = gpu_preflight(swap_cfg, strict=True)
+        except GpuPlacementError as e:
+            console.print(f"[red]{e}[/red]")
+            sys.exit(1)
+        for w in gpu_warnings:
+            console.print(f"  [yellow]warning: {w}[/yellow]")
+        console.print("[green]GPU placement OK[/green]")
 
     # Load tasks
     tasks = load_tasks(dimension=args.dimension, difficulty=args.difficulty)
@@ -418,6 +455,23 @@ def main() -> None:
                     console.print(f"  [red]Failed to warm up {model}, skipping[/red]")
                     continue
 
+                # Re-verify placement now that the model is actually resident.
+                # llama-swap loads on first request, so the startup check ran
+                # while the target GPU was empty and could only validate config,
+                # never where this model really landed.
+                if not args.skip_gpu_check:
+                    try:
+                        target_uuid, judge_uuid = resolve_expected_uuids()
+                        gpu_errors, _ = verify_runtime_placement(target_uuid, judge_uuid)
+                    except GpuPlacementError as e:
+                        console.print(f"  [red]{e}[/red]")
+                        sys.exit(1)
+                    if gpu_errors:
+                        console.print(f"  [red]GPU placement wrong after loading {model}:[/red]")
+                        for err in gpu_errors:
+                            console.print(f"    [red]- {err}[/red]")
+                        sys.exit(1)
+
             # Get pending tasks for resume support
             pending = db.get_pending_tasks(run_id, model)
             pending_ids = {p.task_id for p in pending}
@@ -441,6 +495,7 @@ def main() -> None:
                         run_id,
                         eval_cfg,
                         system_suffix=system_suffix_by_model.get(model, ""),
+                        chat_template_kwargs=template_kwargs_by_model.get(model) or None,
                     )
                 except Exception:
                     logger.exception("Task %s failed for %s", task.id, model)

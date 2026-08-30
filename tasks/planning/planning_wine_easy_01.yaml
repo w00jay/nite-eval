@@ -151,4 +151,4 @@ scoring:
     method: judge_rubric
     criteria: Identifies at least one risk (e.g., Claude Vision accuracy, edge function timeout)
 max_turns: 8
-timeout_seconds: 90
+timeout_seconds: 600

@@ -170,7 +170,7 @@ Path/binary configuration lives in `.env` (see `.env.example`).
 | `qwen3.5-9b` | Qwen 3.5 9B | Q4_K_M | |
 | `gemma4-26b-a4b` | Gemma 4 26B-A4B | Q4_K_M | Emits Harmony-style tool calls |
 | `qwen3.6-35b-a3b` | Qwen 3.6 35B-A3B | UD-Q4_K_S | MoE reasoning; needs `system_suffix: "/no_think"` |
-| `qwen3.8-27b` | Qwen 3.8 27B | UD-Q4_K_XL | Hybrid attention+SSM (336 SSM tensors, 48 of 65 blocks). **Requires llama.cpp ≥ Aug 2026** — older builds fail with `missing tensor 'blk.64.ssm_conv1d.weight'` because they assume the final layer is an SSM block. **Needs `system_suffix: "/no_think"`** — on long prompts it exhausts the whole `max_tokens` budget inside `reasoning_content` and returns `finish_reason=length` with empty `content`. Observed on all 4 coding tasks in `run-20260829-040649` (11k–16k chars of reasoning, no answer). A short prompt returns `stop` normally, so this does not reproduce on a quick smoke test. Emits some tool calls as `{"function": ...}` instead of the Hermes `{"name": ...}`; the parser accepts both |
+| `qwen3.8-27b` | Qwen 3.8 27B | UD-Q4_K_XL | Hybrid attention+SSM (336 SSM tensors, 48 of 65 blocks). **Requires llama.cpp ≥ Aug 2026** — older builds fail with `missing tensor 'blk.64.ssm_conv1d.weight'` because they assume the final layer is an SSM block. **Needs `chat_template_kwargs: {reasoning_effort: medium}`** — its chat template has no `/no_think` branch, so that string is inert filler; the template defaults to `xhigh`. Without the override, on long prompts it exhausts the whole `max_tokens` budget inside `reasoning_content` and returns `finish_reason=length` with empty `content`. Observed on all 4 coding tasks in `run-20260829-040649` (11k–16k chars of reasoning, no answer). A short prompt returns `stop` normally, so this does not reproduce on a quick smoke test. Emits some tool calls as `{"function": ...}` instead of the Hermes `{"name": ...}`; the parser accepts both |
 
 Add or replace models by editing `config/llama_swap_config.yaml` and the `models:` block in `config/eval_config.yaml`. The `models:` block accepts an optional `system_suffix` per model for chat-template triggers like `/no_think`.
 
@@ -191,6 +191,31 @@ Results live in `results/runs/`:
 
 - `eval_results.db` — SQLite with all results, scores, tool calls
 - `run-YYYYMMDD-HHMMSS.md` — Markdown comparison report
+
+### Failed measurements are visible, not scored
+
+A task that could not be measured is recorded as an error with score 0 rather
+than being scored on whatever partial text the model happened to emit. The
+harness distinguishes:
+
+| `error` prefix | Meaning |
+|---|---|
+| `truncated:` | Generation hit `max_tokens`. Raise the task's `max_tokens`. |
+| `unparsed_tool_call:` | Tool-call JSON did not parse after one corrective retry. Raw payload attached. |
+| `task_timeout:` | Task exceeded its `timeout_seconds` wall-clock budget. |
+| `synthesis nudge failed` | The final-answer request errored, so there is no answer to score. |
+
+Previously all four were silent: the fragment became the "final answer" and a
+judge scored it. Query them with `SELECT error FROM task_results WHERE error IS
+NOT NULL`.
+
+### Malformed tool calls are repaired and counted
+
+Some models emit structurally broken tool-call JSON. Where the defect is
+characterized and safely repairable, the parser fixes it rather than discarding
+the call, and records the count in `task_results.repaired_tool_calls`. Reports
+include a per-model repair rate. A high rate is a model-quality signal — see
+`CLAUDE.md` for the qwen3.8 case (34% of coding tool calls).
 
 ## K8s deployment
 

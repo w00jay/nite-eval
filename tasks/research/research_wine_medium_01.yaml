@@ -187,4 +187,4 @@ scoring:
       '
 max_turns: 10
 max_tool_calls: 10
-timeout_seconds: 120
+timeout_seconds: 900

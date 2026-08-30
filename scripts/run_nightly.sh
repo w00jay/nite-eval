@@ -90,6 +90,44 @@ echo ""
 
 mkdir -p results
 
+# --- Verify GPU assignment before loading anything ---
+# A stale llama-server from a previous run holding the target GPU, or judges
+# pinned to the same card as the model under evaluation, silently ruins a run:
+# it completes, writes scores, and the latency numbers are garbage.
+echo "Checking GPU assignment..."
+if [ -z "${TARGET_GPU_UUID:-}" ] || [ -z "${JUDGE_GPU_UUID:-}" ]; then
+    echo "ERROR: TARGET_GPU_UUID and JUDGE_GPU_UUID must be set in .env"
+    echo "       Available GPUs:"
+    nvidia-smi -L | sed 's/^/         /'
+    exit 1
+fi
+if [ "$TARGET_GPU_UUID" = "$JUDGE_GPU_UUID" ]; then
+    echo "ERROR: TARGET_GPU_UUID and JUDGE_GPU_UUID are the same GPU."
+    echo "       Judges would contend with the model under evaluation for VRAM."
+    exit 1
+fi
+for uuid in "$TARGET_GPU_UUID" "$JUDGE_GPU_UUID"; do
+    if ! nvidia-smi -L | grep -q "$uuid"; then
+        echo "ERROR: GPU $uuid not present on this host."
+        nvidia-smi -L | sed 's/^/         /'
+        exit 1
+    fi
+done
+# Warn about pre-existing llama processes — they hold VRAM we are about to need.
+# -x matches the process NAME; -f would also match this script's own shell
+# wrapper, whose command line contains the pattern string, so every run would
+# warn about a stale process that does not exist.
+# pgrep -c prints the count AND exits 1 when it is zero, hence the `|| true`.
+STALE_SERVER=$(pgrep -xc llama-server 2>/dev/null) || true
+STALE_SWAP=$(pgrep -xc llama-swap 2>/dev/null) || true
+STALE=$(( ${STALE_SERVER:-0} + ${STALE_SWAP:-0} ))
+if [ "$STALE" -gt 0 ]; then
+    echo "WARNING: $STALE llama-server/llama-swap process(es) already running."
+    echo "         They hold VRAM and may be pinned to the wrong GPU:"
+    nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory --format=csv,noheader | sed 's/^/         /'
+fi
+echo "GPU assignment OK (target=${TARGET_GPU_UUID}, judge=${JUDGE_GPU_UUID})"
+
 # --- Start target llama-swap if not running ---
 echo "Checking target server on :$TARGET_PORT..."
 if curl -sf "http://127.0.0.1:$TARGET_PORT/health" > /dev/null 2>&1; then

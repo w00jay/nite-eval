@@ -313,4 +313,4 @@ scoring:
 
       '
 max_turns: 16
-timeout_seconds: 180
+timeout_seconds: 1200

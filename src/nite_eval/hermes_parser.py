@@ -10,8 +10,11 @@ Handles edge cases from real-world Hermes implementations:
 """
 
 import json
+import logging
 import re
 from dataclasses import dataclass, field
+
+logger = logging.getLogger(__name__)
 
 TOOL_CALL_RE = re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.DOTALL)
 SCRATCH_PAD_RE = re.compile(r"<scratch_pad>\s*(.*?)\s*</scratch_pad>", re.DOTALL)
@@ -40,11 +43,72 @@ class ParsedResponse:
     scratch_pad: str | None = None
     text: str = ""
     errors: list[dict] = field(default_factory=list)
+    # Tool calls that parsed only after repairing malformed JSON. Counted so a
+    # model's malformed-output rate stays visible rather than being absorbed.
+    repaired: int = 0
 
 
-def _fix_json(raw: str) -> str:
-    """Attempt to fix common JSON malformations."""
+def _repair_dropped_key_quote(s: str) -> tuple[str, int]:
+    """Restore the opening quote on keys that lost it.
+
+    qwen3.8 reproducibly drops the opening quote of the key that follows the
+    tool name, at temperature 0, in runs weeks apart::
+
+        {"name": "write_file",
+        arguments": {"content": "package auth\\n\\nimport (..."}}
+
+    Everything else about the payload is correct — hundreds of lines of escaped
+    source survive intact — so dropping the call over one character throws away
+    a complete answer and scores the model on a tool-less response instead.
+
+    The walk is string-aware: a `foo":` sequence *inside* a JSON string is left
+    alone, so escaped source code containing that pattern is never touched.
+
+    Returns (repaired, count).
+    """
+    out: list[str] = []
+    i = 0
+    in_string = False
+    repairs = 0
+    broken_key = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)"(\s*):')
+
+    while i < len(s):
+        ch = s[i]
+        if in_string:
+            if ch == "\\" and i + 1 < len(s):
+                out.append(s[i : i + 2])
+                i += 2
+                continue
+            if ch == '"':
+                in_string = False
+            out.append(ch)
+            i += 1
+            continue
+        if ch == '"':
+            in_string = True
+            out.append(ch)
+            i += 1
+            continue
+        m = broken_key.match(s, i)
+        if m:
+            out.append(f'"{m.group(1)}"{m.group(2)}:')
+            i = m.end()
+            repairs += 1
+            continue
+        out.append(ch)
+        i += 1
+
+    return "".join(out), repairs
+
+
+def _fix_json(raw: str) -> tuple[str, int]:
+    """Attempt to fix common JSON malformations.
+
+    Returns (fixed, repair_count). The count is surfaced so a model's rate of
+    malformed tool calls stays measurable instead of being silently absorbed.
+    """
     fixed = TRAILING_COMMA_RE.sub(r"\1", raw.strip())
+    fixed, repairs = _repair_dropped_key_quote(fixed)
 
     # Fix missing closing braces — count open vs close
     open_braces = fixed.count("{")
@@ -52,7 +116,7 @@ def _fix_json(raw: str) -> str:
     if open_braces > close_braces:
         fixed += "}" * (open_braces - close_braces)
 
-    return fixed
+    return fixed, repairs
 
 
 def _quote_bare_keys(s: str) -> str:
@@ -112,7 +176,8 @@ def _extract_gemma_tool_calls(response: str) -> tuple[list[ToolCall], list[dict]
         # Quote bare keys so JSON can parse
         args_json = _quote_bare_keys(args_norm)
         try:
-            args = json.loads(_fix_json(args_json))
+            fixed_args, _ = _fix_json(args_json)
+            args = json.loads(fixed_args)
         except json.JSONDecodeError:
             errors.append({"error": "malformed_gemma_json", "raw": args_raw})
             continue
@@ -154,12 +219,26 @@ def extract_tool_calls(response: str) -> ParsedResponse:
     matches = TOOL_CALL_RE.findall(response)
     for raw_match in matches:
         try:
-            parsed = json.loads(_fix_json(raw_match))
+            fixed_raw, repairs = _fix_json(raw_match)
+            parsed = json.loads(fixed_raw)
+            if repairs:
+                logger.warning("Repaired %d malformed JSON key(s) in tool call", repairs)
+                result.repaired += repairs
         except json.JSONDecodeError:
             result.errors.append({"error": "malformed_json", "raw": raw_match})
             continue
 
-        name = parsed.get("name")
+        # qwen3.8 emits {"function": "web_search", "arguments": {...}} instead of
+        # the Hermes {"name": ...} spec; some templates nest it OpenAI-style as
+        # {"function": {"name": ..., "arguments": ...}}. Accept both rather than
+        # dropping the call — an unparsed call ends the turn with no tools and
+        # the judge scores a tool-less answer.
+        func = parsed.get("function")
+        if isinstance(func, dict):
+            parsed = {**parsed, **func}
+            func = None
+
+        name = parsed.get("name") or (func if isinstance(func, str) else None)
         if not name:
             result.errors.append({"error": "missing_name", "raw": raw_match})
             continue

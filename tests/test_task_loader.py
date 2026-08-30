@@ -38,7 +38,8 @@ def test_load_single_task():
     assert len(task.tools) == 3
     assert "autoresearch" in task.user_message
     assert task.max_turns == 6
-    assert task.timeout_seconds == 60
+    # Wall-clock budget, real since timeout_seconds stopped being discarded.
+    assert task.timeout_seconds == 600
 
 
 def test_task_has_mock_responses_or_test_suite():

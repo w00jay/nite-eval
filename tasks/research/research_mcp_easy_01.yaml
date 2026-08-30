@@ -177,4 +177,4 @@ scoring:
     method: judge_rubric
     criteria: Gives a clear, reasoned recommendation for the GKE use case
 max_turns: 6
-timeout_seconds: 90
+timeout_seconds: 600

@@ -30,20 +30,45 @@ class Message:
 
 
 @dataclass
+class ModelReply:
+    """One generation from the target model, with its stop reason.
+
+    `finish_reason` was previously read only when content came back empty, so a
+    response cut off at max_tokens with non-empty content was indistinguishable
+    from a complete one. Truncated tool calls then failed to parse and the
+    runner treated the fragment as the model's final answer.
+    """
+
+    text: str
+    finish_reason: str | None = None
+
+    @property
+    def truncated(self) -> bool:
+        return self.finish_reason == "length"
+
+
+@dataclass
 class TurnResult:
     turn: int
     response: str
     parsed: ParsedResponse
     tool_responses: list[dict] = field(default_factory=list)
     latency_ms: float = 0.0
+    finish_reason: str | None = None
+    truncated: bool = False
 
 
-# Per-HTTP-request read timeout — decoupled from task wall-clock budget.
-# A single generation on a slow model (e.g. qwen3.5-27b at 4096 tokens) can
-# exceed a short task-level timeout; giving httpx its own generous ceiling
-# prevents ReadTimeout errors on tasks whose YAML timeout was tuned for
-# smaller generations.
-HTTP_READ_TIMEOUT = 600.0
+# Per-HTTP-request read timeout — decoupled from the task wall-clock budget.
+# A single generation must be able to spend its whole max_tokens budget without
+# tripping this. Measured on qwen3.8-27b: ~28 tok/s, so a full 16384-token
+# generation needs ~585s. The previous 600s ceiling left a 2.5% margin, which
+# would have converted a legitimately long answer into a task failure.
+HTTP_READ_TIMEOUT = 1200.0
+
+# Corrective retries offered when a tool call does not parse. One is enough to
+# separate a transient JSON slip from a model that cannot emit valid calls;
+# more would let a broken model burn the whole turn budget on retries.
+MAX_PARSE_RETRIES = 1
 
 
 @dataclass
@@ -54,6 +79,9 @@ class ConversationResult:
     total_latency_ms: float
     reached_max_turns: bool
     error: str | None = None
+    # Tool calls that parsed only after JSON repair — a model-quality signal
+    # that must stay visible, not be absorbed by the parser.
+    repaired_tool_calls: int = 0
 
 
 def run_conversation(
@@ -65,10 +93,11 @@ def run_conversation(
     mock_env: MockToolEnv,
     max_turns: int = 10,
     max_tool_calls: int = 20,
-    timeout_seconds: float = 120.0,  # noqa: ARG001 — retained for API stability; see HTTP_READ_TIMEOUT
+    timeout_seconds: float = 1800.0,
     temperature: float = 0.0,
     max_tokens: int = 2048,
     system_suffix: str = "",
+    chat_template_kwargs: dict | None = None,
 ) -> ConversationResult:
     """Run a multi-turn conversation with Hermes-format tool calling.
 
@@ -79,6 +108,16 @@ def run_conversation(
     `system_suffix` is appended to the system prompt — used for model-specific
     chat-template triggers like Qwen3's `/no_think` that disable the thinking
     budget and let the model emit a final answer directly.
+
+    `chat_template_kwargs` is forwarded verbatim to llama-server, which passes it
+    into the Jinja chat template. Needed for models whose thinking toggle is a
+    template variable rather than a prompt string — Qwen3.8 has no `/no_think`
+    branch at all and only responds to `{"enable_thinking": false}`.
+
+    `timeout_seconds` is the task's wall-clock budget, checked between turns.
+    It previously did nothing at all — accepted, then discarded — so a task
+    YAML's timeout was decorative. A single generation is bounded separately
+    by HTTP_READ_TIMEOUT, so a long answer is never killed mid-flight.
     """
     full_system = format_tool_definitions(tools) + "\n\n" + system_prompt.rstrip()
     if system_suffix:
@@ -93,30 +132,127 @@ def run_conversation(
     total_tool_calls = 0
     total_latency = 0.0
     cap_nudged = False  # Set when the max_tool_calls nudge fires so the max_turns nudge doesn't double-nudge.
+    parse_retries = 0  # Corrective retries spent on unparsable tool calls.
+    repaired_total = 0  # Tool calls salvaged by JSON repair.
 
-    # Use the module-level HTTP timeout, not the task's timeout_seconds.
-    # Tasks' timeout_seconds was historically both a task-level bound and the
-    # per-request read timeout; conflating the two caused spurious
-    # ReadTimeouts on slow models (qwen3.5-27b) when a single generation
-    # exceeded the task YAML's short timeout.
+    # Per-request timeout stays module-level and generous: conflating it with
+    # the task budget caused spurious ReadTimeouts when one generation ran
+    # longer than the task YAML's short timeout. The task budget is enforced
+    # separately, between turns, so a long single generation is never killed
+    # mid-flight but a runaway conversation still terminates.
     client = httpx.Client(timeout=HTTP_READ_TIMEOUT)
+    task_start = time.monotonic()
 
     try:
         for turn_num in range(1, max_turns + 1):
+            elapsed = time.monotonic() - task_start
+            if elapsed > timeout_seconds:
+                logger.warning(
+                    "Task wall-clock budget exhausted (%.0fs > %.0fs) after %d turns",
+                    elapsed,
+                    timeout_seconds,
+                    len(turns),
+                )
+                return ConversationResult(
+                    turns=turns,
+                    final_response="",
+                    total_tool_calls=total_tool_calls,
+                    total_latency_ms=total_latency,
+                    reached_max_turns=False,
+                    repaired_tool_calls=repaired_total,
+                    error=(
+                        f"task_timeout: {elapsed:.0f}s exceeded budget of {timeout_seconds:.0f}s "
+                        f"after {len(turns)} turns / {total_tool_calls} tool calls"
+                    ),
+                )
+
             start = time.monotonic()
 
-            response_text = _call_model(client, base_url, model_name, messages, temperature, max_tokens)
+            reply = _call_model(client, base_url, model_name, messages, temperature, max_tokens, chat_template_kwargs)
+            response_text = reply.text
 
             latency = (time.monotonic() - start) * 1000
             total_latency += latency
 
             parsed = extract_tool_calls(response_text)
+            repaired_total += parsed.repaired
             turn = TurnResult(
                 turn=turn_num,
                 response=response_text,
                 parsed=parsed,
                 latency_ms=latency,
+                finish_reason=reply.finish_reason,
+                truncated=reply.truncated,
             )
+
+            # A generation cut off at max_tokens is not an answer. Previously
+            # this fell through to "no tool calls -> model is done" and the
+            # fragment was judged as a final response; 87% of leaked
+            # <tool_call> tags in the results DB were truncations, not
+            # malformed model output. Fail the task instead of scoring noise.
+            if reply.truncated:
+                turns.append(turn)
+                return ConversationResult(
+                    turns=turns,
+                    final_response="",
+                    total_tool_calls=total_tool_calls,
+                    total_latency_ms=total_latency,
+                    reached_max_turns=False,
+                    repaired_tool_calls=repaired_total,
+                    error=(
+                        f"truncated: finish_reason=length on turn {turn_num} "
+                        f"({len(response_text)} chars, max_tokens={max_tokens})"
+                    ),
+                )
+
+            # Tool calls that were emitted but did not parse used to be invisible:
+            # parsed.errors was populated and never read, so the loop treated the
+            # turn as "model is done" and judged the raw fragment.
+            #
+            # A single malformed call is not necessarily a failed conversation —
+            # real agent loops tell the model its call did not parse and let it
+            # retry. Do that once per conversation; a model that cannot produce
+            # valid JSON on the second attempt is a genuine failure.
+            if not parsed.tool_calls and parsed.errors:
+                kinds = sorted({e.get("error", "unknown") for e in parsed.errors})
+                bad_raw = str(parsed.errors[0].get("raw", ""))[:400]
+                turns.append(turn)
+
+                if parse_retries < MAX_PARSE_RETRIES:
+                    parse_retries += 1
+                    logger.warning(
+                        "Unparsed tool call on turn %d (%s); asking model to retry (%d/%d)",
+                        turn_num,
+                        ", ".join(kinds),
+                        parse_retries,
+                        MAX_PARSE_RETRIES,
+                    )
+                    messages.append(Message(role="assistant", content=response_text))
+                    messages.append(
+                        Message(
+                            role="user",
+                            content=(
+                                "Your last tool call could not be parsed as JSON "
+                                f"({', '.join(kinds)}). Re-issue it as a single well-formed "
+                                '<tool_call> block: {"name": "<tool>", "arguments": {...}} '
+                                "with every key and string value in double quotes."
+                            ),
+                        )
+                    )
+                    continue
+
+                return ConversationResult(
+                    turns=turns,
+                    final_response="",
+                    total_tool_calls=total_tool_calls,
+                    total_latency_ms=total_latency,
+                    reached_max_turns=False,
+                    repaired_tool_calls=repaired_total,
+                    error=(
+                        f"unparsed_tool_call: {len(parsed.errors)} on turn {turn_num} "
+                        f"({', '.join(kinds)}) after {parse_retries} retry; raw: {bad_raw!r}"
+                    ),
+                )
 
             if not parsed.tool_calls:
                 # No tool calls — model is done (or silently stalled)
@@ -137,7 +273,10 @@ def run_conversation(
                         )
                     )
                     nudge_start = time.monotonic()
-                    nudged_text = _call_model(client, base_url, model_name, messages, temperature, max_tokens)
+                    nudge_reply = _call_model(
+                        client, base_url, model_name, messages, temperature, max_tokens, chat_template_kwargs
+                    )
+                    nudged_text = nudge_reply.text
                     nudge_latency = (time.monotonic() - nudge_start) * 1000
                     total_latency += nudge_latency
                     nudge_parsed = extract_tool_calls(nudged_text)
@@ -146,6 +285,8 @@ def run_conversation(
                         response=nudged_text,
                         parsed=nudge_parsed,
                         latency_ms=nudge_latency,
+                        finish_reason=nudge_reply.finish_reason,
+                        truncated=nudge_reply.truncated,
                     )
                     turns.append(nudge_turn)
                     final = nudged_text.strip() or (
@@ -174,6 +315,7 @@ def run_conversation(
                     total_tool_calls=total_tool_calls,
                     total_latency_ms=total_latency,
                     reached_max_turns=False,
+                    repaired_tool_calls=repaired_total,
                 )
 
             # Execute tool calls and build response messages. Gemma-family
@@ -220,6 +362,7 @@ def run_conversation(
                     nudge_content,
                     turn_num + 1,
                     turns,
+                    chat_template_kwargs,
                 )
                 cap_nudged = True
                 break
@@ -245,6 +388,7 @@ def run_conversation(
                 nudge_content,
                 max_turns + 1,
                 turns,
+                chat_template_kwargs,
             )
 
         final = _extract_best_final_response(turns)
@@ -254,6 +398,7 @@ def run_conversation(
             total_tool_calls=total_tool_calls,
             total_latency_ms=total_latency,
             reached_max_turns=True,
+            repaired_tool_calls=repaired_total,
         )
 
     except Exception as e:
@@ -283,22 +428,30 @@ def _try_nudge(
     nudge_content: str,
     turn_number: int,
     turns: list[TurnResult],
+    chat_template_kwargs: dict | None = None,
 ) -> float:
     """Append a synthesis-nudge user message and collect the model's reply.
 
-    Returns the nudge's latency in ms. HTTP-level failures (e.g. 400 when
-    context exceeds the server's ctx-size after many tool responses) are
-    logged and swallowed so the outer conversation can fall back to the
-    best already-collected response instead of erroring out the whole task.
+    Returns the nudge's latency in ms.
+
+    HTTP failures are raised, not swallowed. This used to log a warning and
+    fall back to the best already-collected turn, which silently converted
+    "the model never produced an answer" into "score whatever fragment it
+    happened to emit" — the same class of failure as accepting a truncated
+    generation. A nudge that fails means there is no synthesis to score, so
+    the task is a failed measurement and the outer handler records it.
     """
     messages.append(Message(role="user", content=nudge_content))
     nudge_start = time.monotonic()
     try:
-        nudged_text = _call_model(client, base_url, model_name, messages, temperature, max_tokens)
+        nudge_reply = _call_model(client, base_url, model_name, messages, temperature, max_tokens, chat_template_kwargs)
+        nudged_text = nudge_reply.text
     except httpx.HTTPStatusError as e:
-        nudge_latency = (time.monotonic() - nudge_start) * 1000
-        logger.warning("Nudge call failed with HTTP %s; proceeding with best-of-turns", e.response.status_code)
-        return nudge_latency
+        body = e.response.text[:300]
+        raise RuntimeError(
+            f"synthesis nudge failed with HTTP {e.response.status_code} on turn {turn_number} "
+            f"({len(messages)} messages, max_tokens={max_tokens}): {body}"
+        ) from e
     nudge_latency = (time.monotonic() - nudge_start) * 1000
     nudge_parsed = extract_tool_calls(nudged_text)
     turns.append(
@@ -307,6 +460,8 @@ def _try_nudge(
             response=nudged_text,
             parsed=nudge_parsed,
             latency_ms=nudge_latency,
+            finish_reason=nudge_reply.finish_reason,
+            truncated=nudge_reply.truncated,
         )
     )
     return nudge_latency
@@ -341,7 +496,8 @@ def _call_model(
     messages: list[Message],
     temperature: float,
     max_tokens: int,
-) -> str:
+    chat_template_kwargs: dict | None = None,
+) -> ModelReply:
     """Send messages to the model and return the response text.
 
     Some llama-server builds route Qwen-style thinking output to a separate
@@ -350,23 +506,23 @@ def _call_model(
     a thought-only answer as a silent stall. Also logs the raw message keys
     and finish_reason once so diagnostic info lands in the run log.
     """
-    resp = client.post(
-        f"{base_url}/v1/chat/completions",
-        json={
-            "model": model_name,
-            "messages": [{"role": m.role, "content": m.content} for m in messages],
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-        },
-    )
+    payload: dict = {
+        "model": model_name,
+        "messages": [{"role": m.role, "content": m.content} for m in messages],
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    if chat_template_kwargs:
+        payload["chat_template_kwargs"] = chat_template_kwargs
+    resp = client.post(f"{base_url}/v1/chat/completions", json=payload)
     resp.raise_for_status()
     data = resp.json()
     choice = data["choices"][0]
     msg = choice.get("message", {})
     content = msg.get("content") or ""
+    finish = choice.get("finish_reason")
     if not content.strip():
         reasoning = msg.get("reasoning_content") or ""
-        finish = choice.get("finish_reason")
         logger.warning(
             "Empty content from %s (finish=%s, msg_keys=%s, reasoning_len=%d)",
             model_name,
@@ -375,5 +531,11 @@ def _call_model(
             len(reasoning),
         )
         if reasoning.strip():
-            return reasoning
-    return content
+            return ModelReply(text=reasoning, finish_reason=finish)
+    if finish == "length":
+        logger.warning(
+            "Truncated generation from %s (finish=length, content_len=%d) — raise max_tokens for this task",
+            model_name,
+            len(content),
+        )
+    return ModelReply(text=content, finish_reason=finish)
