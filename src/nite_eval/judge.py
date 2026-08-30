@@ -7,6 +7,7 @@ Supports retry with averaging for variance reduction.
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass
 
 import httpx
@@ -34,6 +35,26 @@ class JudgeResult:
 class JudgeError:
     error: str
     raw_response: str
+
+
+def _extract_json_object(raw: str, required_key: str) -> dict:
+    """Find the first JSON object in `raw` containing `required_key`.
+
+    Judges wrap JSON in prose or fences often enough that a bare json.loads on
+    the whole response is unreliable.
+    """
+    for candidate in JSON_BLOCK_RE.findall(raw):
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict) and required_key in parsed:
+            return parsed
+
+    parsed = json.loads(raw.strip())
+    if not isinstance(parsed, dict) or required_key not in parsed:
+        raise ValueError(f"no JSON object with key '{required_key}'")
+    return parsed
 
 
 def _parse_judge_response(raw: str) -> JudgeResult | JudgeError:
@@ -134,9 +155,10 @@ class JudgeClient:
         rubric: str,
         task_description: str,
         model_response: str,
+        evidence: str = "",
     ) -> JudgeResult | JudgeError:
         """Send a single evaluation request to the judge."""
-        prompt = self._build_prompt(dimension, rubric, task_description, model_response)
+        prompt = self._build_prompt(dimension, rubric, task_description, model_response, evidence)
         return self._call(prompt)
 
     def evaluate_with_averaging(
@@ -146,13 +168,14 @@ class JudgeClient:
         task_description: str,
         model_response: str,
         n_runs: int = 3,
+        evidence: str = "",
     ) -> JudgeResult | JudgeError:
         """Run evaluation n times and average scores for variance reduction."""
         results: list[JudgeResult] = []
         errors: list[JudgeError] = []
 
         for i in range(n_runs):
-            result = self.evaluate(dimension, rubric, task_description, model_response)
+            result = self.evaluate(dimension, rubric, task_description, model_response, evidence)
             if isinstance(result, JudgeError):
                 errors.append(result)
                 logger.warning("Judge run %d/%d failed: %s", i + 1, n_runs, result.error)
@@ -186,6 +209,7 @@ class JudgeClient:
         rubric: str,
         task_description: str,
         model_response: str,
+        evidence: str = "",
     ) -> str:
         # Truncate long responses to fit judge context window
         if len(model_response) > self.MAX_RESPONSE_CHARS:
@@ -193,24 +217,44 @@ class JudgeClient:
                 model_response[: self.MAX_RESPONSE_CHARS] + "\n\n[... response truncated for evaluation ...]"
             )
 
-        return f"""You are a strict evaluator scoring "{dimension}" on a 3-point scale.
+        # Criteria like no_hallucination and data_accuracy ask whether the
+        # response's facts match what the tools actually returned. Without the
+        # tool results the judge can only guess, so those criteria were
+        # unjudgeable and previously fell through to a free 1.0.
+        evidence_block = ""
+        if evidence:
+            if len(evidence) > self.MAX_RESPONSE_CHARS:
+                evidence = evidence[: self.MAX_RESPONSE_CHARS] + "\n\n[... evidence truncated ...]"
+            evidence_block = (
+                "\n## Tool Results (ground truth)\n"
+                "These are the actual values the tools returned. Any figure in the\n"
+                "response that contradicts these, or that appears nowhere in them,\n"
+                "is fabricated.\n\n"
+                f"{evidence}\n"
+            )
 
-IMPORTANT: Be critical. Most responses deserve a 3. Only give 5 for truly
-exceptional work. Only give 1 for clear failures. If in doubt, score 3.
+        return f"""You are a strict evaluator scoring "{dimension}" on a 5-point scale.
+
+Be critical. Reserve 5 for work with no meaningful gaps, and 1 for clear
+failures. Use the full range: 2 and 4 exist for responses that sit between
+the anchors, which most do.
 
 ## Scoring Scale
-1 = Poor (clear failures, major gaps)
-3 = Acceptable (adequate, meets basic requirements)
-5 = Excellent (exceptional, goes above and beyond)
+1 = Poor — clear failures, major gaps
+2 = Weak — meets some requirements, notable gaps
+3 = Acceptable — adequate, meets basic requirements
+4 = Strong — exceeds requirements, minor gaps only
+5 = Excellent — no meaningful gaps
 
-You MUST pick exactly 1, 3, or 5. No other scores.
+Pick the single integer from 1 to 5 that best fits. Do not default to 3;
+if a response is better than "adequate" but short of "strong", score 4.
 
 ## Rubric for {dimension}
 {rubric}
 
 ## Task
 {task_description}
-
+{evidence_block}
 ## Response to Evaluate
 {model_response}
 
@@ -262,6 +306,92 @@ Output ONLY valid JSON: {{"reasoning": "your 2-3 sentence analysis", "score": N}
                     continue
                 return JudgeError(error=last_error, raw_response="")
             return _parse_judge_response(raw)
+
+        return JudgeError(error=last_error, raw_response="")
+
+    def evaluate_checklist(
+        self,
+        criteria: list[str],
+        task_description: str,
+        model_response: str,
+    ) -> list[bool] | JudgeError:
+        """Ask the judge which checklist criteria the response actually meets.
+
+        One call for the whole checklist rather than one per criterion. Replaces
+        substring matching, which counted a criterion as met if any word longer
+        than three characters from it appeared anywhere in the response — so
+        "Addresses embedding strategy" was satisfied by the word "strategy".
+
+        Returns a list of booleans aligned with `criteria`.
+        """
+        if not criteria:
+            return []
+
+        numbered = "\n".join(f"{i + 1}. {c}" for i, c in enumerate(criteria))
+        prompt = f"""You are checking whether a response addresses specific requirements.
+
+For each numbered requirement, decide whether the response genuinely addresses
+it. Mentioning a keyword is not enough — the response must actually cover the
+substance of the requirement.
+
+## Task Given To The Model
+{task_description}
+
+## Requirements
+{numbered}
+
+## Response To Check
+{model_response[: self.MAX_RESPONSE_CHARS]}
+
+Output ONLY valid JSON, an object with a "met" array of {len(criteria)} booleans
+in the same order as the requirements:
+{{"met": [true, false, ...]}}"""
+
+        raw_result = self._call_raw(prompt)
+        if isinstance(raw_result, JudgeError):
+            return raw_result
+
+        try:
+            parsed = _extract_json_object(raw_result, "met")
+            met = parsed["met"]
+            if not isinstance(met, list):
+                raise ValueError("'met' is not a list")
+        except (json.JSONDecodeError, KeyError, ValueError) as e:
+            return JudgeError(error=f"checklist_parse_error: {e}", raw_response=raw_result)
+
+        # Pad or trim so a miscounted response cannot silently shift alignment.
+        met = [bool(x) for x in met][: len(criteria)]
+        met += [False] * (len(criteria) - len(met))
+        return met
+
+    def _call_raw(self, prompt: str, max_retries: int = 3) -> str | JudgeError:
+        """Send a prompt and return the raw text, for non-score judge calls."""
+        last_error = ""
+        for attempt in range(1, max_retries + 1):
+            try:
+                resp = self._client.post(
+                    f"{self.base_url}/chat/completions",
+                    json={
+                        "model": self.model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": self.temperature,
+                        "max_tokens": self.max_tokens,
+                    },
+                )
+                resp.raise_for_status()
+            except httpx.HTTPError as e:
+                last_error = f"http_error: {e}"
+                if attempt < max_retries:
+                    time.sleep(5 * attempt)
+                    continue
+                return JudgeError(error=last_error, raw_response="")
+
+            raw = resp.json()["choices"][0]["message"]["content"] or ""
+            if raw.strip():
+                return raw
+            last_error = "empty_response"
+            if attempt < max_retries:
+                time.sleep(2 * attempt)
 
         return JudgeError(error=last_error, raw_response="")
 
@@ -330,11 +460,23 @@ class RoutedJudgeClient:
         rubric: str,
         task_description: str,
         model_response: str,
+        evidence: str = "",
     ) -> JudgeResult | JudgeError:
         """Route to the best judge for this dimension."""
         judge = self._select(dimension)
         logger.debug("Routing %s → %s", dimension, judge.model)
-        return judge.evaluate(dimension, rubric, task_description, model_response)
+        return judge.evaluate(dimension, rubric, task_description, model_response, evidence)
+
+    def evaluate_checklist(
+        self,
+        criteria: list[str],
+        task_description: str,
+        model_response: str,
+    ) -> list[bool] | JudgeError:
+        """Route a checklist check. Coverage is a conservative judgement, so it
+        goes to the conservative judge rather than the excellence-recognising one."""
+        judge = self._select("coverage")
+        return judge.evaluate_checklist(criteria, task_description, model_response)
 
     def evaluate_with_averaging(
         self,
@@ -343,11 +485,12 @@ class RoutedJudgeClient:
         task_description: str,
         model_response: str,
         n_runs: int = 3,
+        evidence: str = "",
     ) -> JudgeResult | JudgeError:
         """Route to the best judge for this dimension, with variance reduction."""
         judge = self._select(dimension)
         logger.debug("Routing %s → %s (n=%d)", dimension, judge.model, n_runs)
-        return judge.evaluate_with_averaging(dimension, rubric, task_description, model_response, n_runs)
+        return judge.evaluate_with_averaging(dimension, rubric, task_description, model_response, n_runs, evidence)
 
     def close(self) -> None:
         self._flow.close()

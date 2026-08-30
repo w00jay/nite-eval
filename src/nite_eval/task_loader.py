@@ -31,12 +31,24 @@ class TaskDefinition:
     max_turns: int = 8
     max_tool_calls: int = 20
     timeout_seconds: int = 90
+    # Per-task generation budget. None falls back to evaluation.max_tokens.
+    # Coding tasks need far more than the global default: the model writes
+    # whole source files inside a JSON string in a tool call, and running out
+    # mid-string truncates the call so it never parses.
+    max_tokens: int | None = None
     source_project: str = ""
     mock_responses: dict[str, Any] = field(default_factory=dict)
     test_suite: dict[str, Any] = field(default_factory=dict)
     expected_tool_sequence: list[dict[str, Any]] = field(default_factory=list)
     expected_tools_called: list[str] = field(default_factory=list)
     expected_tool_sequence_flexible: bool = False
+    # Tools the model should NOT call, for `tool_absence` scoring.
+    distractor_tools: list[str] = field(default_factory=list)
+    # [before, after] pairs for `tool_ordering` scoring.
+    expected_tool_ordering: list[list[str]] = field(default_factory=list)
+    # Real execution environment. When present the task runs against a
+    # container instead of mocks, and `automated` criteria become measurable.
+    environment: dict[str, Any] = field(default_factory=dict)
 
     @property
     def judge_dimensions(self) -> list[str]:
@@ -59,6 +71,9 @@ class TaskDefinition:
                 "exact_match",
                 "partial_match",
                 "automated",
+                "tool_args_match",
+                "tool_absence",
+                "tool_ordering",
             )
         ]
 
@@ -80,12 +95,16 @@ def load_task(path: Path) -> TaskDefinition:
         max_turns=data.get("max_turns", 8),
         max_tool_calls=data.get("max_tool_calls", 20),
         timeout_seconds=data.get("timeout_seconds", 90),
+        max_tokens=data.get("max_tokens"),
         source_project=data.get("source_project", ""),
         mock_responses=data.get("mock_responses", {}),
         test_suite=data.get("test_suite", {}),
         expected_tool_sequence=data.get("expected_tool_sequence", []),
         expected_tools_called=data.get("expected_tools_called", []),
         expected_tool_sequence_flexible=data.get("expected_tool_sequence_flexible", False),
+        distractor_tools=data.get("distractor_tools", []),
+        expected_tool_ordering=data.get("expected_tool_ordering", []),
+        environment=data.get("environment", {}),
     )
 
 

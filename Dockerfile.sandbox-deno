@@ -1,0 +1,18 @@
+# Deno sandbox for the Supabase Edge Function coding task.
+#
+# The eval sandbox runs with --network none, so remote imports are impossible at
+# task time. The task contract therefore injects its dependencies (storage,
+# Claude Vision, wine lookup) rather than importing the Supabase or Anthropic
+# SDKs, which keeps the suite hermetic and makes every error path testable.
+
+FROM denoland/deno:alpine-2.1.4
+
+# Deno writes its cache to $DENO_DIR; the rootfs is read-only at run time, so
+# point it at the tmpfs.
+ENV DENO_DIR=/tmp/deno \
+    DENO_NO_UPDATE_CHECK=1
+
+RUN mkdir -p /skeleton \
+ && printf '{\n  "tasks": {},\n  "lint": { "rules": { "tags": ["recommended"] } }\n}\n' > /skeleton/deno.json
+
+ENTRYPOINT []

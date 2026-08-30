@@ -63,16 +63,52 @@ tools:
           type: string
       required:
       - command
-user_message: 'Implement the core MCP gateway proxy in Go. Requirements: (1) HTTP server on :8080 with
-  two endpoints: POST /mcp/tools/list and POST /mcp/tools/call. (2) tools/list aggregates tools from all
-  configured upstream servers (fetched concurrently with errgroup), deduplicates by tool name, and returns
-  the merged list. (3) tools/call looks up which upstream owns the requested tool, injects the appropriate
-  auth header (Bearer, X-API-Key, or OAuth2 based on config), proxies the request, and returns the response.
-  (4) Structured JSON logging via slog for every proxied request (server, tool, latency, status). (5)
-  Graceful shutdown on SIGTERM. Load server config from the YAML format we defined earlier. Include tests
-  with httptest for both endpoints, and run with -race.
+user_message: |-
+  Implement the core MCP gateway proxy in Go. Requirements: (1) HTTP server on :8080 with two endpoints: POST /mcp/tools/list and POST /mcp/tools/call. (2) tools/list aggregates tools from all configured upstream servers (fetched concurrently with errgroup), deduplicates by tool name, and returns the merged list. (3) tools/call looks up which upstream owns the requested tool, injects the appropriate auth header (Bearer, X-API-Key, or OAuth2 based on config), proxies the request, and returns the response. (4) Structured JSON logging via slog for every proxied request (server, tool, latency, status). (5) Graceful shutdown on SIGTERM. Load server config from the YAML format we defined earlier. Include tests with httptest for both endpoints, and run with -race.
+  
+  Your code is compiled and tested against this exact contract, so match it:
+  
+    module mcpgateway            (go.mod, go 1.23)
+    package gateway              (in gateway.go)
+  
+    type ServerConfig struct {
+        Name      string `yaml:"name"`
+        BaseURL   string `yaml:"base_url"`
+        AuthType  string `yaml:"auth_type"`   // none | bearer | api_key
+        AuthToken string `yaml:"auth_token"`
+        APIKey    string `yaml:"api_key"`
+    }
+    type Config struct { Servers []ServerConfig `yaml:"servers"` }
+  
+    type Tool struct {
+        Name        string `json:"name"`
+        Description string `json:"description"`
+    }
+  
+    func New(cfg *Config, client *http.Client, logger *slog.Logger) *Gateway
+    func (g *Gateway) Handler() http.Handler
+  
+  Upstream protocol, which the tests stub with httptest:
+    POST <BaseURL>/tools/list  -> {"tools": [{"name": ..., "description": ...}]}
+    POST <BaseURL>/tools/call  -> any JSON body; proxy it back verbatim
+  
+  Gateway endpoints:
+    POST /mcp/tools/list  -> {"tools": [...]} merged from all upstreams, fetched
+                             concurrently with errgroup, deduplicated by tool
+                             name with the first configured server winning.
+    POST /mcp/tools/call  -> body {"tool": "<name>", "arguments": {...}}. Resolve
+                             which upstream owns the tool, inject its auth header
+                             (Authorization: Bearer <token>, or X-API-Key: <key>),
+                             proxy, and return the upstream response and status.
+                             Unknown tool -> 404. Upstream timeout -> 504.
+  
+  Log one JSON line per proxied call via the injected slog.Logger, containing the
+  keys: server, tool, latency_ms, status.
+  
+  gopkg.in/yaml.v3 and golang.org/x/sync/errgroup are already vendored — do not
+  run "go get" or "go mod tidy", the environment has no network. Write your files
+  under /app/mcpgateway.
 
-  '
 test_suite:
   language: go
   tests:
@@ -114,8 +150,9 @@ scoring:
       boundaries. Handler functions are testable without starting a real server.
 
       '
-max_turns: 14
-timeout_seconds: 180
+max_turns: 32
+max_tool_calls: 50
+timeout_seconds: 3600
 mock_responses:
   write_file:
   - match:
@@ -127,19 +164,13 @@ mock_responses:
   run_tests:
   - match:
       directory_contains: any
-    response:
-      content:
-        passed: 4
-        failed: 0
-        output: All tests passed
+    error: >-
+      Test execution is not available in this environment. Write the implementation and its tests; correctness is evaluated separately after the conversation ends. Do not retry this tool.
   run_code:
   - match:
       command_contains: any
-    response:
-      content:
-        exit_code: 0
-        stdout: ''
-        stderr: ''
+    error: >-
+      Shell execution is not available in this environment. Write the implementation and its tests; correctness is evaluated separately after the conversation ends. Do not retry this tool.
   read_file:
   - match:
       path_contains: any
@@ -147,3 +178,31 @@ mock_responses:
       content:
         content: // file contents placeholder
         exists: true
+
+# Coding tasks emit whole source files inside a JSON string in a tool call.
+# The global 4096 budget truncated mid-string, which the runner used to accept
+# as a final answer (see audit: 56% of coding responses leaked <tool_call>).
+# Raised again from 16384 after B1: against a real sandbox the model writes the
+# implementation and its tests in one turn. coding_artemis_medium_01 emitted
+# 24725 chars on turn 2 and hit the cap. Under the mocks it wrote less, because
+# it was told its tests passed and stopped.
+max_tokens: 24576
+
+environment:
+  image: nite-eval-go:1.23
+  workdir: /app/mcpgateway
+  setup_cmd: cp -a /skeleton/. /app/mcpgateway/ && sed -i 's|^module .*|module mcpgateway|' /app/mcpgateway/go.mod
+  test_cmd: go test ./... -v 2>&1
+  # Scoring runs only our files; test_cmd stays broad so the model
+  # still sees its own tests when it calls run_tests.
+  hidden_test_cmd: go test -run '^TestHidden' . -v 2>&1
+  # Model test files, moved aside before scoring so its helpers cannot
+  # collide with the hidden suite's at compile time.
+  isolate_globs: "*_test.go"
+  language: go
+  command_timeout: 300
+  # `go test -race` links the TLS stack with the race runtime; 2g was OOM-killed
+  # (container exit 137), which scores identically to a real race failure.
+  memory: 4g
+  checks:
+    race_detector_clean: go test -race .

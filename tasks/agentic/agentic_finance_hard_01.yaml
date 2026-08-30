@@ -301,16 +301,25 @@ scoring:
       '
   data_accuracy:
     weight: 0.15
-    method: deterministic
+    method: judge_rubric
     criteria: 'All numbers cited (RSI, price, ATR, revenue growth) match mock data. No hallucinated statistics.
 
       '
   distractor_handling:
     weight: 0.15
-    method: deterministic
+    method: tool_absence
     criteria: 'Either did not call social_media_sentiment (preferred — low signal for institutional-quality
       analysis) or appropriately discounted it. Did NOT weight Reddit sentiment as a primary signal.
 
       '
 max_turns: 16
-timeout_seconds: 180
+timeout_seconds: 1200
+
+distractor_tools:
+  - social_media_sentiment
+
+# Global evaluation.max_tokens is 4096. Hard agentic tasks exceed it: the
+# pre-Wave-1 baseline and run-20260830-064654 both produced exactly 12834 chars
+# for planning_finance_hard_01 and hit finish_reason=length, so every historical
+# agentic score was computed on truncated output.
+max_tokens: 8192

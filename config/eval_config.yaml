@@ -29,10 +29,54 @@ models:
   - name: "qwen3.6-35b-a3b-strix"
     backend: "llama.cpp"
     system_suffix: "/no_think"
+  - name: "qwen3.8-27b"
+    backend: "llama.cpp"
+    chat_template_kwargs:
+      reasoning_effort: "medium"
+    # NOT system_suffix: "/no_think" — that string does not appear anywhere in
+    # Qwen3.8's chat template (verified against the GGUF's embedded template),
+    # so it is inert filler text. The template defaults to
+    # `reasoning_effort|default('xhigh')` and injects "Reasoning effort is set
+    # to xhigh. Please think carefully..." into the system prompt, so the model
+    # is actively told to maximize reasoning.
+    #
+    # Measured on the live server, "What is 17*23?" at temp=0:
+    #   baseline                     -> 67 completion tokens, reasoning_len 125
+    #   system_suffix "/no_think"    -> 36 completion tokens, reasoning_len  89
+    #   reasoning_effort: "low"      -> 62 completion tokens, reasoning_len 110
+    #   enable_thinking: false       ->  4 completion tokens, reasoning_len   0
+    # Only enable_thinking actually closes the <think> block (template emits a
+    # pre-closed `<think>\n\n</think>` when it is false).
+    #
+    # But fully disabling thinking costs quality: run-20260829-051125
+    # (enable_thinking: false) dropped the composite to 0.62 from 0.68/0.66,
+    # with research falling 0.80 -> 0.63 (research_wine_medium_01 went
+    # 1.00/1.00 -> 0.65). It was 36% faster with zero empty-content warnings,
+    # but that is not worth the accuracy. The real problem is the xhigh
+    # DEFAULT overrunning max_tokens, not reasoning as such — hence "medium".
+    #
+    # Symptom without it: run-20260829-040649 and -044155 both returned
+    # finish_reason=length with EMPTY content and 11k-16k chars of
+    # `reasoning_content` on all 4 coding tasks — the entire max_tokens budget
+    # spent thinking, no answer. The reasoning_content fallback then feeds raw
+    # chain-of-thought to the judge, pinning coding at 0.15-0.42.
+    #
+    # Requires llama.cpp >= cd26896c1 (2026-08-20). Build 8642 (2026-04-03) and
+    # earlier abort with:
+    #   error loading model: missing tensor 'blk.64.ssm_conv1d.weight'
+    # Qwen3.8 is hybrid attention+SSM: 336 SSM tensors across 48 of 65 blocks
+    # (every block where b % 4 != 3), but the final block 64 is attention-only.
+    # Older builds apply the modulo rule to block 64 and expect SSM tensors.
 
 evaluation:
   temperature: 0.0
   max_tokens: 4096
+  # Average 3 judge samples per criterion. The target model is essentially
+  # deterministic at temperature 0 (coding_artemis_medium_01 reproduced across
+  # three runs at 600163 / 599702 / 601768 ms with identical scores), so
+  # run-to-run variance comes from the judge. Averaging attacks the actual
+  # source; repeat target runs would buy nothing. Costs 3x judge calls.
+  judge_averaging: true
   warm_up: true  # Send a warm-up prompt after each model swap
 
 scoring:
@@ -47,7 +91,11 @@ results:
   db_name: "eval_results.db"
 
 hardware:
-  # Default GPU indices; override via NITE_TARGET_GPU / NITE_JUDGE_GPU env vars.
-  # Binary paths come from the .env file (LLAMA_SERVER_BIN, LLAMA_SWAP_BIN).
-  target_gpu: 0
-  judge_gpu: 1
+  # DOCUMENTATION ONLY — no code reads this block. The values that actually
+  # take effect are TARGET_GPU_UUID / JUDGE_GPU_UUID in .env, consumed by
+  # scripts/run_nightly.sh, plus the per-model CUDA_VISIBLE_DEVICES pinned
+  # in config/llama_swap_config.yaml. Override at runtime with
+  # NITE_TARGET_GPU / NITE_JUDGE_GPU.
+  target_gpu: 1  # RTX 3090 24GB — model under evaluation
+  judge_gpu: 0   # RTX 3060 12GB — both judge servers
+  # Tesla P40 (index 2) is intentionally unused during evals.

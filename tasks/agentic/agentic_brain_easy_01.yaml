@@ -121,7 +121,7 @@ scoring:
     criteria: Called capture_thought then search_thoughts, NOT send_email
   argument_accuracy:
     weight: 0.3
-    method: partial_match
+    method: tool_args_match
     criteria: Thought content captures the key insight. Type is 'idea'. Search query is relevant.
   synthesis:
     weight: 0.2
@@ -129,7 +129,16 @@ scoring:
     criteria: Connects the search results back to the user's insight meaningfully
   distractor_avoidance:
     weight: 0.2
-    method: deterministic
+    method: tool_absence
     criteria: Did not call send_email
 max_turns: 6
-timeout_seconds: 60
+timeout_seconds: 600
+
+distractor_tools:
+  - send_email
+
+# Global evaluation.max_tokens is 4096. Hard agentic tasks exceed it: the
+# pre-Wave-1 baseline and run-20260830-064654 both produced exactly 12834 chars
+# for planning_finance_hard_01 and hit finish_reason=length, so every historical
+# agentic score was computed on truncated output.
+max_tokens: 8192

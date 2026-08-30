@@ -79,8 +79,8 @@ def generate_report(
     for dim in dimensions:
         lines.append(f"### {dim.capitalize()}")
         lines.append("")
-        header = "| Task | Diff | " + " | ".join(models) + " | Turns | TCs |"
-        sep = "|" + "|".join(["------"] * (len(models) + 4)) + "|"
+        header = "| Task | Diff | " + " | ".join(models) + " | Turns | TCs | Rep | Unscored |"
+        sep = "|" + "|".join(["------"] * (len(models) + 6)) + "|"
         lines.append(header)
         lines.append(sep)
 
@@ -103,12 +103,15 @@ def generate_report(
                         # Get turn/tc info from task_results
                         tr = _get_task_result(db, run_id, model, tid)
                         if tr:
-                            turns_str = f"{tr['total_turns']} | {tr['total_tool_calls']}"
+                            turns_str = (
+                                f"{tr['total_turns']} | {tr['total_tool_calls']} "
+                                f"| {tr['repaired_tool_calls']} | {tr['unscored_weight']:.0%}"
+                            )
                 else:
                     cells.append("-")
 
             if not turns_str:
-                turns_str = "- | -"
+                turns_str = "- | - | - | -"
 
             short_id = tid.replace(f"{dim}_", "")
             lines.append(f"| {short_id} | {diff} | " + " | ".join(cells) + f" | {turns_str} |")
@@ -127,6 +130,61 @@ def generate_report(
             total_s = sum(latencies) / 1000
             lines.append(f"| {model} | {avg_ms:.0f} | {total_s:.0f} |")
     lines.append("")
+
+    # Malformed tool-call rate. Repaired calls would otherwise be invisible:
+    # the parser salvages them, so nothing in the scores reflects that a model
+    # emitted broken JSON. qwen3.8 was measured at 23 repairs / 28 tool calls
+    # on coding_mcp_hard_01 — a model-quality signal worth reporting.
+    repair_rows = []
+    for model in models:
+        cur = db._conn.execute(
+            "SELECT COALESCE(SUM(repaired_tool_calls), 0), COALESCE(SUM(total_tool_calls), 0) "
+            "FROM task_results WHERE run_id = ? AND model_name = ?",
+            (run_id, model),
+        )
+        repaired, total_tc = cur.fetchone()
+        if repaired:
+            pct = (repaired / total_tc * 100) if total_tc else 0.0
+            repair_rows.append(f"| {model} | {repaired} | {total_tc} | {pct:.0f}% |")
+
+    if repair_rows:
+        lines.append("## Malformed Tool Calls (repaired)")
+        lines.append("")
+        lines.append("Tool calls that parsed only after JSON repair. A high rate means the")
+        lines.append("model reliably emits broken tool-call JSON; the harness salvages these")
+        lines.append("rather than discarding the call, so scores reflect the work, not the defect.")
+        lines.append("")
+        lines.append("| Model | Repaired | Tool Calls | Rate |")
+        lines.append("|-------|----------|------------|------|")
+        lines.extend(repair_rows)
+        lines.append("")
+
+    # Partial measurement warning. A dimension carrying excluded weight is not
+    # comparable to one that is fully scored, and is not comparable to its own
+    # historical values from before the criteria were excluded.
+    partial = []
+    for model in models:
+        cur = db._conn.execute(
+            "SELECT dimension, AVG(COALESCE(unscored_weight, 0)) FROM task_results "
+            "WHERE run_id = ? AND model_name = ? GROUP BY dimension HAVING AVG(COALESCE(unscored_weight, 0)) > 0",
+            (run_id, model),
+        )
+        for dim, frac in cur.fetchall():
+            partial.append(f"| {model} | {dim} | {frac:.0%} |")
+
+    if partial:
+        lines.append("## Partially Scored Dimensions")
+        lines.append("")
+        lines.append("Criteria with no implementation are excluded from the weighted average")
+        lines.append("rather than scored 0 or 1. These dimensions are therefore scored over a")
+        lines.append("subset of their declared criteria — the numbers are narrower claims, not")
+        lines.append("better results, and are **not comparable** to fully scored dimensions or")
+        lines.append("to historical runs.")
+        lines.append("")
+        lines.append("| Model | Dimension | Weight excluded |")
+        lines.append("|-------|-----------|-----------------|")
+        lines.extend(partial)
+        lines.append("")
 
     # Notable results
     lines.append("## Notable Results")
@@ -176,11 +234,19 @@ def _get_run_info(db: ResultsDB, run_id: str) -> dict | None:
 
 def _get_task_result(db: ResultsDB, run_id: str, model: str, task_id: str) -> dict | None:
     cur = db._conn.execute(
-        "SELECT total_turns, total_tool_calls, total_latency_ms "
+        "SELECT total_turns, total_tool_calls, total_latency_ms, "
+        "COALESCE(repaired_tool_calls, 0) AS repaired_tool_calls, "
+        "COALESCE(unscored_weight, 0) AS unscored_weight "
         "FROM task_results WHERE run_id = ? AND model_name = ? AND task_id = ?",
         (run_id, model, task_id),
     )
     row = cur.fetchone()
     if not row:
         return None
-    return {"total_turns": row[0], "total_tool_calls": row[1], "latency_ms": row[2]}
+    return {
+        "total_turns": row[0],
+        "total_tool_calls": row[1],
+        "latency_ms": row[2],
+        "repaired_tool_calls": row[3],
+        "unscored_weight": row[4],
+    }

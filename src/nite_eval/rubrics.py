@@ -7,6 +7,27 @@ Each rubric maps a scoring dimension name to a ternary (1/3/5) description.
 # Standard rubrics used across the calibration and eval pipeline.
 # Keys match the dimension names in task scoring configs.
 JUDGE_RUBRICS: dict[str, str] = {
+    "no_hallucination": (
+        "Does every factual claim in the response appear in the tool results? "
+        "Score 1 if any figure, name, or measurement is invented or contradicts "
+        "the tool results. Score 3 if all claims are traceable but some are "
+        "imprecise or over-stated. Score 5 if every stated fact matches the tool "
+        "results exactly and uncertainty is acknowledged where the data is silent."
+    ),
+    "data_accuracy": (
+        "Do the numbers cited in the response match the tool results? Check each "
+        "figure individually. Score 1 if any number is fabricated or wrong. "
+        "Score 3 if the numbers are right but context or units are loose. "
+        "Score 5 if every figure is correct, correctly attributed, and correctly "
+        "interpreted."
+    ),
+    "data_threading": (
+        "Were values returned by one tool correctly carried into subsequent tool "
+        "calls and into the final answer? Score 1 if the response ignores earlier "
+        "results or substitutes different values. Score 3 if values are carried "
+        "through but with rounding or transcription slips. Score 5 if every value "
+        "flows through the chain intact and is used correctly in the conclusion."
+    ),
     "coverage": (
         "1 (Poor): Misses most aspects of the question\n"
         "3 (Acceptable): Covers most aspects adequately\n"

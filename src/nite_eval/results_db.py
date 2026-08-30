@@ -121,11 +121,30 @@ class ResultsDB:
         cursor = self._conn.cursor()
         cursor.executescript(SCHEMA_SQL)
 
+        self._add_missing_columns(cursor)
+
         # Check/set schema version
         cursor.execute("SELECT COUNT(*) FROM schema_version")
         if cursor.fetchone()[0] == 0:
             cursor.execute("INSERT INTO schema_version VALUES (?)", (SCHEMA_VERSION,))
         self._conn.commit()
+
+    # Columns added after the initial schema. SCHEMA_SQL only runs CREATE TABLE
+    # IF NOT EXISTS, so an existing results DB would silently never gain them.
+    ADDED_COLUMNS = (
+        ("task_results", "repaired_tool_calls", "INTEGER DEFAULT 0"),
+        # Fraction of a task's declared weight that had no implementation and
+        # was excluded from the average. A score means little without it: 0.86
+        # over 35% of the criteria is not the same claim as 0.86 over all of
+        # them.
+        ("task_results", "unscored_weight", "REAL DEFAULT 0"),
+    )
+
+    def _add_missing_columns(self, cursor: sqlite3.Cursor) -> None:
+        for table, column, decl in self.ADDED_COLUMNS:
+            existing = {r[1] for r in cursor.execute(f"PRAGMA table_info({table})")}
+            if column not in existing:
+                cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
     # --- Run management ---
 
@@ -206,6 +225,8 @@ class ResultsDB:
         reached_max_turns: bool,
         weighted_score: float,
         error: str | None = None,
+        repaired_tool_calls: int = 0,
+        unscored_weight: float = 0.0,
     ) -> None:
         """Save a completed task result (the checkpoint)."""
         status = "failed" if error else "completed"
@@ -213,7 +234,8 @@ class ResultsDB:
             "UPDATE task_results SET "
             "status = ?, finished_at = ?, final_response = ?, "
             "total_turns = ?, total_tool_calls = ?, total_latency_ms = ?, "
-            "reached_max_turns = ?, weighted_score = ?, error = ? "
+            "reached_max_turns = ?, weighted_score = ?, error = ?, "
+            "repaired_tool_calls = ?, unscored_weight = ? "
             "WHERE run_id = ? AND model_name = ? AND task_id = ?",
             (
                 status,
@@ -225,6 +247,8 @@ class ResultsDB:
                 int(reached_max_turns),
                 weighted_score,
                 error,
+                repaired_tool_calls,
+                unscored_weight,
                 run_id,
                 model_name,
                 task_id,

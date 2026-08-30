@@ -86,7 +86,15 @@ def score_checklist(
 ) -> float:
     """Score whether response text addresses checklist items.
 
-    Simple contains-based check. Returns fraction of criteria found.
+    DEPRECATED — not dispatched by the orchestrator. Use
+    `score_checklist_with_judge`, which asks the judge whether each criterion is
+    genuinely addressed.
+
+    This counts a criterion as met if ANY word longer than three characters from
+    it appears anywhere in the response, so "Addresses embedding strategy" is
+    satisfied by the word "strategy". Every checklist score in the results DB
+    from before 2026-08-30 sits at 0.75-1.0 for this reason. Retained only so
+    those historical scores remain reproducible.
     """
     if not criteria:
         return 1.0
@@ -100,6 +108,32 @@ def score_checklist(
             matched += 1
 
     return matched / len(criteria)
+
+
+def score_checklist_with_judge(
+    judge: JudgeClient | RoutedJudgeClient,
+    criteria: list[str],
+    task_description: str,
+    response_text: str,
+) -> tuple[float, dict]:
+    """Score a checklist by asking the judge which criteria are actually met.
+
+    Returns (fraction_met, details). On judge failure the caller is expected to
+    exclude the criterion rather than fall back to substring matching, which
+    would silently reintroduce the scoring it replaced.
+    """
+    if not criteria:
+        return 1.0, {"criteria": []}
+
+    met = judge.evaluate_checklist(criteria, task_description, response_text)
+    if isinstance(met, JudgeError):
+        return 0.0, {"error": met.error, "raw": met.raw_response}
+
+    return sum(met) / len(criteria), {
+        "criteria": criteria,
+        "met": met,
+        "unmet": [c for c, ok in zip(criteria, met, strict=False) if not ok],
+    }
 
 
 def score_contains_check(
@@ -118,6 +152,74 @@ def score_contains_check(
 def score_exact_match(actual: str, expected: str) -> float:
     """Binary score: 1.0 if exact match, 0.0 otherwise."""
     return 1.0 if actual.strip() == expected.strip() else 0.0
+
+
+def score_tool_args_match(
+    actual_calls: list[dict],
+    expected_sequence: list[dict],
+) -> float:
+    """Score whether calls carried the required argument values.
+
+    Each expected entry may carry `args_must_contain`: a mapping of argument
+    name to either a list of required substrings or a scalar that must match.
+    Returns the fraction of individual argument requirements satisfied, so a
+    call that gets two of three right scores 0.67 rather than 0.
+
+    Previously these criteria fell through to a `deterministic` branch that
+    returned 1.0 whenever the conversation did not error — free marks for the
+    model having not crashed.
+    """
+    requirements: list[tuple[str, str, object]] = []
+    for expected in expected_sequence:
+        name = expected.get("name", "")
+        for arg_name, required in (expected.get("args_must_contain") or {}).items():
+            for item in required if isinstance(required, list) else [required]:
+                requirements.append((name, arg_name, item))
+
+    if not requirements:
+        return 1.0
+
+    matched = 0
+    for tool_name, arg_name, required in requirements:
+        for call in actual_calls:
+            if call["name"] != tool_name:
+                continue
+            value = call.get("arguments", {}).get(arg_name)
+            if value is None:
+                continue
+            if isinstance(required, str) and required.lower() in str(value).lower():
+                matched += 1
+                break
+            if not isinstance(required, str) and value == required:
+                matched += 1
+                break
+
+    return matched / len(requirements)
+
+
+def score_tool_ordering(
+    actual_calls: list[dict],
+    ordering: list[list[str]],
+) -> float:
+    """Score whether tools were called in the required relative order.
+
+    `ordering` is a list of [before, after] pairs. Returns the fraction of
+    pairs where `before` was called and `after` followed it at least once.
+    Expresses "retried the search after refreshing credentials" without
+    demanding an exact global sequence.
+    """
+    if not ordering:
+        return 1.0
+
+    names = [c["name"] for c in actual_calls]
+    satisfied = 0
+    for before, after in ordering:
+        if before not in names:
+            continue
+        first_before = names.index(before)
+        if after in names[first_before + 1 :]:
+            satisfied += 1
+    return satisfied / len(ordering)
 
 
 def score_distractor_avoidance(
@@ -141,12 +243,18 @@ def score_with_judge(
     task_description: str,
     model_response: str,
     use_averaging: bool = True,
+    evidence: str = "",
 ) -> ScoreResult:
-    """Score using the judge model with optional 3x averaging."""
+    """Score using the judge model with optional 3x averaging.
+
+    `evidence` carries the tool results so criteria that ask whether the
+    response's facts match reality (no_hallucination, data_accuracy) can
+    actually be checked instead of guessed at.
+    """
     if use_averaging:
-        result = judge.evaluate_with_averaging(dimension, rubric, task_description, model_response)
+        result = judge.evaluate_with_averaging(dimension, rubric, task_description, model_response, evidence=evidence)
     else:
-        result = judge.evaluate(dimension, rubric, task_description, model_response)
+        result = judge.evaluate(dimension, rubric, task_description, model_response, evidence)
 
     if isinstance(result, JudgeError):
         logger.error("Judge scoring failed for %s: %s", dimension, result.error)
