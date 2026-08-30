@@ -18,6 +18,7 @@ never a bind mount, so a symlink in model output cannot reach host paths.
 
 from __future__ import annotations
 
+import json
 import logging
 import subprocess
 import uuid
@@ -342,19 +343,42 @@ class SandboxToolEnv:
 
     # --- MockToolEnv-compatible interface ---
 
+    @staticmethod
+    def _as_text(value: object) -> str:
+        """Coerce a model-supplied argument to text.
+
+        Tool arguments are whatever the model put in its JSON. A model writing a
+        config file may pass `content` as an object rather than a string, and
+        that object went straight into subprocess(input=...), which raised
+        'dict' object has no attribute 'encode' and killed the task. Structured
+        values are serialised as JSON, which is what the model meant by them.
+        """
+        if isinstance(value, str):
+            return value
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, indent=2)
+        if value is None:
+            return ""
+        return str(value)
+
     def call(self, tool_name: str, arguments: dict) -> dict:
         """Dispatch a tool call. Mirrors MockToolEnv.call's contract."""
         self.call_log.append({"name": tool_name, "arguments": arguments})
 
         try:
             if tool_name == "write_file":
-                return {"content": self.write_file(arguments.get("path", ""), arguments.get("content", ""))}
+                return {
+                    "content": self.write_file(
+                        self._as_text(arguments.get("path", "")),
+                        self._as_text(arguments.get("content", "")),
+                    )
+                }
             if tool_name == "read_file":
-                return {"content": self.read_file(arguments.get("path", ""))}
+                return {"content": self.read_file(self._as_text(arguments.get("path", "")))}
             if tool_name == "run_tests":
-                return {"content": self.run_tests(arguments.get("directory", ""))}
+                return {"content": self.run_tests(self._as_text(arguments.get("directory", "")))}
             if tool_name == "run_code":
-                result = self.exec(arguments.get("command", ""))
+                result = self.exec(self._as_text(arguments.get("command", "")))
                 return {
                     "content": {
                         "exit_code": result.exit_code,

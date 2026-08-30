@@ -272,3 +272,32 @@ def test_sandbox_is_removed_even_when_the_task_raises():
         sb.stop()
 
     assert _docker(["inspect", container_id], timeout=15).returncode != 0
+
+
+def test_structured_arguments_are_serialised_not_crashed_on():
+    """A model may pass `content` as an object rather than a string.
+
+    It did, during the six-model baseline: the dict went into
+    subprocess(input=...) and raised "'dict' object has no attribute 'encode'",
+    killing the task.
+    """
+    env = SandboxToolEnv(SandboxSpec(image="python:3.12-alpine"), container_id="fake")
+    captured = {}
+
+    def fake_write(path, content):
+        captured["path"], captured["content"] = path, content
+        return {"status": "written"}
+
+    env.write_file = fake_write  # type: ignore[method-assign]
+    env.call("write_file", {"path": "/a.json", "content": {"servers": [{"name": "notion"}]}})
+
+    assert isinstance(captured["content"], str)
+    assert '"name": "notion"' in captured["content"]
+
+
+def test_non_string_scalars_are_coerced():
+    env = SandboxToolEnv(SandboxSpec(image="python:3.12-alpine"), container_id="fake")
+    assert env._as_text(42) == "42"
+    assert env._as_text(None) == ""
+    assert env._as_text("already text") == "already text"
+    assert env._as_text(["a", "b"]).startswith("[")
