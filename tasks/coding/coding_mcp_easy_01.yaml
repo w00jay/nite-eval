@@ -146,7 +146,7 @@ environment:
   workdir: /app/mcpconfig
   # The workdir is a tmpfs at run time and shadows the image's contents, so the
   # vendored module skeleton is copied in once the mount exists.
-  setup_cmd: cp -a /skeleton/. /app/mcpconfig/
+  setup_cmd: cp -a /skeleton/. /app/mcpconfig/ && sed -i 's|^module .*|module mcpconfig|' /app/mcpconfig/go.mod
   test_cmd: go test ./... -v 2>&1
   language: go
   checks:

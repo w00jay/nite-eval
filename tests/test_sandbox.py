@@ -26,7 +26,7 @@ def test_spec_defaults_and_overrides():
     spec = SandboxSpec.from_task_yaml({"image": "golang:1.23-alpine"})
     assert spec is not None
     assert spec.workdir == "/workspace"
-    assert spec.memory == "1g"
+    assert spec.memory == "2g"  # sized for compiling, not just running
 
     spec = SandboxSpec.from_task_yaml(
         {"image": "node:20-alpine", "workdir": "/app", "test_cmd": "npm test", "cpus": 4, "command_timeout": 300}
@@ -162,3 +162,60 @@ def test_container_is_removed_on_exit():
 
     check = _docker(["inspect", container_id], timeout=15)
     assert check.returncode != 0, "container outlived the context manager"
+
+
+def test_network_defaults_to_none():
+    """Egress must be opt-in, never the default."""
+    spec = SandboxSpec.from_task_yaml({"image": "python:3.12-alpine"})
+    assert spec is not None
+    assert spec.network == "none"
+
+
+def test_network_can_be_enabled_per_task():
+    spec = SandboxSpec.from_task_yaml({"image": "python:3.12-alpine", "network": "bridge"})
+    assert spec is not None
+    assert spec.network == "bridge"
+
+
+@pytestmark_docker
+def test_orphaned_sandboxes_are_reapable():
+    """A killed process never runs stop(), leaving the container idling."""
+    from nite_eval.sandbox import SANDBOX_LABEL, _docker, reap_orphans
+
+    orphan = SandboxToolEnv(SandboxSpec(image="python:3.12-alpine"))
+    orphan.start()
+    container_id = orphan.container_id
+    assert container_id
+    # Simulate the process dying: never call stop().
+
+    removed = reap_orphans()
+    assert any(container_id.startswith(r) or r.startswith(container_id[:12]) for r in removed)
+    assert _docker(["inspect", container_id], timeout=15).returncode != 0
+
+    # Reaping only ever touches labelled containers.
+    listing = _docker(["ps", "--quiet", "--filter", f"label={SANDBOX_LABEL}=1"], timeout=15)
+    assert container_id[:12] not in listing.stdout
+
+
+def test_resource_limits_are_sized_for_compilation():
+    """256 PIDs and a 256m /tmp made `go test -race` fail as if it found a race.
+
+    The failure was "resource temporarily unavailable" from forking the vet
+    tool, and "no space left on device" writing the build cache — both
+    indistinguishable from a genuine race check failure in the score.
+    """
+    spec = SandboxSpec.from_task_yaml({"image": "golang:1.23"})
+    assert spec is not None
+    assert spec.pids >= 1024
+    assert spec.tmp_size == "2g"
+    assert spec.workspace_size == "1g"
+
+
+def test_resource_limits_are_overridable_per_task():
+    spec = SandboxSpec.from_task_yaml(
+        {"image": "golang:1.23", "pids": 2048, "tmp_size": "4g", "workspace_size": "2g", "memory": "4g"}
+    )
+    assert spec is not None
+    assert spec.pids == 2048
+    assert spec.tmp_size == "4g"
+    assert spec.memory == "4g"

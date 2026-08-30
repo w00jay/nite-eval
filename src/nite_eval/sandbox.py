@@ -22,17 +22,29 @@ import logging
 import subprocess
 import uuid
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
 logger = logging.getLogger(__name__)
 
 # Resource ceilings for model-generated code.
-DEFAULT_MEMORY = "1g"
+# Sized for compiling, not just running. `go test -race` forks a compiler and
+# a vet process per package and writes a large build cache; at 256 PIDs and a
+# 256m /tmp it failed with "resource temporarily unavailable" and "no space
+# left on device", which reads exactly like a failing race check.
+DEFAULT_MEMORY = "2g"
 DEFAULT_CPUS = "2"
-DEFAULT_PIDS = 256
+DEFAULT_PIDS = 1024
+DEFAULT_WORKSPACE_SIZE = "1g"
+DEFAULT_TMP_SIZE = "2g"
 DEFAULT_COMMAND_TIMEOUT = 120
 CONTAINER_START_TIMEOUT = 60
 MAX_OUTPUT_CHARS = 8000
+
+# Every sandbox carries this label so orphans can be found and removed. A
+# process killed mid-task (a CI timeout, Ctrl-C) never runs stop(), and the
+# container then idles indefinitely holding memory.
+SANDBOX_LABEL = "nite-eval-sandbox"
 
 
 class SandboxError(RuntimeError):
@@ -58,6 +70,14 @@ class SandboxSpec:
     memory: str = DEFAULT_MEMORY
     cpus: str = DEFAULT_CPUS
     command_timeout: int = DEFAULT_COMMAND_TIMEOUT
+    # Docker network mode. Defaults to "none": the sandbox runs model-generated
+    # code, and a test that reaches a live service is both an egress path and a
+    # source of failures that look like model regressions. Opt in per task only
+    # where a stub cannot test the same thing.
+    network: str = "none"
+    pids: int = DEFAULT_PIDS
+    workspace_size: str = DEFAULT_WORKSPACE_SIZE
+    tmp_size: str = DEFAULT_TMP_SIZE
 
     @classmethod
     def from_task_yaml(cls, data: dict | None) -> SandboxSpec | None:
@@ -69,6 +89,10 @@ class SandboxSpec:
             test_cmd=data.get("test_cmd", ""),
             setup_cmd=data.get("setup_cmd", ""),
             memory=data.get("memory", DEFAULT_MEMORY),
+            network=data.get("network", "none"),
+            pids=int(data.get("pids", DEFAULT_PIDS)),
+            workspace_size=data.get("workspace_size", DEFAULT_WORKSPACE_SIZE),
+            tmp_size=data.get("tmp_size", DEFAULT_TMP_SIZE),
             cpus=str(data.get("cpus", DEFAULT_CPUS)),
             command_timeout=int(data.get("command_timeout", DEFAULT_COMMAND_TIMEOUT)),
         )
@@ -97,6 +121,34 @@ def docker_available() -> bool:
         return False
 
 
+def reap_orphans(older_than_seconds: int = 0) -> list[str]:
+    """Remove sandbox containers left behind by an interrupted run.
+
+    Returns the ids removed. Only touches containers carrying SANDBOX_LABEL, so
+    it can never disturb anything else running on the host.
+    """
+    listing = _docker(["ps", "--quiet", "--filter", f"label={SANDBOX_LABEL}=1"], timeout=15)
+    if listing.returncode != 0:
+        return []
+
+    removed = []
+    for container_id in listing.stdout.split():
+        if older_than_seconds:
+            started = _docker(["inspect", "-f", "{{.State.StartedAt}}", container_id], timeout=15)
+            if started.returncode != 0:
+                continue
+            try:
+                began = datetime.fromisoformat(started.stdout.strip().replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            if (datetime.now(UTC) - began).total_seconds() < older_than_seconds:
+                continue
+        if _docker(["rm", "--force", container_id], timeout=30).returncode == 0:
+            removed.append(container_id)
+            logger.warning("Reaped orphaned sandbox %s", container_id[:12])
+    return removed
+
+
 @dataclass
 class SandboxToolEnv:
     """A running container the model writes files into and executes commands in."""
@@ -115,8 +167,10 @@ class SandboxToolEnv:
                 "--detach",
                 "--name",
                 name,
+                "--label",
+                f"{SANDBOX_LABEL}=1",
                 "--network",
-                "none",
+                self.spec.network,
                 "--memory",
                 self.spec.memory,
                 "--memory-swap",
@@ -124,12 +178,12 @@ class SandboxToolEnv:
                 "--cpus",
                 self.spec.cpus,
                 "--pids-limit",
-                str(DEFAULT_PIDS),
+                str(self.spec.pids),
                 "--read-only",
                 "--tmpfs",
-                f"{self.spec.workdir}:rw,exec,size=512m",
+                f"{self.spec.workdir}:rw,exec,size={self.spec.workspace_size}",
                 "--tmpfs",
-                "/tmp:rw,exec,size=256m",
+                f"/tmp:rw,exec,size={self.spec.tmp_size}",
                 "--security-opt",
                 "no-new-privileges",
                 "--cap-drop",
@@ -147,6 +201,13 @@ class SandboxToolEnv:
 
         self.container_id = result.stdout.strip()
         logger.info("Sandbox %s started from %s", self.container_id[:12], self.spec.image)
+        if self.spec.network != "none":
+            logger.warning(
+                "Sandbox %s has network access (%s) — model-generated code can reach the network, "
+                "and live-service failures will look like model regressions",
+                self.container_id[:12],
+                self.spec.network,
+            )
 
         if self.spec.setup_cmd:
             setup = self.exec(self.spec.setup_cmd)

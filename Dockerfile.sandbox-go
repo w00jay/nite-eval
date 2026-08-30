@@ -2,24 +2,26 @@
 #
 # The eval sandbox runs with --network none, so module downloads are impossible
 # at task time. This image pre-vendors the dependencies the Go coding tasks
-# need and stages a ready-to-build module skeleton at /skeleton.
+# need (yaml.v3, x/sync) and stages a ready-to-build module skeleton at
+# /skeleton. The module name is rewritten per task by setup_cmd.
 #
 # The skeleton cannot live at the task workdir: that path is a tmpfs mount at
 # run time, which would shadow anything baked into the image there. The task's
 # setup_cmd copies /skeleton into the workdir once the tmpfs is mounted.
 
-FROM golang:1.23-alpine
-
-RUN apk add --no-cache git
+# Debian rather than alpine: `go test -race` needs cgo and a C toolchain, and
+# the race detector on musl is unreliable even with gcc installed.
+FROM golang:1.23
 
 WORKDIR /skeleton
 
 # `go mod vendor` only vendors packages something imports, so a placeholder that
 # imports yaml.v3 has to exist while vendoring runs. It is removed afterwards;
 # vendor/ and vendor/modules.txt persist.
-RUN go mod init mcpconfig \
- && printf 'package config\n\nimport _ "gopkg.in/yaml.v3"\n' > placeholder.go \
+RUN go mod init sandbox \
+ && printf 'package sandbox\n\nimport (\n\t_ "golang.org/x/sync/errgroup"\n\t_ "gopkg.in/yaml.v3"\n)\n' > placeholder.go \
  && go get gopkg.in/yaml.v3@v3.0.1 \
+ && go get golang.org/x/sync@v0.10.0 \
  && go mod tidy \
  && go mod vendor \
  && go build ./... \
@@ -27,5 +29,4 @@ RUN go mod init mcpconfig \
 
 ENV GOFLAGS=-mod=vendor \
     GOPROXY=off \
-    GOCACHE=/tmp/gocache \
-    CGO_ENABLED=0
+    GOCACHE=/tmp/gocache

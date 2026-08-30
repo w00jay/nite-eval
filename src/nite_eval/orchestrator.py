@@ -33,7 +33,7 @@ from nite_eval.model_manager import check_health, warm_up_model
 from nite_eval.report import save_report  # noqa: TC001
 from nite_eval.results_db import ResultsDB
 from nite_eval.rubrics import get_rubric
-from nite_eval.sandbox import SandboxError, SandboxSpec, SandboxToolEnv
+from nite_eval.sandbox import SandboxError, SandboxSpec, SandboxToolEnv, docker_available, reap_orphans
 from nite_eval.scoring import (
     ScoreResult,
     aggregate_task_scores,
@@ -567,6 +567,13 @@ def main() -> None:
         for w in gpu_warnings:
             console.print(f"  [yellow]warning: {w}[/yellow]")
         console.print("[green]GPU placement OK[/green]")
+
+    # Clear sandboxes left by an interrupted previous run. A process killed
+    # mid-task never runs stop(), and the container then idles holding memory.
+    if docker_available():
+        orphans = reap_orphans()
+        if orphans:
+            console.print(f"[yellow]Reaped {len(orphans)} orphaned sandbox container(s)[/yellow]")
 
     # Load tasks
     tasks = load_tasks(dimension=args.dimension, difficulty=args.difficulty)
