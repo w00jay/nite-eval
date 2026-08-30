@@ -1,0 +1,22 @@
+# Python sandbox for nite-eval coding tasks.
+#
+# The eval sandbox runs with --network none, so packages must be installed at
+# build time. Tests stub HTTP with httpx.MockTransport rather than reaching a
+# live service, which keeps them hermetic and reproducible.
+
+FROM python:3.12-slim
+
+RUN pip install --no-cache-dir \
+        httpx==0.28.1 \
+        pytest==8.3.4 \
+        pytest-asyncio==0.25.0 \
+ && python -c "import httpx, pytest, pytest_asyncio"
+
+# pytest-asyncio needs asyncio_mode=auto for bare `async def test_` functions.
+# The ini is staged at /skeleton and copied into the workdir by setup_cmd: it
+# cannot live at /etc, because pytest would take that as the rootdir and then
+# collect nothing from the workspace (exit 5, "no tests ran").
+RUN mkdir -p /skeleton \
+ && printf '[pytest]\nasyncio_mode = auto\n' > /skeleton/pytest.ini
+
+ENV PYTHONDONTWRITEBYTECODE=1

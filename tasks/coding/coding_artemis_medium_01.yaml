@@ -48,14 +48,45 @@ tools:
           type: string
       required:
       - command
-user_message: 'Write a Python module that: (1) queries JPL Horizons API for Artemis II (COMMAND=''-1024'')
-  position vectors (EPHEM_TYPE=''VECTORS'', CENTER=''500@399'' for geocentric), (2) parses the text-inside-JSON
-  response format (Horizons returns a JSON wrapper around plain-text ephemeris data with $$SOE/$$EOE delimiters),
-  (3) extracts X, Y, Z position and VX, VY, VZ velocity for each time step, (4) implements a TTL-based
-  cache (5 min for recent data, 1 hour for historical), (5) exposes a clean get_position(time) function.
-  Use httpx for async HTTP. Include tests with a mock Horizons response.
+user_message: |-
+  Write a Python module that: (1) queries JPL Horizons API for Artemis II (COMMAND='-1024') position vectors (EPHEM_TYPE='VECTORS', CENTER='500@399' for geocentric), (2) parses the text-inside-JSON response format (Horizons returns a JSON wrapper around plain-text ephemeris data with $$SOE/$$EOE delimiters), (3) extracts X, Y, Z position and VX, VY, VZ velocity for each time step, (4) implements a TTL-based cache (5 min for recent data, 1 hour for historical), (5) exposes a clean get_position(time) function. Use httpx for async HTTP. Include tests with a mock Horizons response.
+  
+  Your code is imported and tested against this exact contract, so match it:
+  
+    File: horizons_client.py
+  
+    def parse_vectors(text: str) -> list[dict]
+        Parse the Horizons text block. Return one dict per time step, in file
+        order, with float keys: jdtdb, x, y, z, vx, vy, vz. Only the rows between
+        the $$SOE and $$EOE markers are data. Raise ValueError if the markers are
+        missing or no rows parse.
+  
+    class HorizonsError(Exception)
+        Raised for any upstream failure (non-2xx, malformed payload).
+  
+    class HorizonsClient:
+        def __init__(self, client: httpx.AsyncClient, *,
+                     ttl_recent: float = 300.0,
+                     ttl_historical: float = 3600.0,
+                     now: Callable[[], float] = time.monotonic) -> None
+  
+        async def get_position(self, jdtdb: float) -> dict
+            Return {"x","y","z","vx","vy","vz"} floats for jdtdb. If jdtdb falls
+            between two fetched steps, linearly interpolate. Cache the fetched
+            ephemeris; a second call inside the TTL must not issue another HTTP
+            request. Call `now()` for all time checks — never time.time() directly
+            — so tests can control expiry.
+  
+        request_count: int
+            Number of HTTP requests actually issued. Tests read this.
+  
+  The Horizons response is JSON of the form {"result": "<text>"} where the text
+  contains the $$SOE/$$EOE block.
+  
+  httpx, pytest and pytest-asyncio are installed. The environment has no network:
+  tests inject an httpx.AsyncClient built on httpx.MockTransport, so do not open
+  your own client or call a live URL. Write your files under /app/artemis.
 
-  '
 test_suite:
   language: python
   tests:
@@ -75,7 +106,7 @@ scoring:
     method: automated
   parsing_correctness:
     weight: 0.25
-    method: deterministic
+    method: automated
     criteria: Correctly handles $$SOE/$$EOE format, whitespace, multi-line records
   code_quality:
     weight: 0.2
@@ -118,3 +149,14 @@ mock_responses:
 # The global 4096 budget truncated mid-string, which the runner used to accept
 # as a final answer (see audit: 56% of coding responses leaked <tool_call>).
 max_tokens: 16384
+
+environment:
+  image: nite-eval-python:3.12
+  workdir: /app/artemis
+  setup_cmd: cp -a /skeleton/. /app/artemis/
+  # -p no:cacheprovider: the rootfs is read-only and pytest's cache writes warn.
+  test_cmd: python -m pytest -q -p no:cacheprovider 2>&1
+  language: python
+  command_timeout: 180
+  checks:
+    parsing_correctness: python -m pytest test_hidden_horizons.py -k parse -q -p no:cacheprovider
