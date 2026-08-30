@@ -19,11 +19,19 @@ from nite_eval.scoring import compute_composite
 
 logger = logging.getLogger(__name__)
 
+# Composite gaps smaller than this are inside judge variance. The target is
+# essentially deterministic at temperature 0 — the same task reproduces to
+# identical scores — so the variance that remains is the judge's, which is why
+# judge averaging is the lever and repeat target runs are not.
+MIN_DETECTABLE_DIFFERENCE = 0.05
+
 
 def generate_report(
     db: ResultsDB,
     run_id: str,
     weights: dict[str, float] | None = None,
+    mdd: float = MIN_DETECTABLE_DIFFERENCE,
+    judge_samples: int = 3,
 ) -> str:
     """Generate a Markdown report for a run."""
     lines: list[str] = []
@@ -66,11 +74,33 @@ def generate_report(
         )
     lines.append("")
 
-    # Rank models
+    # Rank models, and say which places in that ranking are not real.
     ranked = sorted(model_composites.items(), key=lambda x: x[1], reverse=True)
     if len(ranked) > 1:
         lines.append("**Ranking:** " + " > ".join(f"{m} ({s:.2f})" for m, s in ranked))
         lines.append("")
+
+        indistinguishable = [
+            (a, b, abs(sa - sb)) for (a, sa), (b, sb) in zip(ranked, ranked[1:], strict=False) if abs(sa - sb) < mdd
+        ]
+        lines.append("### Resolution")
+        lines.append("")
+        lines.append(
+            f"{total_tasks} tasks, one sample per task, judge scores averaged over "
+            f"{judge_samples}. Composite differences below **{mdd:.2f}** are inside "
+            "judge variance and carry no information — the ordering above is "
+            "directional, not a measurement."
+        )
+        lines.append("")
+        if indistinguishable:
+            lines.append("Adjacent pairs that cannot be separated by this run:")
+            lines.append("")
+            for a, b, gap in indistinguishable:
+                lines.append(f"- **{a}** and **{b}** differ by {gap:.3f} — treat as tied")
+            lines.append("")
+        else:
+            lines.append(f"Every adjacent pair differs by more than {mdd:.2f}.")
+            lines.append("")
 
     # Per-task breakdown
     lines.append("## Per-Task Results")
@@ -211,9 +241,11 @@ def save_report(
     run_id: str,
     output_dir: Path,
     weights: dict[str, float] | None = None,
+    mdd: float = MIN_DETECTABLE_DIFFERENCE,
+    judge_samples: int = 3,
 ) -> Path:
     """Generate and save a report to disk."""
-    report = generate_report(db, run_id, weights)
+    report = generate_report(db, run_id, weights, mdd=mdd, judge_samples=judge_samples)
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / f"{run_id}.md"
     path.write_text(report)

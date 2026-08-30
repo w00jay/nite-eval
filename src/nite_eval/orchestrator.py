@@ -687,7 +687,14 @@ def main() -> None:
         print_results(db, run_id, models, weights)
 
         # Generate Markdown report
-        report_path = save_report(db, run_id, results_dir, weights)
+        report_path = save_report(
+            db,
+            run_id,
+            results_dir,
+            weights,
+            mdd=float(cfg.get("scoring", {}).get("min_detectable_difference", 0.05)),
+            judge_samples=3 if eval_cfg.get("judge_averaging", True) else 1,
+        )
         console.print(f"\nReport saved to [bold]{report_path}[/bold]")
 
     except KeyboardInterrupt:

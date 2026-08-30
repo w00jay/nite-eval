@@ -98,3 +98,56 @@ def test_no_partial_section_when_everything_was_scored():
         report = generate_report(db, "run-001")
 
     assert "Partially Scored Dimensions" not in report
+
+
+def _db_with_models(scores: dict[str, float]) -> ResultsDB:
+    db = ResultsDB(tempfile.mktemp(suffix=".db"))
+    models = list(scores)
+    db.create_run("run-001", models)
+    db.register_tasks("run-001", models, [("t1", "research", "easy")])
+    for model, score in scores.items():
+        db.mark_task_running("run-001", model, "t1")
+        db.save_task_result(
+            run_id="run-001",
+            model_name=model,
+            task_id="t1",
+            final_response="x",
+            total_turns=1,
+            total_tool_calls=1,
+            total_latency_ms=1.0,
+            reached_max_turns=False,
+            weighted_score=score,
+        )
+    return db
+
+
+def test_close_models_are_reported_as_tied():
+    """A ranking that cannot be resolved must not read as a measurement."""
+    with _db_with_models({"a": 0.90, "b": 0.88}) as db:
+        report = generate_report(db, "run-001")
+
+    assert "### Resolution" in report
+    assert "directional, not a measurement" in report
+    assert "**a** and **b** differ by 0.020 — treat as tied" in report
+
+
+def test_separated_models_are_not_flagged():
+    with _db_with_models({"a": 0.90, "b": 0.60}) as db:
+        report = generate_report(db, "run-001")
+
+    assert "treat as tied" not in report
+    assert "Every adjacent pair differs by more than 0.05" in report
+
+
+def test_the_threshold_is_configurable():
+    with _db_with_models({"a": 0.90, "b": 0.60}) as db:
+        report = generate_report(db, "run-001", mdd=0.5)
+
+    assert "treat as tied" in report, "a wider threshold should tie a 0.30 gap"
+
+
+def test_a_single_model_run_has_no_resolution_section():
+    with _db_with_models({"a": 0.90}) as db:
+        report = generate_report(db, "run-001")
+
+    assert "### Resolution" not in report

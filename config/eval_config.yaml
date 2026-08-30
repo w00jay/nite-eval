@@ -80,6 +80,10 @@ evaluation:
   warm_up: true  # Send a warm-up prompt after each model swap
 
 scoring:
+  # Composite gaps below this are inside judge variance and are reported as
+  # ties. 15 tasks at one sample each does not resolve finer than this; raising
+  # the task count or the judge sample count is what would lower it.
+  min_detectable_difference: 0.05
   dimension_weights:
     research: 0.25
     planning: 0.25
