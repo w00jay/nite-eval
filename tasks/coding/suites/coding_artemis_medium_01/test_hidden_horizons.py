@@ -16,11 +16,23 @@ $$SOE
 2460600.500000000 = A.D. 2024-Sep-15 00:00:00.0000 TDB
  X = 1.000000000000000E+05 Y = 2.000000000000000E+05 Z = 3.000000000000000E+05
  VX= 1.000000000000000E+00 VY= 2.000000000000000E+00 VZ= 3.000000000000000E+00
+ LT= 9.100000000000000E-01 RG= 3.741657386773941E+05 RR= 2.100000000000000E-01
 2460601.500000000 = A.D. 2024-Sep-16 00:00:00.0000 TDB
  X = 3.000000000000000E+05 Y = 4.000000000000000E+05 Z = 5.000000000000000E+05
  VX= 3.000000000000000E+00 VY= 4.000000000000000E+00 VZ= 5.000000000000000E+00
+ LT= 1.910000000000000E+00 RG= 7.071067811865476E+05 RR= 4.100000000000000E-01
 $$EOE
 *******************************************************************************
+"""
+
+# Real Horizons writes negative values hard against the '=' with no space.
+EPHEM_NEGATIVE = """\
+$$SOE
+2460600.500000000 = A.D. 2024-Sep-15 00:00:00.0000 TDB
+ X =-1.500000000000000E+05 Y = 2.500000000000000E+05 Z =-3.500000000000000E+04
+ VX=-1.500000000000000E+00 VY= 2.500000000000000E+00 VZ=-3.500000000000000E-01
+ LT= 1.000000000000000E+00 RG= 1.000000000000000E+05 RR= 1.000000000000000E-01
+$$EOE
 """
 
 
@@ -132,3 +144,21 @@ async def test_quarter_point_is_linearly_interpolated():
     pos = await client.get_position(2460600.75)
     assert pos["x"] == pytest.approx(1.5e5)
     assert pos["vz"] == pytest.approx(3.5)
+
+
+def test_parse_ignores_the_light_time_line():
+    """Real Horizons emits LT/RG/RR, which this module does not need."""
+    rows = parse_vectors(EPHEM)
+    assert len(rows) == 2
+    assert set(rows[0]) >= {"jdtdb", "x", "y", "z", "vx", "vy", "vz"}
+    # Range must not be mistaken for a coordinate.
+    assert rows[0]["x"] == pytest.approx(1.0e5)
+
+
+def test_parse_handles_negative_values_without_a_space():
+    rows = parse_vectors(EPHEM_NEGATIVE)
+    assert len(rows) == 1
+    assert rows[0]["x"] == pytest.approx(-1.5e5)
+    assert rows[0]["z"] == pytest.approx(-3.5e4)
+    assert rows[0]["vx"] == pytest.approx(-1.5)
+    assert rows[0]["vz"] == pytest.approx(-0.35)

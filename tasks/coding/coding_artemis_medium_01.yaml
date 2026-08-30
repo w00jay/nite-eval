@@ -51,6 +51,25 @@ tools:
 user_message: |-
   Write a Python module that: (1) queries JPL Horizons API for Artemis II (COMMAND='-1024') position vectors (EPHEM_TYPE='VECTORS', CENTER='500@399' for geocentric), (2) parses the text-inside-JSON response format (Horizons returns a JSON wrapper around plain-text ephemeris data with $$SOE/$$EOE delimiters), (3) extracts X, Y, Z position and VX, VY, VZ velocity for each time step, (4) implements a TTL-based cache (5 min for recent data, 1 hour for historical), (5) exposes a clean get_position(time) function. Use httpx for async HTTP. Include tests with a mock Horizons response.
   
+  The Horizons response is JSON of the form {"result": "<text>"}. The text uses
+  this exact layout — one epoch line followed by labelled vector lines, repeated
+  per time step, between the $$SOE and $$EOE markers:
+  
+    $$SOE
+    2460600.500000000 = A.D. 2024-Sep-15 00:00:00.0000 TDB
+     X = 1.234567890123456E+05 Y =-2.345678901234567E+05 Z = 3.456789012345678E+04
+     VX=-1.234567890123456E+00 VY= 2.345678901234567E+00 VZ= 3.456789012345678E-01
+     LT= 1.234567890123456E+00 RG= 3.456789012345678E+05 RR= 1.234567890123456E-01
+    2460601.500000000 = A.D. 2024-Sep-16 00:00:00.0000 TDB
+     X = 2.234567890123456E+05 Y =-1.345678901234567E+05 Z = 4.456789012345678E+04
+     VX=-2.234567890123456E+00 VY= 1.345678901234567E+00 VZ= 4.456789012345678E-01
+     LT= 2.234567890123456E+00 RG= 4.456789012345678E+05 RR= 2.234567890123456E-01
+    $$EOE
+  
+  Note the value signs may butt directly against the `=` with no space, and the
+  LT/RG/RR line carries light-time, range and range-rate, which this module does
+  not need.
+  
   Your code is imported and tested against this exact contract, so match it:
   
     File: horizons_client.py
