@@ -193,14 +193,14 @@ scoring:
       '
   correct_fix:
     weight: 0.25
-    method: deterministic
+    method: tool_args_match
     criteria: 'Calls refresh_credentials with auth_type=''oauth2'' (not api_key or bearer). Does NOT call
       restart_server (wrong fix for an auth issue).
 
       '
   task_completion:
     weight: 0.25
-    method: deterministic
+    method: tool_ordering
     criteria: Successfully retries the Notion search after credential refresh and returns the results
   communication:
     weight: 0.2
@@ -211,3 +211,6 @@ scoring:
       '
 max_turns: 12
 timeout_seconds: 1200
+
+expected_tool_ordering:
+  - [refresh_credentials, call_mcp_tool]

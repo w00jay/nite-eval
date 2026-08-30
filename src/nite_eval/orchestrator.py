@@ -13,6 +13,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 from datetime import UTC, datetime
@@ -37,8 +38,11 @@ from nite_eval.scoring import (
     compute_composite,
     score_checklist,
     score_contains_check,
+    score_distractor_avoidance,
     score_sequence_match,
     score_subset_match,
+    score_tool_args_match,
+    score_tool_ordering,
     score_with_judge,
 )
 from nite_eval.task_loader import TaskDefinition, load_tasks
@@ -47,6 +51,11 @@ logger = logging.getLogger(__name__)
 console = Console()
 
 DEFAULT_CONFIG = "config/eval_config.yaml"
+
+# Criteria that ask whether the response's facts match what the tools returned.
+# These get the tool results appended to the judge prompt; every other criterion
+# is about the response itself and does not need them.
+EVIDENCE_DIMENSIONS = frozenset({"no_hallucination", "data_accuracy", "data_threading"})
 
 
 def load_config(path: str) -> dict:
@@ -75,6 +84,17 @@ def score_task(
         for tr in turn.tool_responses:
             actual_calls.append({"name": tr["name"], "arguments": tr.get("arguments", {})})
 
+    # Ground truth for fact-checking criteria. The judge otherwise sees only the
+    # prompt and the final answer, so "do the cited numbers match the data" was
+    # unanswerable and the criterion fell through to a free 1.0.
+    evidence_lines = []
+    for turn in conv.turns:
+        for tr in turn.tool_responses:
+            args = json.dumps(tr.get("arguments", {}))
+            result = json.dumps(tr.get("result", {}))
+            evidence_lines.append(f"{tr['name']}({args}) -> {result}")
+    evidence = "\n".join(evidence_lines)
+
     for dim_name, dim_cfg in task.scoring.items():
         method = dim_cfg.get("method", "")
         weight = dim_cfg.get("weight", 0.0)
@@ -89,6 +109,7 @@ def score_task(
                 task_description=task.user_message,
                 model_response=conv.final_response,
                 use_averaging=False,
+                evidence=evidence if dim_name in EVIDENCE_DIMENSIONS else "",
             )
             sr.weight = weight
             scores.append(sr)
@@ -143,12 +164,8 @@ def score_task(
                 )
             )
 
-        elif method in ("deterministic", "partial_match", "exact_match"):
-            # These need task-specific logic; score based on tool call presence for now
-            if task.expected_tools_called:
-                raw = score_subset_match(actual_calls, task.expected_tools_called)
-            else:
-                raw = 1.0 if not conv.error else 0.0
+        elif method == "tool_args_match":
+            raw = score_tool_args_match(actual_calls, task.expected_tool_sequence)
             scores.append(
                 ScoreResult(
                     dimension=dim_name,
@@ -159,15 +176,59 @@ def score_task(
                 )
             )
 
-        elif method == "automated":
-            # Test suite scoring — placeholder until coding eval is wired
+        elif method == "tool_absence":
+            forbidden = criteria if isinstance(criteria, list) else task.distractor_tools
+            raw = score_distractor_avoidance(actual_calls, forbidden)
+            scores.append(
+                ScoreResult(
+                    dimension=dim_name,
+                    method=method,
+                    score=raw,
+                    weight=weight,
+                    details={"forbidden": forbidden},
+                )
+            )
+
+        elif method == "tool_ordering":
+            raw = score_tool_ordering(actual_calls, task.expected_tool_ordering)
+            scores.append(
+                ScoreResult(
+                    dimension=dim_name,
+                    method=method,
+                    score=raw,
+                    weight=weight,
+                    details={"ordering": task.expected_tool_ordering},
+                )
+            )
+
+        elif method in ("deterministic", "partial_match", "exact_match", "automated"):
+            # No implementation exists for these. They used to be faked:
+            # `deterministic` returned 1.0 whenever the conversation did not
+            # error (free marks for not crashing), or re-ran the same
+            # subset_match as the task's own tool_coverage dimension — the
+            # identical measurement counted two or three times. `automated`
+            # returned a hardcoded 0.0 at 40-70% of each coding task's weight.
+            #
+            # An unmeasurable criterion is excluded from the weighted average
+            # rather than scored, so a task's number reflects only what was
+            # actually measured. weight=0 removes it from aggregation.
+            logger.warning(
+                "Unscored criterion %s/%s (method=%s) — excluded from weighting",
+                task.id,
+                dim_name,
+                method,
+            )
             scores.append(
                 ScoreResult(
                     dimension=dim_name,
                     method=method,
                     score=0.0,
-                    weight=weight,
-                    details={"note": "automated scoring not yet implemented"},
+                    weight=0.0,
+                    details={
+                        "unscored": True,
+                        "declared_weight": weight,
+                        "note": f"no implementation for method '{method}'",
+                    },
                 )
             )
 

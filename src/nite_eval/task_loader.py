@@ -42,6 +42,10 @@ class TaskDefinition:
     expected_tool_sequence: list[dict[str, Any]] = field(default_factory=list)
     expected_tools_called: list[str] = field(default_factory=list)
     expected_tool_sequence_flexible: bool = False
+    # Tools the model should NOT call, for `tool_absence` scoring.
+    distractor_tools: list[str] = field(default_factory=list)
+    # [before, after] pairs for `tool_ordering` scoring.
+    expected_tool_ordering: list[list[str]] = field(default_factory=list)
 
     @property
     def judge_dimensions(self) -> list[str]:
@@ -64,6 +68,9 @@ class TaskDefinition:
                 "exact_match",
                 "partial_match",
                 "automated",
+                "tool_args_match",
+                "tool_absence",
+                "tool_ordering",
             )
         ]
 
@@ -92,6 +99,8 @@ def load_task(path: Path) -> TaskDefinition:
         expected_tool_sequence=data.get("expected_tool_sequence", []),
         expected_tools_called=data.get("expected_tools_called", []),
         expected_tool_sequence_flexible=data.get("expected_tool_sequence_flexible", False),
+        distractor_tools=data.get("distractor_tools", []),
+        expected_tool_ordering=data.get("expected_tool_ordering", []),
     )
 
 

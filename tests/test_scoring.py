@@ -124,3 +124,89 @@ def test_composite_custom_weights():
     composite = compute_composite(dims, weights)
     expected = (0.8 * 0.3 + 0.4 * 0.7) / 1.0
     assert abs(composite - expected) < 0.01
+
+
+# --- Wave 2: scorers that replaced the free-1.0 deterministic fallback ---
+
+
+def test_tool_args_match_scores_partial_credit():
+    from nite_eval.scoring import score_tool_args_match
+
+    calls = [
+        {"name": "capture_thought", "arguments": {"content": "autoresearch and latency", "type": "idea"}},
+    ]
+    expected = [
+        {
+            "name": "capture_thought",
+            "args_must_contain": {"content": ["autoresearch", "mcp gateway", "latency"], "type": "idea"},
+        }
+    ]
+    # 3 of 4 requirements met (content: autoresearch + latency, type: idea; missing "mcp gateway")
+    assert score_tool_args_match(calls, expected) == 0.75
+
+
+def test_tool_args_match_zero_when_tool_never_called():
+    from nite_eval.scoring import score_tool_args_match
+
+    expected = [{"name": "capture_thought", "args_must_contain": {"content": ["x"]}}]
+    assert score_tool_args_match([], expected) == 0.0
+
+
+def test_tool_absence_penalises_calling_a_distractor():
+    from nite_eval.scoring import score_distractor_avoidance
+
+    clean = [{"name": "search_thoughts", "arguments": {}}]
+    dirty = [{"name": "send_email", "arguments": {}}]
+    assert score_distractor_avoidance(clean, ["send_email"]) == 1.0
+    assert score_distractor_avoidance(dirty, ["send_email"]) == 0.0
+
+
+def test_tool_ordering_requires_after_to_follow_before():
+    from nite_eval.scoring import score_tool_ordering
+
+    ordering = [["refresh_credentials", "call_mcp_tool"]]
+    good = [
+        {"name": "call_mcp_tool", "arguments": {}},
+        {"name": "refresh_credentials", "arguments": {}},
+        {"name": "call_mcp_tool", "arguments": {}},
+    ]
+    # Called the tool, refreshed, but never retried afterwards.
+    bad = [
+        {"name": "call_mcp_tool", "arguments": {}},
+        {"name": "refresh_credentials", "arguments": {}},
+    ]
+    assert score_tool_ordering(good, ordering) == 1.0
+    assert score_tool_ordering(bad, ordering) == 0.0
+
+
+def test_judge_prompt_includes_tool_results_when_evidence_given():
+    """Fact-checking criteria need the tool results as ground truth."""
+    from nite_eval.judge import JudgeClient
+
+    client = JudgeClient.__new__(JudgeClient)
+    client.MAX_RESPONSE_CHARS = 10000
+    prompt = JudgeClient._build_prompt(
+        client,
+        dimension="no_hallucination",
+        rubric="check facts",
+        task_description="analyse NVDA",
+        model_response="RSI is 62",
+        evidence='get_technical_indicators({}) -> {"rsi": 62}',
+    )
+    assert "Tool Results (ground truth)" in prompt
+    assert '"rsi": 62' in prompt
+
+
+def test_judge_prompt_omits_evidence_section_when_not_supplied():
+    from nite_eval.judge import JudgeClient
+
+    client = JudgeClient.__new__(JudgeClient)
+    client.MAX_RESPONSE_CHARS = 10000
+    prompt = JudgeClient._build_prompt(
+        client,
+        dimension="code_quality",
+        rubric="rate it",
+        task_description="write a parser",
+        model_response="here is code",
+    )
+    assert "Tool Results" not in prompt

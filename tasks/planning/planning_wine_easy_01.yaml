@@ -129,7 +129,7 @@ mock_responses:
 scoring:
   dependency_correctness:
     weight: 0.3
-    method: deterministic
+    method: judge_rubric
     criteria: 'Schema must come before edge functions. Auth must come before any user-scoped features.
       Scan-label must come before consume flow.
 

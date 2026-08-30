@@ -136,7 +136,7 @@ scoring:
       '
   dependency_correctness:
     weight: 0.25
-    method: deterministic
+    method: judge_rubric
     criteria: 'Proxy layer must exist before auth injection. Auth injection before telemetry. Client migration
       after gateway is stable.
 

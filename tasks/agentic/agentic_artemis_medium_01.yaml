@@ -144,7 +144,7 @@ scoring:
     criteria: All four tools called with correct argument chaining
   data_threading:
     weight: 0.3
-    method: deterministic
+    method: judge_rubric
     criteria: 'Observer lat/lon from get_observer_location correctly passed to get_celestial_positions
       and calculate_visibility. Spacecraft RA/DEC correctly passed to calculate_visibility.
 
@@ -158,7 +158,7 @@ scoring:
       '
   no_hallucination:
     weight: 0.15
-    method: deterministic
+    method: judge_rubric
     criteria: All stated facts (magnitude, position, timing) match mock data
 max_turns: 10
 timeout_seconds: 900

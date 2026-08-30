@@ -301,16 +301,19 @@ scoring:
       '
   data_accuracy:
     weight: 0.15
-    method: deterministic
+    method: judge_rubric
     criteria: 'All numbers cited (RSI, price, ATR, revenue growth) match mock data. No hallucinated statistics.
 
       '
   distractor_handling:
     weight: 0.15
-    method: deterministic
+    method: tool_absence
     criteria: 'Either did not call social_media_sentiment (preferred — low signal for institutional-quality
       analysis) or appropriately discounted it. Did NOT weight Reddit sentiment as a primary signal.
 
       '
 max_turns: 16
 timeout_seconds: 1200
+
+distractor_tools:
+  - social_media_sentiment

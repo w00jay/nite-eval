@@ -134,9 +134,10 @@ class JudgeClient:
         rubric: str,
         task_description: str,
         model_response: str,
+        evidence: str = "",
     ) -> JudgeResult | JudgeError:
         """Send a single evaluation request to the judge."""
-        prompt = self._build_prompt(dimension, rubric, task_description, model_response)
+        prompt = self._build_prompt(dimension, rubric, task_description, model_response, evidence)
         return self._call(prompt)
 
     def evaluate_with_averaging(
@@ -146,13 +147,14 @@ class JudgeClient:
         task_description: str,
         model_response: str,
         n_runs: int = 3,
+        evidence: str = "",
     ) -> JudgeResult | JudgeError:
         """Run evaluation n times and average scores for variance reduction."""
         results: list[JudgeResult] = []
         errors: list[JudgeError] = []
 
         for i in range(n_runs):
-            result = self.evaluate(dimension, rubric, task_description, model_response)
+            result = self.evaluate(dimension, rubric, task_description, model_response, evidence)
             if isinstance(result, JudgeError):
                 errors.append(result)
                 logger.warning("Judge run %d/%d failed: %s", i + 1, n_runs, result.error)
@@ -186,11 +188,28 @@ class JudgeClient:
         rubric: str,
         task_description: str,
         model_response: str,
+        evidence: str = "",
     ) -> str:
         # Truncate long responses to fit judge context window
         if len(model_response) > self.MAX_RESPONSE_CHARS:
             model_response = (
                 model_response[: self.MAX_RESPONSE_CHARS] + "\n\n[... response truncated for evaluation ...]"
+            )
+
+        # Criteria like no_hallucination and data_accuracy ask whether the
+        # response's facts match what the tools actually returned. Without the
+        # tool results the judge can only guess, so those criteria were
+        # unjudgeable and previously fell through to a free 1.0.
+        evidence_block = ""
+        if evidence:
+            if len(evidence) > self.MAX_RESPONSE_CHARS:
+                evidence = evidence[: self.MAX_RESPONSE_CHARS] + "\n\n[... evidence truncated ...]"
+            evidence_block = (
+                "\n## Tool Results (ground truth)\n"
+                "These are the actual values the tools returned. Any figure in the\n"
+                "response that contradicts these, or that appears nowhere in them,\n"
+                "is fabricated.\n\n"
+                f"{evidence}\n"
             )
 
         return f"""You are a strict evaluator scoring "{dimension}" on a 3-point scale.
@@ -210,7 +229,7 @@ You MUST pick exactly 1, 3, or 5. No other scores.
 
 ## Task
 {task_description}
-
+{evidence_block}
 ## Response to Evaluate
 {model_response}
 
@@ -330,11 +349,12 @@ class RoutedJudgeClient:
         rubric: str,
         task_description: str,
         model_response: str,
+        evidence: str = "",
     ) -> JudgeResult | JudgeError:
         """Route to the best judge for this dimension."""
         judge = self._select(dimension)
         logger.debug("Routing %s → %s", dimension, judge.model)
-        return judge.evaluate(dimension, rubric, task_description, model_response)
+        return judge.evaluate(dimension, rubric, task_description, model_response, evidence)
 
     def evaluate_with_averaging(
         self,
@@ -343,11 +363,12 @@ class RoutedJudgeClient:
         task_description: str,
         model_response: str,
         n_runs: int = 3,
+        evidence: str = "",
     ) -> JudgeResult | JudgeError:
         """Route to the best judge for this dimension, with variance reduction."""
         judge = self._select(dimension)
         logger.debug("Routing %s → %s (n=%d)", dimension, judge.model, n_runs)
-        return judge.evaluate_with_averaging(dimension, rubric, task_description, model_response, n_runs)
+        return judge.evaluate_with_averaging(dimension, rubric, task_description, model_response, n_runs, evidence)
 
     def close(self) -> None:
         self._flow.close()
