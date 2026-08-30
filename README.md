@@ -266,6 +266,41 @@ the call, and records the count in `task_results.repaired_tool_calls`. Reports
 include a per-model repair rate. A high rate is a model-quality signal — see
 `CLAUDE.md` for the qwen3.8 case (34% of coding tool calls).
 
+## Known limitations
+
+Deliberate trade-offs, not bugs. Each is a thing a number from this harness does
+not tell you.
+
+**Coding tasks state an API contract.** A hidden test suite has to compile
+against something, so each coding prompt specifies module, package, types and
+signatures. That removes API-design freedom: a model is measured on implementing
+a stated interface, not on choosing a good one. Standard for benchmarks of this
+shape, but it makes the coding dimension easier than the prose of the task alone
+suggests.
+
+**Conversation history is edited.** Tool calls over 1500 characters are replaced
+in history by a note saying what was called. Without it, a task writing sixteen
+files exhausts the context — each file body otherwise appears twice, as the turn
+that emitted it and again as history. The consequence is that a model wanting to
+re-read its own earlier output must call `read_file`; it cannot scroll back. That
+is closer to how agent harnesses actually behave, but it is a behavioural
+difference between this harness and a plain chat loop.
+
+**Nothing before 2026-08-30 is comparable.** The harness scored failures as
+answers: truncated generations judged as complete, `automated` criteria hardcoded
+to `0.0`, `deterministic` criteria returning a free `1.0`, checklists matching on
+single keywords, a judge prompt capped at 1/3/5. Old runs remain in the database
+for provenance. They are not a baseline.
+
+**One sample per task.** 15 tasks, each run once, judge scores averaged over
+three. Composite gaps under 0.05 are inside judge variance; reports say so per
+run. The target is essentially deterministic at `temperature: 0`, so repeat runs
+of the model buy nothing — more tasks or more judge samples are what would
+sharpen this.
+
+**The scheduled path is unverified.** The k8s manifests account for GPU checks
+and sandbox availability, but have not been deployed or run.
+
 ## K8s deployment
 
 For unattended operation on a single-node k3s homelab, the same pipeline runs as a CronJob. Three container images (`nite-eval-orchestrator`, `nite-eval-judge`, `nite-eval-target`) plus manifests in [`k8s/base/`](k8s/base/) reproduce the bare-metal layout: judges as long-running Deployments on the P40, target llama-swap as a Deployment on the 3090, orchestrator as a nightly Job. SQLite checkpoints persist on a PVC so a mid-run pod kill resumes cleanly.
