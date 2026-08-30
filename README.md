@@ -209,6 +209,17 @@ Previously all four were silent: the fragment became the "final answer" and a
 judge scored it. Query them with `SELECT error FROM task_results WHERE error IS
 NOT NULL`.
 
+### Unmeasurable criteria are excluded, not faked
+
+A scoring criterion with no implementation is dropped from the weighted average
+rather than scored 0 or 1. `task_results.unscored_weight` records the fraction
+of a task's declared weight that was excluded, and reports carry an `Unscored`
+column plus a "Partially Scored Dimensions" section.
+
+This matters when reading a score: 0.86 over 35% of a task's criteria is a
+narrower claim than 0.86 over all of them, not a better result. Coding tasks
+currently exclude 40-70% of their weight pending real test execution.
+
 ### Malformed tool calls are repaired and counted
 
 Some models emit structurally broken tool-call JSON. Where the defect is

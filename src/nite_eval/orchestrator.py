@@ -72,10 +72,13 @@ def score_task(
     conv: ConversationResult,
     judge: RoutedJudgeClient,
     judge_averaging: bool = True,
-) -> tuple[list[ScoreResult], float]:
+) -> tuple[list[ScoreResult], float, float]:
     """Score a completed conversation against a task's scoring config.
 
-    Returns (list of per-dimension ScoreResults, weighted total).
+    Returns (per-criterion ScoreResults, weighted total, excluded weight
+    fraction). The third value is what makes the second interpretable: a task
+    scored over 35% of its declared criteria is a narrower claim than the same
+    number over all of them.
     """
     scores: list[ScoreResult] = []
 
@@ -263,7 +266,12 @@ def score_task(
             logger.warning("Unknown scoring method %s for %s/%s", method, task.id, dim_name)
 
     weighted = aggregate_task_scores(scores)
-    return scores, weighted
+
+    declared = sum(cfg.get("weight", 0.0) for cfg in task.scoring.values())
+    excluded = sum(sr.details.get("declared_weight", 0.0) for sr in scores if sr.details.get("unscored"))
+    unscored_fraction = (excluded / declared) if declared else 0.0
+
+    return scores, weighted, unscored_fraction
 
 
 def run_task(
@@ -339,7 +347,9 @@ def run_task(
         db.save_tool_calls(run_id, model_name, task.id, tool_records)
 
     # Score
-    scores, weighted = score_task(task, conv, judge, judge_averaging=eval_cfg.get("judge_averaging", True))
+    scores, weighted, unscored_weight = score_task(
+        task, conv, judge, judge_averaging=eval_cfg.get("judge_averaging", True)
+    )
 
     # Persist scores
     for sr in scores:
@@ -378,11 +388,13 @@ def run_task(
         reached_max_turns=conv.reached_max_turns,
         weighted_score=weighted,
         repaired_tool_calls=conv.repaired_tool_calls,
+        unscored_weight=unscored_weight,
     )
 
     turns_str = f"{len(conv.turns)}t/{conv.total_tool_calls}tc"
     repaired = f", {conv.repaired_tool_calls} repaired" if conv.repaired_tool_calls else ""
-    console.print(f" → {weighted:.2f} ({turns_str}, {conv.total_latency_ms:.0f}ms{repaired})")
+    unscored = f", {unscored_weight:.0%} unscored" if unscored_weight else ""
+    console.print(f" → {weighted:.2f} ({turns_str}, {conv.total_latency_ms:.0f}ms{repaired}{unscored})")
     return weighted
 
 

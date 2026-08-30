@@ -11,7 +11,7 @@ from nite_eval.report import generate_report
 from nite_eval.results_db import ResultsDB
 
 
-def _db_with_result(repaired: int, tool_calls: int = 28) -> ResultsDB:
+def _db_with_result(repaired: int, tool_calls: int = 28, unscored: float = 0.0) -> ResultsDB:
     db = ResultsDB(tempfile.mktemp(suffix=".db"))
     db.create_run("run-001", ["model-a"])
     db.register_tasks("run-001", ["model-a"], [("coding_mcp_hard_01", "coding", "hard")])
@@ -27,6 +27,7 @@ def _db_with_result(repaired: int, tool_calls: int = 28) -> ResultsDB:
         reached_max_turns=True,
         weighted_score=0.5,
         repaired_tool_calls=repaired,
+        unscored_weight=unscored,
     )
     return db
 
@@ -51,9 +52,9 @@ def test_per_task_table_has_repair_column():
     with _db_with_result(repaired=23) as db:
         report = generate_report(db, "run-001")
 
-    assert "| Task | Diff | model-a | Turns | TCs | Rep |" in report
-    # 29 turns, 28 tool calls, 23 repaired
-    assert "| 29 | 28 | 23 |" in report
+    assert "| Task | Diff | model-a | Turns | TCs | Rep | Unscored |" in report
+    # 29 turns, 28 tool calls, 23 repaired, 0% unscored
+    assert "| 29 | 28 | 23 | 0% |" in report
 
 
 def test_legacy_rows_without_the_column_default_to_zero():
@@ -79,4 +80,21 @@ def test_legacy_rows_without_the_column_default_to_zero():
     db.close()
 
     assert "Malformed Tool Calls" not in report
-    assert "| 1 | 1 | 0 |" in report
+    assert "| 1 | 1 | 0 | 0% |" in report
+
+
+def test_partial_scoring_is_flagged_in_the_report():
+    """A score over half its criteria must not read like a complete one."""
+    with _db_with_result(repaired=0, unscored=0.65) as db:
+        report = generate_report(db, "run-001")
+
+    assert "Partially Scored Dimensions" in report
+    assert "not comparable" in report
+    assert "| model-a | coding | 65% |" in report
+
+
+def test_no_partial_section_when_everything_was_scored():
+    with _db_with_result(repaired=0, unscored=0.0) as db:
+        report = generate_report(db, "run-001")
+
+    assert "Partially Scored Dimensions" not in report

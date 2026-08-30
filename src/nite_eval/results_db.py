@@ -131,7 +131,14 @@ class ResultsDB:
 
     # Columns added after the initial schema. SCHEMA_SQL only runs CREATE TABLE
     # IF NOT EXISTS, so an existing results DB would silently never gain them.
-    ADDED_COLUMNS = (("task_results", "repaired_tool_calls", "INTEGER DEFAULT 0"),)
+    ADDED_COLUMNS = (
+        ("task_results", "repaired_tool_calls", "INTEGER DEFAULT 0"),
+        # Fraction of a task's declared weight that had no implementation and
+        # was excluded from the average. A score means little without it: 0.86
+        # over 35% of the criteria is not the same claim as 0.86 over all of
+        # them.
+        ("task_results", "unscored_weight", "REAL DEFAULT 0"),
+    )
 
     def _add_missing_columns(self, cursor: sqlite3.Cursor) -> None:
         for table, column, decl in self.ADDED_COLUMNS:
@@ -219,6 +226,7 @@ class ResultsDB:
         weighted_score: float,
         error: str | None = None,
         repaired_tool_calls: int = 0,
+        unscored_weight: float = 0.0,
     ) -> None:
         """Save a completed task result (the checkpoint)."""
         status = "failed" if error else "completed"
@@ -227,7 +235,7 @@ class ResultsDB:
             "status = ?, finished_at = ?, final_response = ?, "
             "total_turns = ?, total_tool_calls = ?, total_latency_ms = ?, "
             "reached_max_turns = ?, weighted_score = ?, error = ?, "
-            "repaired_tool_calls = ? "
+            "repaired_tool_calls = ?, unscored_weight = ? "
             "WHERE run_id = ? AND model_name = ? AND task_id = ?",
             (
                 status,
@@ -240,6 +248,7 @@ class ResultsDB:
                 weighted_score,
                 error,
                 repaired_tool_calls,
+                unscored_weight,
                 run_id,
                 model_name,
                 task_id,

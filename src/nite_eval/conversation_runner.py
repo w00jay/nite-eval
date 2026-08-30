@@ -391,6 +391,24 @@ def run_conversation(
                 chat_template_kwargs,
             )
 
+        # The synthesis nudge produces the final answer on this path, so a
+        # truncated nudge is a truncated answer. The main loop checked for this
+        # and the nudge path did not, so a response cut off at max_tokens was
+        # still handed to the judge whenever a task reached its turn cap.
+        if turns and turns[-1].truncated:
+            return ConversationResult(
+                turns=turns,
+                final_response="",
+                total_tool_calls=total_tool_calls,
+                total_latency_ms=total_latency,
+                reached_max_turns=True,
+                repaired_tool_calls=repaired_total,
+                error=(
+                    f"truncated: finish_reason=length on synthesis nudge "
+                    f"({len(turns[-1].response)} chars, max_tokens={max_tokens})"
+                ),
+            )
+
         final = _extract_best_final_response(turns)
         return ConversationResult(
             turns=turns,

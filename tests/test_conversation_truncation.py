@@ -204,3 +204,21 @@ def test_generous_budget_does_not_interrupt():
         )
     assert result.error is None
     assert result.final_response == "Done."
+
+
+def test_truncated_synthesis_nudge_fails_the_task():
+    """The nudge produces the final answer, so a truncated nudge is no answer.
+
+    The main loop checked finish_reason and the nudge path did not, so any task
+    that reached its turn cap could still have a truncated response judged.
+    """
+    call = '<tool_call>\n{"name": "write_file", "arguments": {"path": "/a.go", "content": "x"}}\n</tool_call>'
+    replies = [ModelReply(text=call, finish_reason="stop")] * 3 + [
+        ModelReply(text="A very long partial answer", finish_reason="length")
+    ]
+    result = _run(replies)
+
+    assert result.error is not None
+    assert "truncated" in result.error
+    assert "synthesis nudge" in result.error
+    assert result.final_response == ""
