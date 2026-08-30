@@ -127,13 +127,20 @@ def docker_available() -> bool:
         return False
 
 
-def reap_orphans(older_than_seconds: int = 0) -> list[str]:
+def reap_orphans(older_than_seconds: int = 0, label: str = SANDBOX_LABEL) -> list[str]:
     """Remove sandbox containers left behind by an interrupted run.
 
-    Returns the ids removed. Only touches containers carrying SANDBOX_LABEL, so
-    it can never disturb anything else running on the host.
+    Returns the ids removed. Only touches containers carrying `label`, so it
+    cannot disturb anything else on the host.
+
+    `older_than_seconds` guards against reaping a live run. Reaping purely by
+    label destroyed an in-flight evaluation once: the test suite exercises this
+    function, and running the tests while an eval was going removed that eval's
+    container mid-task, which surfaced as "No such container" and an unscored
+    criterion. Callers that might overlap a run should pass a threshold; tests
+    should pass their own `label`.
     """
-    listing = _docker(["ps", "--quiet", "--filter", f"label={SANDBOX_LABEL}=1"], timeout=15)
+    listing = _docker(["ps", "--quiet", "--filter", f"label={label}=1"], timeout=15)
     if listing.returncode != 0:
         return []
 

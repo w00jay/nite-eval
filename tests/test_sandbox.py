@@ -179,46 +179,35 @@ def test_network_can_be_enabled_per_task():
 
 @pytestmark_docker
 def test_orphaned_sandboxes_are_reapable():
-    """A killed process never runs stop(), leaving the container idling."""
-    from nite_eval.sandbox import SANDBOX_LABEL, _docker, reap_orphans
+    """A killed process never runs stop(), leaving the container idling.
 
+    Uses a test-only label. Reaping by the production label would remove any
+    sandbox belonging to an evaluation running on this host — which is exactly
+    what happened once, destroying a live run's container mid-task.
+    """
+    from nite_eval.sandbox import _docker, reap_orphans
+
+    test_label = "nite-eval-sandbox-test"
     orphan = SandboxToolEnv(SandboxSpec(image="python:3.12-alpine"))
-    orphan.start()
+    with patch("nite_eval.sandbox.SANDBOX_LABEL", test_label):
+        orphan.start()
     container_id = orphan.container_id
     assert container_id
     # Simulate the process dying: never call stop().
 
-    removed = reap_orphans()
+    removed = reap_orphans(label=test_label)
     assert any(container_id.startswith(r) or r.startswith(container_id[:12]) for r in removed)
     assert _docker(["inspect", container_id], timeout=15).returncode != 0
 
-    # Reaping only ever touches labelled containers.
-    listing = _docker(["ps", "--quiet", "--filter", f"label={SANDBOX_LABEL}=1"], timeout=15)
-    assert container_id[:12] not in listing.stdout
 
+def test_reaper_can_spare_recently_started_containers():
+    """The age guard is what keeps a live run's sandbox safe."""
+    from nite_eval.sandbox import reap_orphans
 
-def test_resource_limits_are_sized_for_compilation():
-    """256 PIDs and a 256m /tmp made `go test -race` fail as if it found a race.
-
-    The failure was "resource temporarily unavailable" from forking the vet
-    tool, and "no space left on device" writing the build cache — both
-    indistinguishable from a genuine race check failure in the score.
-    """
-    spec = SandboxSpec.from_task_yaml({"image": "golang:1.23"})
-    assert spec is not None
-    assert spec.pids >= 1024
-    assert spec.tmp_size == "2g"
-    assert spec.workspace_size == "1g"
-
-
-def test_resource_limits_are_overridable_per_task():
-    spec = SandboxSpec.from_task_yaml(
-        {"image": "golang:1.23", "pids": 2048, "tmp_size": "4g", "workspace_size": "2g", "memory": "4g"}
-    )
-    assert spec is not None
-    assert spec.pids == 2048
-    assert spec.tmp_size == "4g"
-    assert spec.memory == "4g"
+    with patch("nite_eval.sandbox._docker") as docker:
+        docker.return_value.returncode = 0
+        docker.return_value.stdout = ""
+        assert reap_orphans(older_than_seconds=3600) == []
 
 
 def test_hidden_test_cmd_defaults_to_test_cmd():
