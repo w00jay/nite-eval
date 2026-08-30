@@ -13,13 +13,21 @@ Evaluates local models across 4 dimensions (15 tasks total):
 - **Coding** (4 tasks) — code generation with iterative tool use
 - **Agentic** (5 tasks) — multi-turn tool calling, error recovery, context maintenance
 
-Each task runs as a multi-turn conversation with mock tools (deterministic responses defined in YAML). Scoring is a mix of deterministic methods (checklist, sequence match, subset match) and LLM judges (rubric-based ternary scoring). Results persist to SQLite with checkpoint/resume.
+Each task runs as a multi-turn conversation. Research, planning and agentic tasks use mock tools with responses defined in YAML; coding tasks run in a sandboxed container and are scored by hidden test suites that actually execute the model's code. Scoring mixes deterministic methods (tool-call matching, ordering, absence), judge rubrics on a 1–5 scale, and automated checks that run tests, `go vet` and the race detector. Results persist to SQLite with checkpoint/resume.
 
 ## Sample results
 
 Run `run-20260418-234519` on the reference hardware, 5 models × 15 tasks, `max_tokens=4096`, qwen3.6 with `/no_think`:
 
-> **Stale as of 2026-08-21.** These numbers were produced on llama.cpp build
+> **Superseded as of 2026-08-30 — do not cite these numbers.** The harness was
+> scoring failures as answers: truncated generations were judged as complete,
+> `automated` criteria were hardcoded to `0.0`, `deterministic` criteria returned
+> a free `1.0`, checklists matched on single keywords, and the judge prompt
+> capped scores at 1/3/5. A six-model re-baseline on the current harness is
+> pending; until then this table records what the old harness produced, not what
+> the models do.
+>
+> **Also stale as of 2026-08-21.** These numbers were produced on llama.cpp build
 > 8642 (`7c7d6ce5c`, 2026-04-03). That build cannot load `qwen3.8-27b`, so
 > llama.cpp was updated to `cd26896c1` (2026-08-20) and a full re-baseline of
 > all 6 models is pending. Scores below are not directly comparable to anything
@@ -38,7 +46,7 @@ Run `run-20260418-234519` on the reference hardware, 5 models × 15 tasks, `max_
 Notes:
 - Qwen models use the standard Hermes tool-call format. Gemma 4 emits tool calls in a Harmony-style format (`<|tool_call>call:FUNC{…}<tool_call|>`); the parser handles both.
 - Reasoning-mode models (Qwen 3.6 MoE) need `/no_think` appended to the system prompt — without it, the model consumes the entire token budget inside `<think>…</think>` before producing an answer. Configure per-model via the `system_suffix` field in `config/eval_config.yaml`.
-- Coding scores cluster at 0.15–0.42 across all models — a rubric ceiling (tasks ask for complete implementations within a 4096-token budget), not a per-model weakness.
+- Coding scores cluster at 0.15–0.42 across all models. **This was a harness defect, not a rubric ceiling and not a per-model weakness:** `automated` criteria returned a hardcoded `0.0` at 40–70% of each coding task's weight, and the mock `run_tests` reported success before the model had written anything. Both are fixed; on the current harness the same tasks score 0.85–1.00 with every criterion measured.
 - The two Qwen3.6 entries above use the same base model with different quants (unsloth UD-Q4_K_S vs Sero/Strix Q4_K_M). Wikitext-2 perplexity is statistically identical (5.91 vs 5.92, ±0.04) — see [`docs/comparisons/qwen3-family-2026-04-19.md`](docs/comparisons/qwen3-family-2026-04-19.md) for the full investigation (PPL, GGUF metadata diff, chat-template diff, and verdict on what actually drives the eval-score gap).
 
 ## Hardware (reference setup)
@@ -54,7 +62,8 @@ Judges moved from the P40 to the 3060 on 2026-08-21 so the P40 sits out entirely
 excluding it keeps run timings comparable. Both judges share the 3060: 6.3GB
 (reward) + 3.0GB (flow) = 9.3GB of weights plus ~1.5GB KV/compute at `ctx 4096`,
 so roughly 10.8GB of 11.8GB usable. It fits, but if a judge OOMs, lower its
-`--ctx-size` in `scripts/run_nightly.sh` before moving it back to a 24GB card.
+`--ctx-size` in `scripts/run_nightly.sh`, or set `REWARD_GPU_UUID` / `FLOW_GPU_UUID`
+in `.env` to split the two judges across cards — the P40 sits idle during evals.
 
 **Stop Ollama before a run** if it is configured for all GPUs — it squats on the
 3060 where the judges live, and a larger model loading mid-run will OOM them:
@@ -174,6 +183,23 @@ Path/binary configuration lives in `.env` (see `.env.example`).
 
 Add or replace models by editing `config/llama_swap_config.yaml` and the `models:` block in `config/eval_config.yaml`. The `models:` block accepts an optional `system_suffix` per model for chat-template triggers like `/no_think`.
 
+## Coding tasks run for real
+
+Coding tasks execute in a container built from `Dockerfile.sandbox-{go,python,deno}`:
+no network, non-root, read-only root filesystem with a tmpfs workspace, capped
+memory/CPU/PIDs, hard timeouts, and removal on exit. Files are streamed in over
+stdin rather than bind-mounted, so nothing the model writes can reach a host path.
+
+`test_pass_rate` is decided by a hidden suite under `tasks/coding/suites/<task_id>/`,
+installed after the conversation ends. The model never sees it, and its own tests
+are moved aside before scoring — the tasks ask the model to write tests, so
+scoring those would let it grade itself. It still sees its own tests when it calls
+`run_tests` during the conversation, which is the point of a real environment.
+
+This requires each coding task to state an API contract in its prompt, since a
+hidden suite has to compile against something. That trades API-design freedom for
+measurability.
+
 ## Judges
 
 Two judges with complementary biases, routed by scoring dimension:
@@ -182,6 +208,17 @@ Two judges with complementary biases, routed by scoring dimension:
 |-------|--------|------------|------|
 | Flow-Judge (`:9092`) | 3.8B | `reasoning_quality`, `practical_output` | 5-bias (recognizes excellence) |
 | RewardAnything (`:9091`) | 8B | everything else | 3-bias (conservative, accurate on average responses) |
+
+Judges score on a 1–5 scale, averaged over three samples per criterion
+(`evaluation.judge_averaging`). Averaging is worth its cost because the target
+is essentially deterministic at `temperature: 0` — the same task reproduces to
+within 0.1% of its latency and to identical scores — so run-to-run variance is
+the judge's, and repeating target runs would buy nothing.
+
+Until 2026-08-30 the judge prompt instructed *"Most responses deserve a 3... You
+MUST pick exactly 1, 3, or 5"*, and 1579 of 2149 historical scores duly landed on
+3.0 with 4.0 appearing twice. Nothing in the code enforced that, so scores from
+before that date carry a quantization the current prompt does not.
 
 Calibration: neither judge alone reaches Cohen's kappa > 0.6, but dimension routing exploits their complementary error profiles.
 
@@ -200,7 +237,8 @@ harness distinguishes:
 
 | `error` prefix | Meaning |
 |---|---|
-| `truncated:` | Generation hit `max_tokens`. Raise the task's `max_tokens`. |
+| `truncated:` | Generation hit `max_tokens` with real content. Raise the task's `max_tokens`. |
+| `degenerate_repetition:` | The model looped on a short substring until cut off. Raising `max_tokens` only lengthens the loop. |
 | `unparsed_tool_call:` | Tool-call JSON did not parse after one corrective retry. Raw payload attached. |
 | `task_timeout:` | Task exceeded its `timeout_seconds` wall-clock budget. |
 | `synthesis nudge failed` | The final-answer request errored, so there is no answer to score. |
@@ -260,6 +298,7 @@ src/nite_eval/
   scoring.py                 # deterministic + judge-based scoring
   task_loader.py  results_db.py  report.py
   hermes_parser.py  mock_tools.py  rubrics.py
+  sandbox.py        automated_scoring.py  gpu_check.py
   model_manager.py  ast_comparator.py
 scripts/
   run_nightly.sh             # unattended runner
