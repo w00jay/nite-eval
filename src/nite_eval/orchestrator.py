@@ -23,6 +23,7 @@ import yaml
 from rich.console import Console
 from rich.table import Table
 
+from nite_eval.automated_scoring import run_automated_checks
 from nite_eval.conversation_runner import ConversationResult, run_conversation
 from nite_eval.gpu_check import GpuPlacementError, resolve_expected_uuids, verify_runtime_placement
 from nite_eval.gpu_check import preflight as gpu_preflight
@@ -32,6 +33,7 @@ from nite_eval.model_manager import check_health, warm_up_model
 from nite_eval.report import save_report  # noqa: TC001
 from nite_eval.results_db import ResultsDB
 from nite_eval.rubrics import get_rubric
+from nite_eval.sandbox import SandboxError, SandboxSpec, SandboxToolEnv
 from nite_eval.scoring import (
     ScoreResult,
     aggregate_task_scores,
@@ -72,6 +74,7 @@ def score_task(
     conv: ConversationResult,
     judge: RoutedJudgeClient,
     judge_averaging: bool = True,
+    automated_results: dict[str, tuple[float, dict]] | None = None,
 ) -> tuple[list[ScoreResult], float, float]:
     """Score a completed conversation against a task's scoring config.
 
@@ -231,6 +234,18 @@ def score_task(
                 )
             )
 
+        elif method == "automated" and (automated_results or {}).get(dim_name):
+            raw, details = (automated_results or {})[dim_name]
+            scores.append(
+                ScoreResult(
+                    dimension=dim_name,
+                    method=method,
+                    score=raw,
+                    weight=weight,
+                    details=details,
+                )
+            )
+
         elif method in ("deterministic", "partial_match", "exact_match", "automated"):
             # No implementation exists for these. They used to be faked:
             # `deterministic` returned 1.0 whenever the conversation did not
@@ -289,8 +304,32 @@ def run_task(
     db.mark_task_running(run_id, model_name, task.id)
     console.print(f"    [bold]{task.id}[/bold] ({task.difficulty})", end="")
 
-    # Set up mock environment
-    mock_env = MockToolEnv.from_task_yaml(task.mock_responses)
+    # A task that declares an `environment:` runs against a real container; the
+    # rest keep their mocks. SandboxToolEnv exposes the same call() interface,
+    # so run_conversation does not know the difference.
+    sandbox: SandboxToolEnv | None = None
+    spec = SandboxSpec.from_task_yaml(task.environment)
+    if spec is not None:
+        try:
+            sandbox = SandboxToolEnv(spec)
+            sandbox.start()
+        except SandboxError as e:
+            console.print(f" [red]sandbox unavailable: {e}[/red]")
+            db.save_task_result(
+                run_id=run_id,
+                model_name=model_name,
+                task_id=task.id,
+                final_response="",
+                total_turns=0,
+                total_tool_calls=0,
+                total_latency_ms=0,
+                reached_max_turns=False,
+                weighted_score=0.0,
+                error=f"sandbox_unavailable: {e}",
+            )
+            return 0.0
+
+    tool_env = sandbox if sandbox is not None else MockToolEnv.from_task_yaml(task.mock_responses)
 
     # Run conversation
     conv = run_conversation(
@@ -299,7 +338,7 @@ def run_task(
         system_prompt=task.system_prompt,
         tools=task.tools,
         user_message=task.user_message,
-        mock_env=mock_env,
+        mock_env=tool_env,
         max_turns=task.max_turns,
         max_tool_calls=task.max_tool_calls,
         timeout_seconds=task.timeout_seconds,
@@ -310,6 +349,8 @@ def run_task(
     )
 
     if conv.error:
+        if sandbox is not None:
+            sandbox.stop()
         console.print(f" [red]ERROR: {conv.error}[/red]")
         # Persist the last raw response. A failed task with an empty
         # final_response is undiagnosable after the fact — the offending text
@@ -347,8 +388,30 @@ def run_task(
         db.save_tool_calls(run_id, model_name, task.id, tool_records)
 
     # Score
+    # Automated criteria are decided by running the code, after the conversation
+    # ends so the hidden suite is never visible to the model.
+    automated_results: dict[str, tuple[float, dict]] = {}
+    if sandbox is not None:
+        try:
+            automated_results = run_automated_checks(
+                sandbox=sandbox,
+                task_id=task.id,
+                scoring=task.scoring,
+                suite_root=Path(eval_cfg.get("suite_root", "tasks/coding/suites")),
+                language=task.environment.get("language", ""),
+                checks=task.environment.get("checks", {}),
+            )
+        except SandboxError as e:
+            logger.warning("Automated checks failed for %s: %s", task.id, e)
+        finally:
+            sandbox.stop()
+
     scores, weighted, unscored_weight = score_task(
-        task, conv, judge, judge_averaging=eval_cfg.get("judge_averaging", True)
+        task,
+        conv,
+        judge,
+        judge_averaging=eval_cfg.get("judge_averaging", True),
+        automated_results=automated_results,
     )
 
     # Persist scores

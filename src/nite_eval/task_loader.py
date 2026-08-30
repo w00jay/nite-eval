@@ -46,6 +46,9 @@ class TaskDefinition:
     distractor_tools: list[str] = field(default_factory=list)
     # [before, after] pairs for `tool_ordering` scoring.
     expected_tool_ordering: list[list[str]] = field(default_factory=list)
+    # Real execution environment. When present the task runs against a
+    # container instead of mocks, and `automated` criteria become measurable.
+    environment: dict[str, Any] = field(default_factory=dict)
 
     @property
     def judge_dimensions(self) -> list[str]:
@@ -101,6 +104,7 @@ def load_task(path: Path) -> TaskDefinition:
         expected_tool_sequence_flexible=data.get("expected_tool_sequence_flexible", False),
         distractor_tools=data.get("distractor_tools", []),
         expected_tool_ordering=data.get("expected_tool_ordering", []),
+        environment=data.get("environment", {}),
     )
 
 

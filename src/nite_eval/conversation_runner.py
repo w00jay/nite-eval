@@ -9,6 +9,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
+from typing import Protocol
 
 import httpx
 
@@ -18,9 +19,18 @@ from nite_eval.hermes_parser import (
     format_tool_definitions,
     format_tool_response,
 )
-from nite_eval.mock_tools import MockToolEnv
 
 logger = logging.getLogger(__name__)
+
+
+class ToolEnv(Protocol):
+    """What the runner needs from a tool environment.
+
+    Satisfied by both MockToolEnv and SandboxToolEnv, so a task can run against
+    mocks or a real container without the runner knowing which.
+    """
+
+    def call(self, tool_name: str, arguments: dict) -> dict: ...
 
 
 @dataclass
@@ -90,7 +100,7 @@ def run_conversation(
     system_prompt: str,
     tools: list[dict],
     user_message: str,
-    mock_env: MockToolEnv,
+    mock_env: ToolEnv,
     max_turns: int = 10,
     max_tool_calls: int = 20,
     timeout_seconds: float = 1800.0,

@@ -48,12 +48,35 @@ tools:
           type: string
       required:
       - command
-user_message: 'Write a Go package that loads MCP server configuration from a YAML file. The config should
-  support: server name, endpoint URL, transport type (sse or http), auth type (bearer, api_key, oauth2),
-  auth credentials, and an enabled flag. Include validation (URL must be valid, auth type must be recognized)
-  and tests.
-
-  '
+user_message: |-
+  Write a Go package that loads MCP server configuration from a YAML file. The config should support: server name, endpoint URL, transport type (sse or http), auth type (bearer, api_key, oauth2), auth credentials, and an enabled flag. Include validation (URL must be valid, transport and auth type must be recognized) and tests.
+  
+  Your code is compiled and tested against this exact contract, so match it:
+  
+    module mcpconfig            (go.mod, go 1.23)
+    package config              (in config.go)
+  
+    type ServerConfig struct {
+        Name      string  // yaml:"name"
+        URL       string  // yaml:"url"
+        Transport string  // yaml:"transport"
+        AuthType  string  // yaml:"auth_type"
+        AuthToken string  // yaml:"auth_token"
+        APIKey    string  // yaml:"api_key"
+        Enabled   bool    // yaml:"enabled"
+    }
+  
+    type Config struct {
+        Servers []ServerConfig  // yaml:"servers"
+    }
+  
+    func Load(path string) (*Config, error)
+    func (c *Config) EnabledServers() []ServerConfig
+  
+  Load reads and parses the file, validates every server, and returns an error if
+  any is invalid or the file cannot be read or parsed. Use gopkg.in/yaml.v3, which
+  is already vendored — do not run "go get" or "go mod tidy", the environment has
+  no network. Write your files under /app/mcpconfig.
 mock_responses:
   write_file:
   - match:
@@ -117,3 +140,14 @@ timeout_seconds: 1200
 # The global 4096 budget truncated mid-string, which the runner used to accept
 # as a final answer (see audit: 56% of coding responses leaked <tool_call>).
 max_tokens: 16384
+
+environment:
+  image: nite-eval-go:1.23
+  workdir: /app/mcpconfig
+  # The workdir is a tmpfs at run time and shadows the image's contents, so the
+  # vendored module skeleton is copied in once the mount exists.
+  setup_cmd: cp -a /skeleton/. /app/mcpconfig/
+  test_cmd: go test ./... -v 2>&1
+  language: go
+  checks:
+    go_vet_clean: go vet ./...

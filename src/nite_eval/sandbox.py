@@ -22,7 +22,7 @@ import logging
 import subprocess
 import uuid
 from dataclasses import dataclass, field
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 logger = logging.getLogger(__name__)
 
@@ -281,6 +281,31 @@ class SandboxToolEnv:
             return {"error": f"sandbox error: {e}"}
 
         return {"error": f"tool '{tool_name}' is not available in the execution environment"}
+
+    def run_hidden_suite(self, suite_dir: Path) -> dict:
+        """Copy our test files in and run them against the model's code.
+
+        The model's own tests stay visible to it for iteration, but they do not
+        decide the score — a model that writes trivial tests would otherwise
+        grade itself. Files are copied after the conversation ends so the model
+        never sees them.
+        """
+        if not suite_dir.exists():
+            return {"error": f"hidden suite not found: {suite_dir}"}
+
+        copied = []
+        for path in sorted(suite_dir.rglob("*")):
+            if path.is_dir():
+                continue
+            rel = path.relative_to(suite_dir).as_posix()
+            result = self.write_file(rel, path.read_text())
+            if "error" in result:
+                return {"error": f"could not install {rel}: {result['error']}"}
+            copied.append(rel)
+
+        outcome = self.run_tests()
+        outcome["hidden_files"] = copied
+        return outcome
 
     def get_call_log(self) -> list[dict]:
         return self.call_log
