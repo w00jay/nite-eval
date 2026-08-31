@@ -14,6 +14,9 @@
 #   # With specific models:
 #   NITE_MODELS="qwen3.5-9b" ./scripts/run_nightly.sh
 #
+#   # Continue an interrupted run from its checkpoint:
+#   NITE_RESUME="run-20260830-231628" ./scripts/run_nightly.sh
+#
 # Prerequisites:
 #   - UV environment set up (uv sync)
 #   - GGUF models in expected paths
@@ -21,6 +24,7 @@
 # Environment variables:
 #   NITE_MODELS       Space-separated model list (default: all from config)
 #   NITE_DIMENSION    Filter to one dimension (default: all)
+#   NITE_RESUME       Resume a run by ID, e.g. run-20260830-231628
 #   NITE_CONFIG       Config path (default: config/eval_config.yaml)
 #   NITE_TARGET_GPU   GPU ID for target llama-swap (default: 1)
 #   NITE_JUDGE_GPU    GPU ID for judge servers (default: 2)
@@ -219,6 +223,12 @@ if [ -n "${NITE_MODELS:-}" ]; then
 fi
 if [ -n "${NITE_DIMENSION:-}" ]; then
     ORCH_ARGS+=(--dimension "$NITE_DIMENSION")
+fi
+# Resume a checkpointed run. The orchestrator has always supported --resume, but
+# this script could not pass it, so continuing an interrupted run meant starting
+# the servers by hand.
+if [ -n "${NITE_RESUME:-}" ]; then
+    ORCH_ARGS+=(--resume "$NITE_RESUME")
 fi
 
 # Run evaluation
