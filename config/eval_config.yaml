@@ -68,6 +68,32 @@ models:
     # (every block where b % 4 != 3), but the final block 64 is attention-only.
     # Older builds apply the modulo rule to block 64 and expect SSM tensors.
 
+  - name: "ornith-1.5-35b-a3b"
+    backend: "llama.cpp"
+    chat_template_kwargs:
+      enable_thinking: false
+    # NOT system_suffix: "/no_think" — that string does not appear anywhere in
+    # Ornith's chat template (verified against the GGUF's embedded template via
+    # the HF API), so it would be inert filler, the same trap as qwen3.8.
+    # The template's only reasoning switch is `enable_thinking`:
+    #   {%- if enable_thinking is defined and enable_thinking is false %}
+    #       {{- '<think>\n\n</think>\n\n' }}
+    # i.e. it pre-closes the think block, matching how /no_think works for
+    # qwen3.6. There is no `reasoning_effort` middle setting, so unlike qwen3.8
+    # the choice here is binary: thinking fully on or fully off. Starting off,
+    # for consistency with the other reasoning models in this fleet.
+    #
+    # UNVERIFIED until a smoke test runs: Ornith was post-trained on an XML
+    # tool-call format — its template hardcodes
+    #   <tool_call><function=NAME><parameter=KEY>value</parameter></function></tool_call>
+    # — which `hermes_parser` cannot parse; it json.loads() the <tool_call>
+    # body. nite-eval does not send a `tools` field to llama-server (tool defs
+    # are injected as prompt text by format_tool_definitions), so that template
+    # branch never fires and the model is instructed in Hermes JSON instead.
+    # Whether it complies or reverts to its trained XML format is an empirical
+    # question. If tool calls come back as `malformed_json`, the parser needs an
+    # XML extractor alongside the Gemma/Harmony fallback.
+
 evaluation:
   temperature: 0.0
   max_tokens: 4096

@@ -35,6 +35,50 @@ models:
       -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
     group: "target-gpu"
 
+  # MoE reasoning model. Needs system_suffix: "/no_think" in eval_config.yaml.
+  "qwen3.6-35b-a3b":
+    cmd: >
+      env CUDA_VISIBLE_DEVICES=GPU-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+      /ABS/PATH/TO/llama.cpp/build/bin/llama-server
+      -m /ABS/PATH/TO/gguf/Qwen3.6-35B-A3B-UD-Q4_K_S.gguf
+      --port ${PORT} -ngl 999 --ctx-size 65536
+      -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
+    group: "target-gpu"
+
+  # Same base model as above, different quant (Q4_K_M vs UD-Q4_K_S).
+  "qwen3.6-35b-a3b-strix":
+    cmd: >
+      env CUDA_VISIBLE_DEVICES=GPU-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+      /ABS/PATH/TO/llama.cpp/build/bin/llama-server
+      -m /ABS/PATH/TO/gguf/Qwen3.6-35B-A3B-Q4_K_M.gguf
+      --port ${PORT} -ngl 999 --ctx-size 65536
+      -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
+    group: "target-gpu"
+
+  # Hybrid attention+SSM. Requires llama.cpp >= cd26896c1 (2026-08-20);
+  # older builds abort with missing tensor 'blk.64.ssm_conv1d.weight'.
+  # Needs chat_template_kwargs: {reasoning_effort: medium} in eval_config.yaml.
+  "qwen3.8-27b":
+    cmd: >
+      env CUDA_VISIBLE_DEVICES=GPU-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+      /ABS/PATH/TO/llama.cpp/build/bin/llama-server
+      -m /ABS/PATH/TO/gguf/Qwen3.8-27B-UD-Q4_K_XL.gguf
+      --port ${PORT} -ngl 999 --ctx-size 65536
+      -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
+    group: "target-gpu"
+
+  # ornith-ai/Ornith-1.5-35B-A3B-GGUF, Q4_K_M (20.2 GiB). Arch qwen35moe.
+  # Needs chat_template_kwargs: {enable_thinking: false} in eval_config.yaml —
+  # its template has no /no_think branch.
+  "ornith-1.5-35b-a3b":
+    cmd: >
+      env CUDA_VISIBLE_DEVICES=GPU-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+      /ABS/PATH/TO/llama.cpp/build/bin/llama-server
+      -m /ABS/PATH/TO/gguf/Ornith-1.5-35B-A3B-Q4_K_M.gguf
+      --port ${PORT} -ngl 999 --ctx-size 65536
+      -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
+    group: "target-gpu"
+
 groups:
   "target-gpu":
     exclusive: true
