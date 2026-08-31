@@ -543,3 +543,73 @@ def test_xml_malformed_still_errors():
     parsed = extract_tool_calls(response, XML_TOOLS)
     assert parsed.tool_calls == []
     assert parsed.errors[0]["error"] == "malformed_json"
+
+
+# --- Ornith dropped name-value quote (ornith-1.5-35b-a3b) ---
+#
+# Measured on the live model at temperature 0, thinking on, 8 prompts: 4 came
+# back as valid Hermes and 4 dropped the opening quote of the *value* after
+# "name". That is one character away from qwen3.8's defect, which drops the
+# opening quote of the following *key* — different position, so
+# _repair_dropped_key_quote does not catch it.
+
+ORNITH_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "search_thoughts",
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}},
+                "required": ["query"],
+            },
+        },
+    },
+]
+
+
+def test_ornith_dropped_name_value_quote():
+    """Verbatim sample from the live model."""
+    response = (
+        '<tool_call>\n{"name": search_thoughts", "arguments": '
+        '{"query": "local LLM benchmarking", "limit": 5}}\n</tool_call>'
+    )
+    parsed = extract_tool_calls(response, ORNITH_TOOLS)
+    assert len(parsed.tool_calls) == 1
+    assert parsed.tool_calls[0].name == "search_thoughts"
+    assert parsed.tool_calls[0].arguments == {"query": "local LLM benchmarking", "limit": 5}
+    assert parsed.errors == []
+
+
+def test_ornith_repair_is_counted():
+    """The repair must stay visible in the report, not be silently absorbed."""
+    response = '<tool_call>{"name": search_thoughts", "arguments": {"query": "x"}}</tool_call>'
+    parsed = extract_tool_calls(response, ORNITH_TOOLS)
+    assert parsed.repaired == 1
+
+
+def test_valid_hermes_is_not_counted_as_repaired():
+    response = '<tool_call>{"name": "search_thoughts", "arguments": {"query": "x"}}</tool_call>'
+    parsed = extract_tool_calls(response, ORNITH_TOOLS)
+    assert parsed.repaired == 0
+    assert parsed.tool_calls[0].name == "search_thoughts"
+
+
+def test_dropped_name_quote_repair_is_string_aware():
+    """An identifier-then-quote sequence inside a string value must survive."""
+    response = (
+        '<tool_call>{"name": "capture_thought", "arguments": '
+        '{"content": "he wrote map[string]any{x\\": 1} then stopped"}}</tool_call>'
+    )
+    parsed = extract_tool_calls(response, ORNITH_TOOLS)
+    assert parsed.repaired == 0
+    assert parsed.tool_calls[0].arguments["content"] == 'he wrote map[string]any{x": 1} then stopped'
+
+
+def test_qwen38_key_quote_repair_still_works():
+    """The pre-existing qwen3.8 repair must not regress."""
+    response = '<tool_call>\n{"name": "write_file",\narguments": {"content": "package auth"}}\n</tool_call>'
+    parsed = extract_tool_calls(response)
+    assert len(parsed.tool_calls) == 1
+    assert parsed.tool_calls[0].name == "write_file"
+    assert parsed.repaired >= 1

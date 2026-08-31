@@ -70,29 +70,33 @@ models:
 
   - name: "ornith-1.5-35b-a3b"
     backend: "llama.cpp"
-    chat_template_kwargs:
-      enable_thinking: false
-    # NOT system_suffix: "/no_think" — that string does not appear anywhere in
-    # Ornith's chat template (verified against the GGUF's embedded template via
-    # the HF API), so it would be inert filler, the same trap as qwen3.8.
-    # The template's only reasoning switch is `enable_thinking`:
-    #   {%- if enable_thinking is defined and enable_thinking is false %}
-    #       {{- '<think>\n\n</think>\n\n' }}
-    # i.e. it pre-closes the think block, matching how /no_think works for
-    # qwen3.6. There is no `reasoning_effort` middle setting, so unlike qwen3.8
-    # the choice here is binary: thinking fully on or fully off. Starting off,
-    # for consistency with the other reasoning models in this fleet.
+    # Thinking stays ON, deliberately, unlike every other reasoning model here.
     #
-    # UNVERIFIED until a smoke test runs: Ornith was post-trained on an XML
-    # tool-call format — its template hardcodes
-    #   <tool_call><function=NAME><parameter=KEY>value</parameter></function></tool_call>
-    # — which `hermes_parser` cannot parse; it json.loads() the <tool_call>
-    # body. nite-eval does not send a `tools` field to llama-server (tool defs
-    # are injected as prompt text by format_tool_definitions), so that template
-    # branch never fires and the model is instructed in Hermes JSON instead.
-    # Whether it complies or reverts to its trained XML format is an empirical
-    # question. If tool calls come back as `malformed_json`, the parser needs an
-    # XML extractor alongside the Gemma/Harmony fallback.
+    # Its template's only reasoning switch is `enable_thinking` (there is no
+    # /no_think branch and no reasoning_effort), and turning it off wrecks the
+    # tool-call JSON. Measured on the live model, 8 prompts at temperature 0,
+    # counting how many tool calls the parser can read:
+    #
+    #   thinking ON   -> 4/8 valid Hermes, 4/8 dropped name-value quote
+    #                    = 8/8 usable once _repair_dropped_name_value_quote runs
+    #   thinking OFF  -> 1/8 valid, and the rest fragment into five shapes:
+    #                    {"search_thoughts", "parameters": {...}}
+    #                    {"search_thoughts", "limit": 10, "query": "..."}}
+    #                    {"capture_thought", "content": ..., "type": ...}
+    #                    {"search_thoughts", "params": {...}}
+    #                    plus the dropped-quote form
+    #                    = 1/8 usable, and the rest are not safely repairable
+    #                      because the arguments key is missing or renamed.
+    #
+    # So the budget risk of leaving thinking on is the lesser problem: a
+    # truncated answer still scores, a dropped tool call ends the turn with no
+    # tools at all. Watch max_tokens on coding tasks instead.
+    #
+    # Its template does hardcode an XML tool-call format
+    # (<function=NAME><parameter=KEY>...), and the parser handles that, but the
+    # model never emitted it in 16 samples — that branch only renders when
+    # tool definitions are passed to the template, and nite-eval injects them
+    # as prompt text instead.
 
 evaluation:
   temperature: 0.0

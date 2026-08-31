@@ -230,7 +230,7 @@ embedding matrices and will differ slightly from the marketing number.
 | `qwen3.6-35b-a3b` | `qwen35moe` MoE | 34.66B | 40 | 256 (8) | UD-Q4_K_S | 19.5 GiB | not measured |
 | `qwen3.6-35b-a3b-strix` | `qwen35moe` MoE | 34.66B | 40 | 256 (8) | Q4_K_M | 19.7 GiB | 21393 MiB |
 | `qwen3.8-27b` | `qwen35` hybrid | 27.32B | 65 | — | UD-Q4_K_XL | 16.4 GiB | 19211 MiB |
-| `ornith-1.5-35b-a3b` | `qwen35moe` MoE | 35.51B | 41 | 256 (8) | Q4_K_M | 20.2 GiB | not measured |
+| `ornith-1.5-35b-a3b` | `qwen35moe` MoE | 35.51B | 41 | 256 (8) | Q4_K_M | 20.2 GiB | 21412 MiB |
 
 Attention geometry, which is what determines how fast KV cache grows with context:
 
@@ -248,8 +248,9 @@ All six run under llama-swap with identical flags — `-ngl 999 --ctx-size 65536
 -fa on --cache-type-k q8_0 --cache-type-v q8_0` — pinned to the 3090 by UUID and
 in an `exclusive: true` group so only one is resident at a time. **Context is
 65536, not the 262144 the models were trained for**; see the VRAM measurements in
-`CLAUDE.md` before raising it. `qwen3.6-35b-a3b-strix` is the binding model at
-21393 MiB, leaving ~3.1 GB headroom.
+`CLAUDE.md` before raising it. `ornith-1.5-35b-a3b` is now the binding model at
+21412 MiB, a hair above `qwen3.6-35b-a3b-strix` at 21393, leaving ~3.1 GB
+headroom on the 24 GB card.
 
 Per-model notes:
 
@@ -285,7 +286,10 @@ Per-model notes:
   are linear attention. `block_count` reads 41 because the GGUF also carries a
   multi-token-prediction block (`blk.40.nextn.*`); whether llama.cpp uses it is
   unverified. Its larger vocabulary (248320) accounts for most of the
-  parameter difference against qwen3.6. It
+  parameter difference against qwen3.6. **Thinking stays on**, unlike the other
+  reasoning models here: `enable_thinking: false` is its only reasoning switch
+  and it wrecks the tool-call JSON (measured over 8 prompts at temperature 0,
+  the parser reads 8/8 calls with thinking on against 3/8 with it off). It
   needs `chat_template_kwargs: {enable_thinking: false}`; its template has no
   `/no_think` branch and no `reasoning_effort`, so the reasoning switch is
   binary. **Not yet validated on this harness:** at 20.2 GiB it is the largest
@@ -384,6 +388,17 @@ characterized and safely repairable, the parser fixes it rather than discarding
 the call, and records the count in `task_results.repaired_tool_calls`. Reports
 include a per-model repair rate. A high rate is a model-quality signal — see
 `CLAUDE.md` for the qwen3.8 case (34% of coding tool calls).
+
+Two repairs exist, for two one-character defects in different positions:
+
+| Model | Defect | Repair |
+|---|---|---|
+| qwen3.8-27b | drops the opening quote of the **key** after the name — `{"name": "write_file",\narguments":` | `_repair_dropped_key_quote` |
+| ornith-1.5-35b-a3b | drops the opening quote of the name's **value** — `{"name": search_thoughts",` | `_repair_dropped_name_value_quote` |
+
+They run value-first: a dropped value quote leaves an unbalanced quote that
+desynchronises the key repair's string tracking, which then rewrites
+`"arguments"` to `""arguments"`.
 
 ## Known limitations
 

@@ -113,6 +113,67 @@ def _repair_dropped_key_quote(s: str) -> tuple[str, int]:
     return "".join(out), repairs
 
 
+def _repair_dropped_name_value_quote(s: str) -> tuple[str, int]:
+    """Restore the opening quote on a value that lost it.
+
+    ornith-1.5-35b-a3b reproducibly drops the opening quote of the *value*
+    after "name", at temperature 0::
+
+        {"name": search_thoughts", "arguments": {"query": "x", "limit": 5}}
+
+    One character from qwen3.8's defect, which drops the opening quote of the
+    following *key* — different position, so _repair_dropped_key_quote does not
+    catch it. Measured across 8 prompts on the live model with thinking on,
+    4 came back valid and 4 like the above; without this repair half of the
+    model's tool calls are discarded and it is scored on a tool-less answer.
+
+    A candidate is only rewritten where a value is expected — directly after a
+    colon, outside any string literal — so an `ident"` sequence inside escaped
+    source code is never touched.
+
+    Returns (repaired, count).
+    """
+    out: list[str] = []
+    i = 0
+    in_string = False
+    repairs = 0
+    last_significant = ""
+    broken_value = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)"')
+
+    while i < len(s):
+        ch = s[i]
+        if in_string:
+            if ch == "\\" and i + 1 < len(s):
+                out.append(s[i : i + 2])
+                i += 2
+                continue
+            if ch == '"':
+                in_string = False
+            out.append(ch)
+            i += 1
+            continue
+        if ch == '"':
+            in_string = True
+            out.append(ch)
+            last_significant = '"'
+            i += 1
+            continue
+        if last_significant == ":" and not ch.isspace():
+            m = broken_value.match(s, i)
+            if m:
+                out.append(f'"{m.group(1)}"')
+                i = m.end()
+                repairs += 1
+                last_significant = '"'
+                continue
+        out.append(ch)
+        if not ch.isspace():
+            last_significant = ch
+        i += 1
+
+    return "".join(out), repairs
+
+
 def _count_unclosed_braces(s: str) -> int:
     """Count braces that are outside string literals.
 
@@ -163,7 +224,13 @@ def _fix_json(raw: str) -> tuple[str, int]:
         return stripped, 0
 
     fixed = TRAILING_COMMA_RE.sub(r"\1", stripped)
-    fixed, repairs = _repair_dropped_key_quote(fixed)
+    # Order matters. A dropped value quote leaves an unbalanced quote that
+    # desynchronises the key repair's string tracking: it then reads
+    # `"arguments"` as bare text and rewrites it to `""arguments"`. Restoring
+    # the value quote first puts the walk back in sync.
+    fixed, repairs = _repair_dropped_name_value_quote(fixed)
+    fixed, key_repairs = _repair_dropped_key_quote(fixed)
+    repairs += key_repairs
 
     unclosed = _count_unclosed_braces(fixed)
     if unclosed > 0:
