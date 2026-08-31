@@ -41,6 +41,16 @@ GEMMA_STRING_DELIM = '<|"|>'
 XML_FUNCTION_RE = re.compile(r"<function=([A-Za-z_][A-Za-z0-9_]*)\s*>(.*?)</function>", re.DOTALL)
 XML_PARAMETER_RE = re.compile(r"<parameter=([A-Za-z_][A-Za-z0-9_.\-]*)\s*>(.*?)</parameter>", re.DOTALL)
 
+# ornith-1.5 also emits a half-finished hybrid: it starts the XML form, does not
+# complete it, and finishes the payload as JSON, substituting `<` for the
+# opening `{"`::
+#
+#     <function": "web_search", "arguments": {"query": "..."}}
+#
+# Anchored to the payload start so a legitimate `<function` inside a string
+# value is never rewritten.
+ANGLE_CALL_RE = re.compile(r'^<(?=(?:function|name)")')
+
 
 @dataclass
 class ToolCall:
@@ -139,6 +149,10 @@ def _repair_dropped_name_value_quote(s: str) -> tuple[str, int]:
     repairs = 0
     last_significant = ""
     broken_value = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)"')
+    # The same value sometimes arrives with no quotes at all, terminated by the
+    # next comma or brace. JSON literals are left alone so `true` stays a bool.
+    bare_value = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)(?=\s*[,}])")
+    json_literals = {"true", "false", "null"}
 
     while i < len(s):
         ch = s[i]
@@ -161,6 +175,13 @@ def _repair_dropped_name_value_quote(s: str) -> tuple[str, int]:
         if last_significant == ":" and not ch.isspace():
             m = broken_value.match(s, i)
             if m:
+                out.append(f'"{m.group(1)}"')
+                i = m.end()
+                repairs += 1
+                last_significant = '"'
+                continue
+            m = bare_value.match(s, i)
+            if m and m.group(1) not in json_literals:
                 out.append(f'"{m.group(1)}"')
                 i = m.end()
                 repairs += 1
@@ -223,14 +244,15 @@ def _fix_json(raw: str) -> tuple[str, int]:
     else:
         return stripped, 0
 
-    fixed = TRAILING_COMMA_RE.sub(r"\1", stripped)
+    fixed, angle_repairs = ANGLE_CALL_RE.subn('{"', stripped)
+    fixed = TRAILING_COMMA_RE.sub(r"\1", fixed)
     # Order matters. A dropped value quote leaves an unbalanced quote that
     # desynchronises the key repair's string tracking: it then reads
     # `"arguments"` as bare text and rewrites it to `""arguments"`. Restoring
     # the value quote first puts the walk back in sync.
     fixed, repairs = _repair_dropped_name_value_quote(fixed)
     fixed, key_repairs = _repair_dropped_key_quote(fixed)
-    repairs += key_repairs
+    repairs += key_repairs + angle_repairs
 
     unclosed = _count_unclosed_braces(fixed)
     if unclosed > 0:
@@ -401,7 +423,28 @@ def extract_tool_calls(response: str, tools: list[dict] | None = None) -> Parsed
     result.text = text.strip()
 
     param_types = _param_types(tools)
-    matches = TOOL_CALL_RE.findall(response)
+
+    # ornith-1.5 batches several calls but closes only the last tag::
+    #
+    #     <tool_call>{...}  <tool_call>{...}  <tool_call>{...}</tool_call>
+    #
+    # TOOL_CALL_RE is non-greedy, so it captures from the first opening tag to
+    # the only closing one and swallows every payload into a single body. Each
+    # fragment is valid on its own, so split them apart — but only when the body
+    # does not parse as it stands, so a value legitimately containing the
+    # literal text `<tool_call>` is never torn in half.
+    matches: list[str] = []
+    for raw_match in TOOL_CALL_RE.findall(response):
+        if "<tool_call>" not in raw_match:
+            matches.append(raw_match)
+            continue
+        try:
+            json.loads(raw_match)
+        except json.JSONDecodeError:
+            matches.extend(f.strip() for f in raw_match.split("<tool_call>") if f.strip())
+        else:
+            matches.append(raw_match)
+
     for raw_match in matches:
         try:
             fixed_raw, repairs = _fix_json(raw_match)

@@ -249,3 +249,69 @@ def test_resume_idempotent():
         db.register_tasks("run-001", ["model-a"], tasks)  # duplicate
         pending = db.get_pending_tasks("run-001", "model-a")
         assert len(pending) == 2
+
+
+def test_dimension_with_no_completed_tasks_scores_zero():
+    """A dimension whose tasks all failed must score 0, not vanish.
+
+    get_dimension_averages filtered to status='completed', so a wholly failed
+    dimension returned no key at all. The report rendered it as 0.00 via
+    .get(d, 0) while compute_composite renormalised over the surviving
+    dimensions — so in run-20260831-163006, ornith's four failed coding tasks
+    were dropped and its composite read 0.80 instead of 0.60. Failing a
+    dimension outright must not beat scoring badly in it.
+    """
+    with _make_db() as db:
+        db.create_run("run-001", ["model-a"])
+        db.register_tasks(
+            "run-001",
+            ["model-a"],
+            [("t1", "research", "easy"), ("t2", "coding", "hard")],
+        )
+        db.save_task_result(
+            run_id="run-001",
+            model_name="model-a",
+            task_id="t1",
+            final_response="r",
+            total_turns=1,
+            total_tool_calls=0,
+            total_latency_ms=100.0,
+            reached_max_turns=False,
+            weighted_score=0.8,
+        )
+        db.save_task_result(
+            run_id="run-001",
+            model_name="model-a",
+            task_id="t2",
+            final_response="",
+            total_turns=1,
+            total_tool_calls=0,
+            total_latency_ms=100.0,
+            reached_max_turns=False,
+            weighted_score=0.0,
+            error="truncated: finish_reason=length",
+        )
+
+        avgs = db.get_dimension_averages("run-001", "model-a")
+        assert avgs["coding"] == 0.0
+        assert abs(avgs["research"] - 0.8) < 0.01
+
+
+def test_dimension_absent_from_run_is_not_reported():
+    """A --dimension filtered run must not gain phantom zero dimensions."""
+    with _make_db() as db:
+        db.create_run("run-002", ["model-a"])
+        db.register_tasks("run-002", ["model-a"], [("t1", "research", "easy")])
+        db.save_task_result(
+            run_id="run-002",
+            model_name="model-a",
+            task_id="t1",
+            final_response="r",
+            total_turns=1,
+            total_tool_calls=0,
+            total_latency_ms=100.0,
+            reached_max_turns=False,
+            weighted_score=0.8,
+        )
+        avgs = db.get_dimension_averages("run-002", "model-a")
+        assert set(avgs) == {"research"}

@@ -613,3 +613,94 @@ def test_qwen38_key_quote_repair_still_works():
     assert len(parsed.tool_calls) == 1
     assert parsed.tool_calls[0].name == "write_file"
     assert parsed.repaired >= 1
+
+
+# --- Ornith defects seen in run-20260831-163006 ---
+#
+# The first live run lost 10 tool calls across 5 tasks to two further defects.
+# Payloads below are verbatim from that run's log.
+
+
+def test_ornith_angle_bracket_for_brace():
+    """`<function"` where `{"function"` belongs — a one-token substitution.
+
+    The model reaches for its native XML form, does not finish it, and
+    completes the payload as JSON.
+    """
+    response = (
+        '<tool_call>\n<function": "web_search", "arguments": '
+        '{"query": "TimesFM foundation model"}}\n</tool_call>'
+    )
+    parsed = extract_tool_calls(response, ORNITH_TOOLS)
+    assert len(parsed.tool_calls) == 1
+    assert parsed.tool_calls[0].name == "web_search"
+    assert parsed.tool_calls[0].arguments == {"query": "TimesFM foundation model"}
+    assert parsed.repaired >= 1
+
+
+def test_ornith_angle_bracket_with_dropped_value_quote():
+    """Both defects at once, as seen on coding_mcp_easy_01."""
+    response = (
+        '<tool_call>\n<function": run_code", "arguments": '
+        '{"command": "go version"}}\n</tool_call>'
+    )
+    parsed = extract_tool_calls(response, ORNITH_TOOLS)
+    assert len(parsed.tool_calls) == 1
+    assert parsed.tool_calls[0].name == "run_code"
+    assert parsed.tool_calls[0].arguments == {"command": "go version"}
+
+
+def test_ornith_angle_bracket_with_fully_bare_value():
+    """coding_wine_medium_01: the value carries no quotes at all."""
+    response = (
+        '<tool_call>\n<function": run_code, "arguments": '
+        '{"command": "ls -la /app"}}\n</tool_call>'
+    )
+    parsed = extract_tool_calls(response, ORNITH_TOOLS)
+    assert len(parsed.tool_calls) == 1
+    assert parsed.tool_calls[0].name == "run_code"
+
+
+def test_bare_value_true_false_null_are_not_quoted():
+    """JSON literals must stay literals, not become strings."""
+    response = '<tool_call>{"name": "search_thoughts", "arguments": {"query": "x", "deep": true}}</tool_call>'
+    parsed = extract_tool_calls(response, ORNITH_TOOLS)
+    assert parsed.tool_calls[0].arguments["deep"] is True
+
+
+def test_ornith_unclosed_tool_call_batch():
+    """Three calls, one closing tag — cost 4 calls on research_finance_hard_01.
+
+    TOOL_CALL_RE is non-greedy, so it captures from the first <tool_call> to the
+    only </tool_call> and swallows all three payloads into one body.
+    """
+    response = (
+        '<tool_call>\n{"name": "search_thoughts", "arguments": {"query": "a"}}\n\n'
+        '<tool_call>\n{"name": "search_thoughts", "arguments": {"query": "b"}}\n\n'
+        '<tool_call>\n{"name": "search_thoughts", "arguments": {"query": "c"}}\n</tool_call>'
+    )
+    parsed = extract_tool_calls(response, ORNITH_TOOLS)
+    assert len(parsed.tool_calls) == 3
+    assert [tc.arguments["query"] for tc in parsed.tool_calls] == ["a", "b", "c"]
+    assert parsed.errors == []
+
+
+def test_properly_closed_batch_still_works():
+    """The normal multi-call case must not regress."""
+    response = (
+        '<tool_call>{"name": "search_thoughts", "arguments": {"query": "a"}}</tool_call>\n'
+        '<tool_call>{"name": "search_thoughts", "arguments": {"query": "b"}}</tool_call>'
+    )
+    parsed = extract_tool_calls(response, ORNITH_TOOLS)
+    assert [tc.arguments["query"] for tc in parsed.tool_calls] == ["a", "b"]
+
+
+def test_angle_bracket_inside_string_is_untouched():
+    """A payload legitimately containing `<function` in a value must survive."""
+    response = (
+        '<tool_call>{"name": "capture_thought", "arguments": '
+        '{"content": "use <function=x> in the template"}}</tool_call>'
+    )
+    parsed = extract_tool_calls(response, ORNITH_TOOLS)
+    assert parsed.tool_calls[0].arguments["content"] == "use <function=x> in the template"
+    assert parsed.repaired == 0

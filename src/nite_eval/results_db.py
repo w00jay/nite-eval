@@ -372,10 +372,24 @@ class ResultsDB:
         ]
 
     def get_dimension_averages(self, run_id: str, model_name: str) -> dict[str, float]:
-        """Get average weighted score per dimension for a model."""
+        """Get average weighted score per dimension for a model.
+
+        A dimension whose tasks all failed averages to 0.0 rather than being
+        omitted. Filtering the whole query to status='completed' dropped such a
+        dimension from the result entirely, and compute_composite renormalises
+        over the keys it is given — so failing a dimension outright scored
+        better than doing badly in it. In run-20260831-163006 ornith's four
+        failed coding tasks were excluded and its composite read 0.80 where
+        the other six models, whose coding counted, would have shown 0.60.
+
+        Grouping over every registered task keeps the dimension present while
+        averaging only the completed ones. A dimension with no tasks in the run
+        at all — a --dimension filtered run — is still absent, as it should be.
+        """
         cursor = self._conn.execute(
-            "SELECT dimension, AVG(weighted_score) FROM task_results "
-            "WHERE run_id = ? AND model_name = ? AND status = 'completed' "
+            "SELECT dimension, "
+            "COALESCE(AVG(CASE WHEN status = 'completed' THEN weighted_score END), 0.0) "
+            "FROM task_results WHERE run_id = ? AND model_name = ? "
             "GROUP BY dimension",
             (run_id, model_name),
         )
