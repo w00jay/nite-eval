@@ -204,7 +204,7 @@ def run_conversation(
             latency = (time.monotonic() - start) * 1000
             total_latency += latency
 
-            parsed = extract_tool_calls(response_text)
+            parsed = extract_tool_calls(response_text, tools)
             repaired_total += parsed.repaired
             turn = TurnResult(
                 turn=turn_num,
@@ -325,7 +325,7 @@ def run_conversation(
                     nudged_text = nudge_reply.text
                     nudge_latency = (time.monotonic() - nudge_start) * 1000
                     total_latency += nudge_latency
-                    nudge_parsed = extract_tool_calls(nudged_text)
+                    nudge_parsed = extract_tool_calls(nudged_text, tools)
                     nudge_turn = TurnResult(
                         turn=turn_num + 1,
                         response=nudged_text,
@@ -414,6 +414,7 @@ def run_conversation(
                     turn_num + 1,
                     turns,
                     chat_template_kwargs,
+                    tools,
                 )
                 cap_nudged = True
                 break
@@ -440,6 +441,7 @@ def run_conversation(
                 max_turns + 1,
                 turns,
                 chat_template_kwargs,
+                tools,
             )
 
         # The synthesis nudge produces the final answer on this path, so a
@@ -562,6 +564,7 @@ def _try_nudge(
     turn_number: int,
     turns: list[TurnResult],
     chat_template_kwargs: dict | None = None,
+    tools: list[dict] | None = None,
 ) -> float:
     """Append a synthesis-nudge user message and collect the model's reply.
 
@@ -586,7 +589,7 @@ def _try_nudge(
             f"({len(messages)} messages, max_tokens={max_tokens}): {body}"
         ) from e
     nudge_latency = (time.monotonic() - nudge_start) * 1000
-    nudge_parsed = extract_tool_calls(nudged_text)
+    nudge_parsed = extract_tool_calls(nudged_text, tools)
     turns.append(
         TurnResult(
             turn=turn_number,

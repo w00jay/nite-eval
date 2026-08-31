@@ -29,6 +29,18 @@ GEMMA_CHANNEL_RE = re.compile(r"<\|channel>(.*?)<channel\|>", re.DOTALL)
 GEMMA_CALL_PREFIX_RE = re.compile(r"\s*call:([A-Za-z_][A-Za-z0-9_]*)\s*(\{.*\})\s*$", re.DOTALL)
 GEMMA_STRING_DELIM = '<|"|>'
 
+# Ornith's chat template hardcodes an XML tool-call format rather than Hermes JSON:
+#   <tool_call>
+#   <function=write_file>
+#   <parameter=path>
+#   auth.go
+#   </parameter>
+#   </function>
+#   </tool_call>
+# The body is not JSON, so the Hermes path raises and the call would be dropped.
+XML_FUNCTION_RE = re.compile(r"<function=([A-Za-z_][A-Za-z0-9_]*)\s*>(.*?)</function>", re.DOTALL)
+XML_PARAMETER_RE = re.compile(r"<parameter=([A-Za-z_][A-Za-z0-9_.\-]*)\s*>(.*?)</parameter>", re.DOTALL)
+
 
 @dataclass
 class ToolCall:
@@ -201,6 +213,63 @@ def _quote_bare_keys(s: str) -> str:
     return "".join(out)
 
 
+def _param_types(tools: list[dict] | None) -> dict[str, dict[str, str]]:
+    """Map function name -> {param name -> declared JSON type} from tool schemas."""
+    types: dict[str, dict[str, str]] = {}
+    for tool in tools or []:
+        func = tool.get("function", {})
+        name = func.get("name")
+        if not name:
+            continue
+        props = func.get("parameters", {}).get("properties", {})
+        types[name] = {k: v.get("type") for k, v in props.items() if isinstance(v, dict)}
+    return types
+
+
+def _coerce_xml_value(raw: str, json_type: str | None) -> object:
+    """Coerce an XML parameter body to the type its schema declares.
+
+    XML carries no type information — every value arrives as text — so the
+    declared schema type decides. Without a schema the value stays a string:
+    guessing would corrupt string parameters, and a coding task writing a JSON
+    file passes a `content` that looks exactly like an object.
+    """
+    if json_type in (None, "string"):
+        return raw
+    try:
+        match json_type:
+            case "integer":
+                return int(raw.strip())
+            case "number":
+                f = float(raw.strip())
+                return int(f) if f.is_integer() else f
+            case "boolean":
+                s = raw.strip().lower()
+                if s in ("true", "false"):
+                    return s == "true"
+                return raw
+            case "array" | "object":
+                return json.loads(raw.strip())
+    except (ValueError, json.JSONDecodeError):
+        return raw
+    return raw
+
+
+def _extract_xml_tool_calls(segment: str, param_types: dict[str, dict[str, str]]) -> list[ToolCall]:
+    """Extract Ornith-style `<function=NAME><parameter=KEY>…` calls."""
+    calls: list[ToolCall] = []
+    for name, body in XML_FUNCTION_RE.findall(segment):
+        declared = param_types.get(name, {})
+        args: dict = {}
+        for key, value in XML_PARAMETER_RE.findall(body):
+            # Values sit on their own line between the tags. Strip only the
+            # framing newlines — leading spaces and tabs are real indentation
+            # in a file being written.
+            args[key] = _coerce_xml_value(value.strip("\n"), declared.get(key))
+        calls.append(ToolCall(name=name, arguments=args, raw=body))
+    return calls
+
+
 def _extract_gemma_tool_calls(response: str) -> tuple[list[ToolCall], list[dict]]:
     """Extract Gemma-format tool calls. Returns (calls, errors)."""
     calls: list[ToolCall] = []
@@ -237,12 +306,18 @@ def _extract_gemma_tool_calls(response: str) -> tuple[list[ToolCall], list[dict]
     return calls, errors
 
 
-def extract_tool_calls(response: str) -> ParsedResponse:
+def extract_tool_calls(response: str, tools: list[dict] | None = None) -> ParsedResponse:
     """Extract all tool calls and scratch pad from a Hermes-format response.
 
     Falls back to Gemma/Harmony-style `<|tool_call>call:FUNC{…}<tool_call|>`
     when no Hermes tool calls are present — lets gemma4 models participate
     in tool-driven tasks instead of being silently handicapped.
+
+    Also falls back to Ornith's XML style, `<function=NAME><parameter=KEY>…`,
+    which appears inside `<tool_call>` tags where JSON is expected. `tools`
+    supplies the schemas used to type XML values, which arrive as text; pass it
+    whenever the caller has them, or integer and boolean parameters will stay
+    strings and fail validation.
     """
     result = ParsedResponse()
 
@@ -255,8 +330,10 @@ def extract_tool_calls(response: str) -> ParsedResponse:
     text = SCRATCH_PAD_RE.sub("", text)
     text = GEMMA_TOOL_CALL_RE.sub("", text)
     text = GEMMA_CHANNEL_RE.sub("", text)
+    text = XML_FUNCTION_RE.sub("", text)
     result.text = text.strip()
 
+    param_types = _param_types(tools)
     matches = TOOL_CALL_RE.findall(response)
     for raw_match in matches:
         try:
@@ -266,6 +343,13 @@ def extract_tool_calls(response: str) -> ParsedResponse:
                 logger.warning("Repaired %d malformed JSON key(s) in tool call", repairs)
                 result.repaired += repairs
         except json.JSONDecodeError:
+            # Ornith puts XML where JSON belongs. Try it before giving up —
+            # a discarded call ends the turn with no tools and the judge
+            # scores a tool-less answer.
+            xml_calls = _extract_xml_tool_calls(raw_match, param_types)
+            if xml_calls:
+                result.tool_calls.extend(xml_calls)
+                continue
             result.errors.append({"error": "malformed_json", "raw": raw_match})
             continue
 
@@ -301,6 +385,12 @@ def extract_tool_calls(response: str) -> ParsedResponse:
             channel_match = GEMMA_CHANNEL_RE.search(response)
             if channel_match:
                 result.scratch_pad = channel_match.group(1).strip()
+
+    # Models routinely drop the <tool_call> wrapper the template mandates.
+    # Only runs when nothing else parsed, so a valid Hermes or Gemma response
+    # is never re-read here.
+    if not result.tool_calls and XML_FUNCTION_RE.search(response):
+        result.tool_calls.extend(_extract_xml_tool_calls(response, param_types))
 
     return result
 

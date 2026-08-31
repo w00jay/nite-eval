@@ -389,3 +389,157 @@ def test_genuinely_truncated_json_still_gets_closing_braces():
     import json as _json
 
     assert _json.loads(fixed)["arguments"]["path"] == "/a"
+
+
+# --- Ornith XML-format parsing (ornith-1.5-35b-a3b) ---
+#
+# Ornith's chat template hardcodes an XML tool-call format:
+#   <tool_call><function=NAME><parameter=KEY>value</parameter></function></tool_call>
+# The body is not JSON, so the Hermes path raises JSONDecodeError. Without a
+# fallback every Ornith tool call is discarded as malformed_json and the model
+# is scored on a tool-less answer.
+
+XML_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
+                "required": ["path", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer"},
+                    "fuzzy": {"type": "boolean"},
+                    "tags": {"type": "array"},
+                    "opts": {"type": "object"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+]
+
+
+def test_xml_single_call():
+    response = (
+        "<tool_call>\n<function=search>\n<parameter=query>\nrust ownership\n</parameter>\n</function>\n</tool_call>"
+    )
+    parsed = extract_tool_calls(response, XML_TOOLS)
+    assert len(parsed.tool_calls) == 1
+    assert parsed.tool_calls[0].name == "search"
+    assert parsed.tool_calls[0].arguments == {"query": "rust ownership"}
+    assert parsed.errors == []
+
+
+def test_xml_multiline_value_preserved():
+    """Multi-line values must survive verbatim — this is how files get written."""
+    body = 'package auth\n\nimport (\n\t"fmt"\n)\n'
+    response = (
+        f"<tool_call>\n<function=write_file>\n<parameter=path>\nauth.go\n</parameter>\n"
+        f"<parameter=content>\n{body}</parameter>\n</function>\n</tool_call>"
+    )
+    parsed = extract_tool_calls(response, XML_TOOLS)
+    assert parsed.tool_calls[0].arguments["path"] == "auth.go"
+    assert parsed.tool_calls[0].arguments["content"] == body.rstrip("\n")
+
+
+def test_xml_typed_coercion_against_schema():
+    """XML carries no types; the declared schema type decides."""
+    response = (
+        "<tool_call>\n<function=search>\n"
+        "<parameter=query>\nx\n</parameter>\n"
+        "<parameter=limit>\n5\n</parameter>\n"
+        "<parameter=fuzzy>\ntrue\n</parameter>\n"
+        '<parameter=tags>\n["a", "b"]\n</parameter>\n'
+        '<parameter=opts>\n{"deep": true}\n</parameter>\n'
+        "</function>\n</tool_call>"
+    )
+    parsed = extract_tool_calls(response, XML_TOOLS)
+    args = parsed.tool_calls[0].arguments
+    assert args["limit"] == 5
+    assert args["fuzzy"] is True
+    assert args["tags"] == ["a", "b"]
+    assert args["opts"] == {"deep": True}
+    assert validate_tool_calls(parsed, XML_TOOLS) == []
+
+
+def test_xml_string_param_is_never_coerced():
+    """A JSON-looking string param stays a string — coding tasks write JSON files."""
+    response = (
+        "<tool_call>\n<function=write_file>\n"
+        "<parameter=path>\nconfig.json\n</parameter>\n"
+        '<parameter=content>\n{"a": 1}\n</parameter>\n'
+        "</function>\n</tool_call>"
+    )
+    parsed = extract_tool_calls(response, XML_TOOLS)
+    assert parsed.tool_calls[0].arguments["content"] == '{"a": 1}'
+    assert validate_tool_calls(parsed, XML_TOOLS) == []
+
+
+def test_xml_without_schema_keeps_strings():
+    """No tools passed: stay a string rather than guessing a type."""
+    response = "<tool_call>\n<function=search>\n<parameter=limit>\n5\n</parameter>\n</function>\n</tool_call>"
+    parsed = extract_tool_calls(response)
+    assert parsed.tool_calls[0].arguments["limit"] == "5"
+
+
+def test_xml_multiple_calls():
+    response = (
+        "<tool_call>\n<function=search>\n<parameter=query>\na\n</parameter>\n</function>\n</tool_call>\n"
+        "<tool_call>\n<function=search>\n<parameter=query>\nb\n</parameter>\n</function>\n</tool_call>"
+    )
+    parsed = extract_tool_calls(response, XML_TOOLS)
+    assert [tc.arguments["query"] for tc in parsed.tool_calls] == ["a", "b"]
+
+
+def test_xml_zero_arg_call():
+    response = "<tool_call>\n<function=list_files>\n</function>\n</tool_call>"
+    parsed = extract_tool_calls(response, XML_TOOLS)
+    assert parsed.tool_calls[0].name == "list_files"
+    assert parsed.tool_calls[0].arguments == {}
+
+
+def test_xml_stripped_from_text():
+    """Raw XML must not leak into the answer the judge sees."""
+    response = (
+        "Let me look that up.\n<tool_call>\n<function=search>\n"
+        "<parameter=query>\nx\n</parameter>\n</function>\n</tool_call>"
+    )
+    parsed = extract_tool_calls(response, XML_TOOLS)
+    assert "<function=" not in parsed.text
+    assert parsed.text == "Let me look that up."
+
+
+def test_xml_without_tool_call_wrapper():
+    """Models drop the wrapper; the call should still be found."""
+    response = "<function=search>\n<parameter=query>\nunwrapped\n</parameter>\n</function>"
+    parsed = extract_tool_calls(response, XML_TOOLS)
+    assert len(parsed.tool_calls) == 1
+    assert parsed.tool_calls[0].arguments == {"query": "unwrapped"}
+
+
+def test_hermes_still_wins_over_xml():
+    """A valid Hermes call must not be reparsed by the XML path."""
+    response = '<tool_call>{"name": "search", "arguments": {"query": "hermes"}}</tool_call>'
+    parsed = extract_tool_calls(response, XML_TOOLS)
+    assert len(parsed.tool_calls) == 1
+    assert parsed.tool_calls[0].arguments == {"query": "hermes"}
+
+
+def test_xml_malformed_still_errors():
+    """Junk inside <tool_call> that is neither JSON nor XML stays an error."""
+    response = "<tool_call>\nnot json and not xml\n</tool_call>"
+    parsed = extract_tool_calls(response, XML_TOOLS)
+    assert parsed.tool_calls == []
+    assert parsed.errors[0]["error"] == "malformed_json"
