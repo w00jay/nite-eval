@@ -286,12 +286,15 @@ Per-model notes:
   are linear attention. `block_count` reads 41 because the GGUF also carries a
   multi-token-prediction block (`blk.40.nextn.*`); whether llama.cpp uses it is
   unverified. Its larger vocabulary (248320) accounts for most of the
-  parameter difference against qwen3.6. **Thinking stays on**, unlike the other
-  reasoning models here: `enable_thinking: false` is its only reasoning switch
-  and it degrades the model's output structure badly. It is also the only model
-  with `native_tools: true` — see "Native tool calling" below; without it the
-  model is asked to hand-write tool-call JSON in prose and improvises a
-  different malformation nearly every turn. It
+  parameter difference against qwen3.6. It runs with `enable_thinking: false`
+  and is the only model with `native_tools: true` — see "Native tool calling"
+  below. The two go together: thinking off used to wreck its hand-written
+  tool-call JSON (1/8 parseable against 8/8), which no longer matters once the
+  server produces the call. Measured both ways on 15 tasks, thinking off is
+  +0.05 composite and 15/15 tasks against 12/15, almost all of it coding
+  (0.22 -> 0.49) against a smaller agentic loss (0.80 -> 0.72). This is not
+  qwen3.8's finding, where thinking off cost research 0.80 -> 0.63; Ornith's
+  research did not move. It
   needs `chat_template_kwargs: {enable_thinking: false}`; its template has no
   `/no_think` branch and no `reasoning_effort`, so the reasoning switch is
   binary. **Not yet validated on this harness:** at 20.2 GiB it is the largest
