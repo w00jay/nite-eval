@@ -301,6 +301,7 @@ def run_task(
     system_suffix: str = "",
     chat_template_kwargs: dict | None = None,
     native_tools: bool = False,
+    reasoning_continuations: int = 0,
 ) -> float:
     """Run a single task for a model and persist results. Returns weighted score."""
     db.mark_task_running(run_id, model_name, task.id)
@@ -349,6 +350,7 @@ def run_task(
         system_suffix=system_suffix,
         chat_template_kwargs=chat_template_kwargs,
         native_tools=native_tools,
+        reasoning_continuations=reasoning_continuations,
     )
 
     if conv.error:
@@ -548,6 +550,10 @@ def main() -> None:
     # path and it returns clean calls there; asked to hand-write JSON in prose
     # it emitted four distinct malformation classes across three runs.
     native_tools_by_model: dict[str, bool] = {m["name"]: bool(m.get("native_tools")) for m in models_cfg}
+    # Turns a model may spend reasoning past its budget before the task is
+    # failed. Off by default: it changes what a truncation means, so only a
+    # model configured for it gets the extra turns.
+    continuations_by_model: dict[str, int] = {m["name"]: int(m.get("reasoning_continuations") or 0) for m in models_cfg}
 
     # Check servers
     if not args.skip_server_check:
@@ -676,6 +682,7 @@ def main() -> None:
                         system_suffix=system_suffix_by_model.get(model, ""),
                         chat_template_kwargs=template_kwargs_by_model.get(model) or None,
                         native_tools=native_tools_by_model.get(model, False),
+                        reasoning_continuations=continuations_by_model.get(model, 0),
                     )
                 except Exception:
                     logger.exception("Task %s failed for %s", task.id, model)

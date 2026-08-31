@@ -105,6 +105,21 @@ MAX_PARSE_RETRIES = 1
 # file-sized payloads are affected.
 COMPACT_TOOL_CALL_OVER = 1500
 
+# How much of an interrupted reasoning turn to carry into the next one. The
+# whole thing cannot be replayed: a turn truncated at 32768 tokens plus a fresh
+# 32768-token turn is the entire 65536 context, leaving no room for the task.
+# The tail is kept because that is where the model's conclusions land — ornith's
+# interrupted turn ended on "I think I'm way overthinking this. Let me make a
+# pragmatic decision". If a decision is made early and then second-guessed this
+# keeps the doubt and drops the decision; there is no way to tell which without
+# a second model call, so the cheap heuristic is used deliberately.
+CARRY_REASONING_TAIL = 4000
+
+REASONING_CONTINUATION_NUDGE = (
+    "You reached the generation limit for that turn, so your reasoning was cut off. "
+    "Do not restate it. Make your next tool call now, or give your final answer."
+)
+
 # Below this a tool-free turn is treated as a fragment rather than a synthesis,
 # though it is still preferred over no answer at all.
 MIN_FINAL_ANSWER_CHARS = 20
@@ -132,6 +147,10 @@ class ConversationResult:
     # Tool calls that parsed only after JSON repair — a model-quality signal
     # that must stay visible, not be absorbed by the parser.
     repaired_tool_calls: int = 0
+    # Turns that ran out of budget mid-reasoning and were given another one.
+    # Counted for the same reason as repairs: this changes what a score means,
+    # so it has to be visible rather than silently improving results.
+    reasoning_continuations: int = 0
 
 
 def run_conversation(
@@ -149,6 +168,7 @@ def run_conversation(
     system_suffix: str = "",
     chat_template_kwargs: dict | None = None,
     native_tools: bool = False,
+    reasoning_continuations: int = 0,
 ) -> ConversationResult:
     """Run a multi-turn conversation with Hermes-format tool calling.
 
@@ -191,6 +211,7 @@ def run_conversation(
     cap_nudged = False  # Set when the max_tool_calls nudge fires so the max_turns nudge doesn't double-nudge.
     parse_retries = 0  # Corrective retries spent on unparsable tool calls.
     repaired_total = 0  # Tool calls salvaged by JSON repair.
+    continuations_used = 0  # Reasoning turns granted another budget.
 
     # Per-request timeout stays module-level and generous: conflating it with
     # the task budget caused spurious ReadTimeouts when one generation ran
@@ -217,6 +238,7 @@ def run_conversation(
                     total_latency_ms=total_latency,
                     reached_max_turns=False,
                     repaired_tool_calls=repaired_total,
+                    reasoning_continuations=continuations_used,
                     error=(
                         f"task_timeout: {elapsed:.0f}s exceeded budget of {timeout_seconds:.0f}s "
                         f"after {len(turns)} turns / {total_tool_calls} tool calls"
@@ -272,12 +294,46 @@ def run_conversation(
                         total_latency_ms=total_latency,
                         reached_max_turns=False,
                         repaired_tool_calls=repaired_total,
+                        reasoning_continuations=continuations_used,
                         error=(
                             f"degenerate_repetition: {unit!r} repeated {repeats} times on turn "
                             f"{turn_num}, {repeats * len(unit) / len(response_text):.0%} of "
                             f"{len(response_text)} chars — model looped, not a budget shortfall"
                         ),
                     )
+                # A turn that spent its whole budget reasoning and emitted
+                # nothing else is a different failure from one cut off mid
+                # answer: the thinking may be sound and the model would act on
+                # the next turn. Give it one, for models configured to expect
+                # it. Only pure prose qualifies — a call cut mid-write is
+                # unusable and resuming risks emitting it twice — and the
+                # degenerate check above still runs first.
+                # An unclosed "<tool_call>" leaves nothing for the parser to
+                # find, so parsed.tool_calls and parsed.errors are both empty
+                # and a call cut mid-write would look like pure prose. Check the
+                # raw text for the attempt as well.
+                attempted_call = "<tool_call>" in response_text or "<function=" in response_text
+                if (
+                    continuations_used < reasoning_continuations
+                    and not parsed.tool_calls
+                    and not parsed.errors
+                    and not attempted_call
+                ):
+                    continuations_used += 1
+                    logger.info(
+                        "Turn %d ran out of budget mid-reasoning (%d chars); continuing (%d/%d)",
+                        turn_num,
+                        len(response_text),
+                        continuations_used,
+                        reasoning_continuations,
+                    )
+                    carried = response_text[-CARRY_REASONING_TAIL:]
+                    if len(response_text) > CARRY_REASONING_TAIL:
+                        carried = "[earlier reasoning truncated]\n" + carried
+                    messages.append(Message(role="assistant", content=carried))
+                    messages.append(Message(role="user", content=REASONING_CONTINUATION_NUDGE))
+                    continue
+
                 return ConversationResult(
                     turns=turns,
                     final_response="",
@@ -285,6 +341,7 @@ def run_conversation(
                     total_latency_ms=total_latency,
                     reached_max_turns=False,
                     repaired_tool_calls=repaired_total,
+                    reasoning_continuations=continuations_used,
                     error=(
                         f"truncated: finish_reason=length on turn {turn_num} "
                         f"({len(response_text)} chars, max_tokens={max_tokens})"
@@ -334,6 +391,7 @@ def run_conversation(
                     total_latency_ms=total_latency,
                     reached_max_turns=False,
                     repaired_tool_calls=repaired_total,
+                    reasoning_continuations=continuations_used,
                     error=(
                         f"unparsed_tool_call: {len(parsed.errors)} on turn {turn_num} "
                         f"({', '.join(kinds)}) after {parse_retries} retry; raw: {bad_raw!r}"
@@ -402,6 +460,7 @@ def run_conversation(
                     total_latency_ms=total_latency,
                     reached_max_turns=False,
                     repaired_tool_calls=repaired_total,
+                    reasoning_continuations=continuations_used,
                 )
 
             # Execute tool calls and build response messages. Gemma-family
@@ -502,6 +561,7 @@ def run_conversation(
                 total_latency_ms=total_latency,
                 reached_max_turns=True,
                 repaired_tool_calls=repaired_total,
+                reasoning_continuations=continuations_used,
                 error=(
                     f"truncated: finish_reason=length on synthesis nudge "
                     f"({len(turns[-1].response)} chars, max_tokens={max_tokens})"
@@ -516,6 +576,7 @@ def run_conversation(
             total_latency_ms=total_latency,
             reached_max_turns=True,
             repaired_tool_calls=repaired_total,
+            reasoning_continuations=continuations_used,
         )
 
     except Exception as e:
