@@ -195,6 +195,50 @@ def _repair_dropped_name_value_quote(s: str) -> tuple[str, int]:
     return "".join(out), repairs
 
 
+XML_CLOSER_TAIL_RE = re.compile(r"(?:\s*</[A-Za-z_][A-Za-z0-9_.\-]*>)+\s*$")
+XML_NAME_ONLY_RE = re.compile(r"^\s*<function=([A-Za-z_][A-Za-z0-9_]*)\s*>\s*$")
+
+
+def _strip_trailing_xml_closers(s: str) -> tuple[str, int]:
+    """Drop XML closing tags that terminate a payload which began as JSON.
+
+    ornith-1.5 switches format mid-call: it opens in JSON and closes in XML,
+    ending with </parameter>, </function>, or a tag named after the parameter
+    itself, instead of the JSON `"}}`::
+
+        <function": run_code", "arguments": {"command": "go env"
+        </parameter>
+        </function>
+
+    Only a run of closers at the very end is removed, so markup inside a string
+    value — a `content` holding HTML — is untouched.
+
+    Returns (stripped, count).
+    """
+    stripped, n = XML_CLOSER_TAIL_RE.subn("", s)
+    return stripped, (1 if n else 0)
+
+
+def _close_unterminated_string(s: str) -> tuple[str, int]:
+    """Close a JSON string left open by a payload that stopped mid-value."""
+    in_string = False
+    i = 0
+    while i < len(s):
+        ch = s[i]
+        if in_string:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == '"':
+                in_string = False
+        elif ch == '"':
+            in_string = True
+        i += 1
+    if in_string:
+        return s + '"', 1
+    return s, 0
+
+
 def _count_unclosed_braces(s: str) -> int:
     """Count braces that are outside string literals.
 
@@ -253,6 +297,12 @@ def _fix_json(raw: str) -> tuple[str, int]:
     fixed, repairs = _repair_dropped_name_value_quote(fixed)
     fixed, key_repairs = _repair_dropped_key_quote(fixed)
     repairs += key_repairs + angle_repairs
+
+    # A payload that switched to XML mid-call: drop the trailing closers, then
+    # close whatever JSON they replaced.
+    fixed, closer_repairs = _strip_trailing_xml_closers(fixed)
+    fixed, string_repairs = _close_unterminated_string(fixed)
+    repairs += closer_repairs + string_repairs
 
     unclosed = _count_unclosed_braces(fixed)
     if unclosed > 0:
@@ -444,6 +494,35 @@ def extract_tool_calls(response: str, tools: list[dict] | None = None) -> Parsed
             matches.extend(f.strip() for f in raw_match.split("<tool_call>") if f.strip())
         else:
             matches.append(raw_match)
+
+    # A third hybrid: the name arrives in XML with no </function>, and the
+    # arguments follow as a bare JSON object in a nested <tool_call>::
+    #
+    #     <function=web_search>
+    #     <tool_call>
+    #     {"query": "..."}
+    #
+    # Splitting above leaves the name and its arguments as separate fragments;
+    # rejoin them so neither is discarded as malformed_json / missing_name.
+    merged: list[str] = []
+    pending_name: str | None = None
+    for frag in matches:
+        name_only = XML_NAME_ONLY_RE.match(frag)
+        if name_only:
+            pending_name = name_only.group(1)
+            continue
+        if pending_name is not None:
+            try:
+                args = json.loads(_fix_json(frag)[0])
+            except json.JSONDecodeError:
+                args = None
+            if isinstance(args, dict):
+                merged.append(json.dumps({"name": pending_name, "arguments": args}))
+                pending_name = None
+                continue
+            pending_name = None
+        merged.append(frag)
+    matches = merged
 
     for raw_match in matches:
         try:

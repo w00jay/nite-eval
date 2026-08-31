@@ -704,3 +704,58 @@ def test_angle_bracket_inside_string_is_untouched():
     parsed = extract_tool_calls(response, ORNITH_TOOLS)
     assert parsed.tool_calls[0].arguments["content"] == "use <function=x> in the template"
     assert parsed.repaired == 0
+
+
+# --- Ornith mid-payload format switching (run-20260831-170238) ---
+#
+# The model opens a call in JSON and closes it in XML, terminating with
+# </parameter>, </function> or a tag named after the parameter itself, instead
+# of the JSON `"}}`. Payloads verbatim from that run's final_response column.
+
+
+def test_ornith_json_start_xml_close_with_terminated_string():
+    """coding_mcp_easy_01: value quote present, JSON braces never closed."""
+    response = (
+        '<tool_call>\n<function": run_code", "arguments": '
+        '{"command": "go env GOPATH GOMODCACHE"\n</parameter>\n</function>\n</tool_call>'
+    )
+    parsed = extract_tool_calls(response, ORNITH_TOOLS)
+    assert len(parsed.tool_calls) == 1
+    assert parsed.tool_calls[0].name == "run_code"
+    assert parsed.tool_calls[0].arguments["command"] == "go env GOPATH GOMODCACHE"
+
+
+def test_ornith_json_start_xml_close_with_unterminated_string():
+    """coding_wine_medium_01: the content string is not closed either."""
+    response = (
+        '<tool_call>\n<function": write_file, "arguments": '
+        '{"path": "/app/a.ts", "content": "export default createHandler;\n</content>\n</tool_call>'
+    )
+    parsed = extract_tool_calls(response, ORNITH_TOOLS)
+    assert len(parsed.tool_calls) == 1
+    assert parsed.tool_calls[0].name == "write_file"
+    assert parsed.tool_calls[0].arguments["path"] == "/app/a.ts"
+    assert "createHandler" in parsed.tool_calls[0].arguments["content"]
+
+
+def test_ornith_xml_name_with_json_arguments():
+    """research_mcp_easy_01: XML name, no </function>, args as nested JSON."""
+    response = (
+        "<tool_call>\n<function=web_search>\n<tool_call>\n"
+        '{"query": "Docker mcp-gateway"}\n</tool_call>'
+    )
+    parsed = extract_tool_calls(response, ORNITH_TOOLS)
+    assert len(parsed.tool_calls) == 1
+    assert parsed.tool_calls[0].name == "web_search"
+    assert parsed.tool_calls[0].arguments == {"query": "Docker mcp-gateway"}
+
+
+def test_xml_closer_inside_string_value_is_kept():
+    """A payload legitimately ending with markup in its value must survive."""
+    response = (
+        '<tool_call>{"name": "write_file", "arguments": '
+        '{"path": "a.html", "content": "<div>hi</div>"}}</tool_call>'
+    )
+    parsed = extract_tool_calls(response, ORNITH_TOOLS)
+    assert parsed.tool_calls[0].arguments["content"] == "<div>hi</div>"
+    assert parsed.repaired == 0
