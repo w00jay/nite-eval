@@ -6,11 +6,12 @@ Produces a comparison report.
 
 Usage:
     # Start each judge one at a time on port 9091, run this script for each:
-    uv run python scripts/run_calibration.py --judge-model selene-1-mini \
-        --judge-gguf ~/models/Selene-1-Mini-Llama-3.1-8B-Q6_K.gguf
+    uv run python scripts/run_calibration.py --judge-model reward-anything \
+        --judge-gguf ~/models/RewardAnything-8B-v1.Q6_K.gguf
 
-    # Or if the judge is already running:
-    uv run python scripts/run_calibration.py --judge-model selene-1-mini --skip-start
+    # Or if the judge is already running (run_nightly.sh serves reward-anything
+    # on 9091 and flow-judge on 9092):
+    uv run python scripts/run_calibration.py --judge-model flow-judge --skip-start
 """
 
 import argparse

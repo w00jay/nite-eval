@@ -20,7 +20,12 @@ JSON_BLOCK_RE = re.compile(r"\{[^{}]*\}", re.DOTALL)
 SCORE_FALLBACK_RE = re.compile(r"(?:\"score\"|score)\s*[:=]\s*(\d(?:\.\d)?)", re.IGNORECASE)
 
 DEFAULT_JUDGE_URL = "http://127.0.0.1:9091/v1"
-DEFAULT_JUDGE_MODEL = "selene-1-mini"
+# Matches the model name run_nightly.sh serves on DEFAULT_JUDGE_URL. Was
+# "selene-1-mini", whose GGUF is gone and which no launcher has served since
+# the pipeline moved to the RewardAnything/Flow-Judge pair — so any caller
+# relying on this default (scripts/smoke_test.py) was asking port 9091 for a
+# model that was not loaded there.
+DEFAULT_JUDGE_MODEL = "reward-anything"
 
 
 @dataclass
