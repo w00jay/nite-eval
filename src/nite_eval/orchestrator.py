@@ -300,6 +300,7 @@ def run_task(
     eval_cfg: dict,
     system_suffix: str = "",
     chat_template_kwargs: dict | None = None,
+    native_tools: bool = False,
 ) -> float:
     """Run a single task for a model and persist results. Returns weighted score."""
     db.mark_task_running(run_id, model_name, task.id)
@@ -347,6 +348,7 @@ def run_task(
         max_tokens=task.max_tokens or eval_cfg.get("max_tokens", 2048),
         system_suffix=system_suffix,
         chat_template_kwargs=chat_template_kwargs,
+        native_tools=native_tools,
     )
 
     if conv.error:
@@ -540,6 +542,12 @@ def main() -> None:
     # Jinja template. Qwen3.8's template has no `/no_think` branch — its only
     # thinking switch is `{"enable_thinking": false}`.
     template_kwargs_by_model: dict[str, dict] = {m["name"]: m.get("chat_template_kwargs") or {} for m in models_cfg}
+    # Opt-in per model: send tool schemas in the request and read the server's
+    # structured tool_calls, instead of pasting definitions into the prompt and
+    # parsing the reply out of text. Ornith's documented usage is the native
+    # path and it returns clean calls there; asked to hand-write JSON in prose
+    # it emitted four distinct malformation classes across three runs.
+    native_tools_by_model: dict[str, bool] = {m["name"]: bool(m.get("native_tools")) for m in models_cfg}
 
     # Check servers
     if not args.skip_server_check:
@@ -667,6 +675,7 @@ def main() -> None:
                         eval_cfg,
                         system_suffix=system_suffix_by_model.get(model, ""),
                         chat_template_kwargs=template_kwargs_by_model.get(model) or None,
+                        native_tools=native_tools_by_model.get(model, False),
                     )
                 except Exception:
                     logger.exception("Task %s failed for %s", task.id, model)

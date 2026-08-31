@@ -70,6 +70,23 @@ models:
 
   - name: "ornith-1.5-35b-a3b"
     backend: "llama.cpp"
+    # Ornith only. Its documented usage passes `tools` in the request and reads
+    # structured message.tool_calls; llama-server renders the model's own
+    # template and parses the call back. Probed on the live model: 5/5 clean
+    # calls, correct types (limit arrived as int), zero repairs.
+    #
+    # The harness default — tool definitions pasted into the system prompt, the
+    # reply parsed out of text — asks this model to hand-write JSON in prose,
+    # and it improvised a different malformation nearly every turn: dropped
+    # name-value quotes, `<function":` for `{"function":`, unclosed <tool_call>
+    # batches, JSON opened and closed in XML, closing tags used as openers.
+    # Three runs of repairs took it 8/15 -> 10/15 -> 12/15 and still needed 52
+    # repairs across 26 calls on coding_wine_medium_01 alone.
+    #
+    # Deliberately not switched on for the other six: it changes what a model is
+    # asked to do, so their scores would move and stop being comparable to the
+    # existing baseline. Ornith has no baseline to protect.
+    native_tools: true
     # Thinking stays ON, deliberately, unlike every other reasoning model here.
     #
     # Its template's only reasoning switch is `enable_thinking` (there is no
