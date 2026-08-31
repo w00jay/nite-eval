@@ -17,23 +17,67 @@ Each task runs as a multi-turn conversation. Research, planning and agentic task
 
 ## Sample results
 
-Run `run-20260418-234519` on the reference hardware, 5 models × 15 tasks, `max_tokens=4096`, qwen3.6 with `/no_think`:
+Run `run-20260830-231628` on the reference hardware, 6 models × 15 tasks, current
+harness, llama.cpp `cd26896c1`. This is the six-model re-baseline that earlier
+revisions of this section listed as pending.
 
-> **Superseded as of 2026-08-30 — do not cite these numbers.** The harness was
-> scoring failures as answers: truncated generations were judged as complete,
-> `automated` criteria were hardcoded to `0.0`, `deterministic` criteria returned
-> a free `1.0`, checklists matched on single keywords, and the judge prompt
-> capped scores at 1/3/5. A six-model re-baseline on the current harness is
-> pending; until then this table records what the old harness produced, not what
-> the models do.
->
-> **Also stale as of 2026-08-21.** These numbers were produced on llama.cpp build
-> 8642 (`7c7d6ce5c`, 2026-04-03). That build cannot load `qwen3.8-27b`, so
-> llama.cpp was updated to `cd26896c1` (2026-08-20) and a full re-baseline of
-> all 6 models is pending. Scores below are not directly comparable to anything
-> produced on the newer binary — sampler defaults, chat-template handling, and
-> CUDA kernels all changed across those 4.5 months. The `docs/comparisons/`
-> analysis rests on this same baseline.
+| Model | Research | Planning | Coding | Agentic | Composite | Tasks |
+|-------|---------:|---------:|-------:|--------:|----------:|------:|
+| **qwen3.8-27b** | 0.85 | 0.79 | 0.93 | 0.84 | **0.85** | 15/15 |
+| qwen3.6-35b-a3b-strix (Q4_K_M) | 0.76 | 0.74 | 0.57 | 0.78 | 0.71 | 12/15 |
+| qwen3.5-9b | 0.77 | 0.74 | 0.58 | 0.72 | 0.70 | 12/15 |
+| qwen3.5-27b | 0.84 | 0.72 | 0.43 | 0.77 | 0.69 | 13/15 |
+| qwen3.6-35b-a3b (UD-Q4_K_S) | 0.73 | 0.75 | 0.54 | 0.73 | 0.69 | 13/15 |
+| gemma4-26b-a4b | 0.67 | 0.71 | 0.34 | 0.80 | 0.63 | 13/15 |
+
+**Only the top gap is real.** Composite differences below
+`scoring.min_detectable_difference` (0.05) are inside judge variance. Three
+adjacent pairs cannot be separated by this run — strix/qwen3.5-9b (0.010),
+qwen3.5-9b/qwen3.5-27b (0.013), qwen3.5-27b/qwen3.6-35b-a3b (0.002) — so places
+2-5 are one undifferentiated group. Only qwen3.8-27b's lead separates.
+
+**That lead is mostly the coding column, and the coding column is measuring
+token budget rather than coding ability.** Every `0.00` below is a
+`finish_reason=length` truncation, not a wrong answer:
+
+| Coding task | 3.5-27b | 3.5-9b | gemma4 | 3.6-a3b | strix | 3.8-27b |
+|---|---:|---:|---:|---:|---:|---:|
+| artemis_medium_01 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.93 |
+| mcp_easy_01 | 0.70 | 0.00 | 0.22 | 0.22 | 0.22 | 1.00 |
+| mcp_hard_01 | 0.17 | 0.00 | 0.00 | 0.00 | 0.00 | 0.96 |
+| wine_medium_01 | 0.00 | 0.58 | 0.45 | 0.86 | 0.91 | 0.85 |
+
+qwen3.8-27b is the only model that stayed inside the coding tasks'
+`max_tokens: 24576`, and the only one scoring above 0.9 there. Across the other
+three dimensions the field is far tighter: qwen3.5-27b averages 0.78 against
+qwen3.8-27b's 0.83. **Do not read this table as "qwen3.8-27b codes better"** —
+it says the other five overran the budget. Whether the gap survives a larger
+budget is untested.
+
+12 of 90 task runs failed: 11 truncations (10 coding, plus `planning_wine_easy_01`
+for strix alone, where the other five score 0.75-0.77) and one unrepairable
+malformed tool call (gemma4 on `coding_mcp_hard_01`). Failed tasks score 0.00 and
+are visible in the `Tasks` column — see "Failed measurements are visible, not
+scored" below.
+
+Notes:
+- `unscored_weight` is 0% on all 90 task runs: every declared criterion was measured.
+- Repairs were negligible this run — qwen3.8-27b needed 1 of 129 tool calls (1%), far below the 82% seen on `coding_mcp_hard_01` in earlier runs. The rate is task-dependent, not a fixed model property.
+- Latency does not track quality. gemma4-26b-a4b is fastest (36.6s avg) and scores worst; qwen3.5-27b is slowest (177.5s) at 0.69; qwen3.8-27b reaches 0.85 at 148.5s.
+- Qwen models use the standard Hermes tool-call format. Gemma 4 emits tool calls in a Harmony-style format (`<|tool_call>call:FUNC{…}<tool_call|>`); the parser handles both.
+- Reasoning-mode models (Qwen 3.6 MoE) need `/no_think` appended to the system prompt — without it, the model consumes the entire token budget inside `<think>…</think>` before producing an answer. Configure per-model via the `system_suffix` field in `config/eval_config.yaml`.
+- The two Qwen3.6 entries use the same base model with different quants (unsloth UD-Q4_K_S vs Sero/Strix Q4_K_M). Their 0.02 composite gap is inside judge variance. Wikitext-2 perplexity is statistically identical (5.91 vs 5.92, ±0.04) — see [`docs/comparisons/qwen3-family-2026-04-19.md`](docs/comparisons/qwen3-family-2026-04-19.md) for the full investigation. That analysis rests on the superseded April baseline; its perplexity and metadata findings still hold, its eval-score numbers do not.
+
+<details>
+<summary>Superseded baseline: <code>run-20260418-234519</code> (5 models, April harness)</summary>
+
+**Do not cite these numbers.** Kept for provenance only. The harness was scoring
+failures as answers: truncated generations were judged as complete, `automated`
+criteria were hardcoded to `0.0`, `deterministic` criteria returned a free `1.0`,
+checklists matched on single keywords, and the judge prompt capped scores at
+1/3/5. Produced on llama.cpp build 8642 (`7c7d6ce5c`, 2026-04-03), which cannot
+load `qwen3.8-27b`; sampler defaults, chat-template handling, and CUDA kernels
+all changed before the current baseline.
 
 | Model | Research | Planning | Coding | Agentic | Composite |
 |-------|---------:|---------:|-------:|--------:|----------:|
@@ -43,11 +87,12 @@ Run `run-20260418-234519` on the reference hardware, 5 models × 15 tasks, `max_
 | qwen3.5-9b | 0.75 | 0.69 | 0.28 | 0.74 | 0.62 |
 | gemma4-26b-a4b | 0.68 | 0.69 | 0.28 | 0.67 | 0.58 |
 
-Notes:
-- Qwen models use the standard Hermes tool-call format. Gemma 4 emits tool calls in a Harmony-style format (`<|tool_call>call:FUNC{…}<tool_call|>`); the parser handles both.
-- Reasoning-mode models (Qwen 3.6 MoE) need `/no_think` appended to the system prompt — without it, the model consumes the entire token budget inside `<think>…</think>` before producing an answer. Configure per-model via the `system_suffix` field in `config/eval_config.yaml`.
-- Coding scores cluster at 0.15–0.42 across all models. **This was a harness defect, not a rubric ceiling and not a per-model weakness:** `automated` criteria returned a hardcoded `0.0` at 40–70% of each coding task's weight, and the mock `run_tests` reported success before the model had written anything. Both are fixed; on the current harness the same tasks score 0.85–1.00 with every criterion measured.
-- The two Qwen3.6 entries above use the same base model with different quants (unsloth UD-Q4_K_S vs Sero/Strix Q4_K_M). Wikitext-2 perplexity is statistically identical (5.91 vs 5.92, ±0.04) — see [`docs/comparisons/qwen3-family-2026-04-19.md`](docs/comparisons/qwen3-family-2026-04-19.md) for the full investigation (PPL, GGUF metadata diff, chat-template diff, and verdict on what actually drives the eval-score gap).
+Coding clustered at 0.15-0.42 for every model there. That was a harness defect,
+not a rubric ceiling: `automated` criteria returned a hardcoded `0.0` at 40-70%
+of each coding task's weight, and the mock `run_tests` reported success before
+the model had written anything. Both are fixed.
+
+</details>
 
 ## Hardware (reference setup)
 
@@ -255,8 +300,10 @@ of a task's declared weight that was excluded, and reports carry an `Unscored`
 column plus a "Partially Scored Dimensions" section.
 
 This matters when reading a score: 0.86 over 35% of a task's criteria is a
-narrower claim than 0.86 over all of them, not a better result. Coding tasks
-currently exclude 40-70% of their weight pending real test execution.
+narrower claim than 0.86 over all of them, not a better result. As of
+`run-20260830-231628` all 15 tasks score at 0% unscored weight, coding included,
+so every criterion is measured. A task added without a hidden suite will sit
+below 100% without failing loudly — check the column before quoting a number.
 
 ### Malformed tool calls are repaired and counted
 
@@ -297,6 +344,14 @@ three. Composite gaps under 0.05 are inside judge variance; reports say so per
 run. The target is essentially deterministic at `temperature: 0`, so repeat runs
 of the model buy nothing — more tasks or more judge samples are what would
 sharpen this.
+
+**Per-task token budgets bound the coding scores.** Coding tasks cap generation
+at `max_tokens: 24576` (planning at `12288`). In `run-20260830-231628` five of
+six models hit `finish_reason=length` on at least one coding task and scored
+`0.00` there, which is most of the spread in that dimension. A low coding score
+means "did not finish inside the budget" at least as often as it means "wrote bad
+code", and raising the budget changes the numbers. Check the failure reasons
+before attributing a coding gap to model quality.
 
 **The scheduled path is unverified.** The k8s manifests account for GPU checks
 and sandbox availability, but have not been deployed or run.
