@@ -374,23 +374,30 @@ class ResultsDB:
     def get_dimension_averages(self, run_id: str, model_name: str) -> dict[str, float]:
         """Get average weighted score per dimension for a model.
 
-        A dimension whose tasks all failed averages to 0.0 rather than being
-        omitted. Filtering the whole query to status='completed' dropped such a
-        dimension from the result entirely, and compute_composite renormalises
-        over the keys it is given — so failing a dimension outright scored
-        better than doing badly in it. In run-20260831-163006 ornith's four
-        failed coding tasks were excluded and its composite read 0.80 where
-        the other six models, whose coding counted, would have shown 0.60.
+        A failed task scores 0 in its dimension rather than being left out.
+        Averaging only completed tasks meant a model was judged on the tasks it
+        managed to finish, so failing more tasks raised the average of what
+        remained: in run-20260831-173704 ornith's coding read 0.60 off the one
+        coding task of four that completed, and in run-20260831-163006 all four
+        failed, the dimension vanished from the dict entirely, and
+        compute_composite renormalised over the survivors to give 0.80 where
+        four-dimension scoring gives 0.60.
 
-        Grouping over every registered task keeps the dimension present while
-        averaging only the completed ones. A dimension with no tasks in the run
-        at all — a --dimension filtered run — is still absent, as it should be.
+        Tasks still pending are excluded, so an interrupted run does not score
+        work it never attempted, and a dimension with nothing terminal in it —
+        a --dimension filtered run — stays absent rather than becoming a
+        phantom zero.
+
+        This changes what every dimension score means. Numbers from before it
+        are not comparable to numbers after, for any model.
         """
         cursor = self._conn.execute(
             "SELECT dimension, "
-            "COALESCE(AVG(CASE WHEN status = 'completed' THEN weighted_score END), 0.0) "
+            "AVG(CASE WHEN status IN ('completed', 'failed') "
+            "    THEN COALESCE(weighted_score, 0.0) END) "
             "FROM task_results WHERE run_id = ? AND model_name = ? "
-            "GROUP BY dimension",
+            "GROUP BY dimension "
+            "HAVING SUM(CASE WHEN status IN ('completed', 'failed') THEN 1 ELSE 0 END) > 0",
             (run_id, model_name),
         )
         return {row[0]: row[1] for row in cursor.fetchall()}

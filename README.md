@@ -288,8 +288,10 @@ Per-model notes:
   unverified. Its larger vocabulary (248320) accounts for most of the
   parameter difference against qwen3.6. **Thinking stays on**, unlike the other
   reasoning models here: `enable_thinking: false` is its only reasoning switch
-  and it wrecks the tool-call JSON (measured over 8 prompts at temperature 0,
-  the parser reads 8/8 calls with thinking on against 3/8 with it off). It
+  and it degrades the model's output structure badly. It is also the only model
+  with `native_tools: true` — see "Native tool calling" below; without it the
+  model is asked to hand-write tool-call JSON in prose and improvises a
+  different malformation nearly every turn. It
   needs `chat_template_kwargs: {enable_thinking: false}`; its template has no
   `/no_think` branch and no `reasoning_effort`, so the reasoning switch is
   binary. **Not yet validated on this harness:** at 20.2 GiB it is the largest
@@ -400,6 +402,34 @@ They run value-first: a dropped value quote leaves an unbalanced quote that
 desynchronises the key repair's string tracking, which then rewrites
 `"arguments"` to `""arguments"`.
 
+### Native tool calling is per-model
+
+`config/eval_config.yaml` accepts `native_tools: true` per model. With it, the
+tool schemas go in the request and the server's structured `message.tool_calls`
+are read back; the model's own chat template renders its tool instructions, so
+the harness does not inject its own. Without it — the default — tool definitions
+are pasted into the system prompt and the reply is parsed out of the text by
+`hermes_parser`.
+
+Only `ornith-1.5-35b-a3b` uses it, because that is the usage its model card
+documents. Asked for tool calls in prose it emitted a different broken shape
+nearly every turn: a dropped quote on the name value, `<function":` where
+`{"function":` belongs, `<tool_call>` batches with one closing tag, payloads
+opened in JSON and closed in XML, closing tags used as openers. Three rounds of
+repairs took it from 8/15 to 12/15 tasks and still needed 52 repairs across 26
+calls on one task. On the native path it needs **none** — repairs went to zero
+across all 15 tasks — and `agentic_wine_medium_01` rose 0.56 to 0.75 because the
+model finally receives the argument schema as a schema rather than as prose.
+
+The flag is off for the other six deliberately. Switching a model changes what
+it is asked to do, so its scores move and stop being comparable to earlier runs.
+
+Sending the schemas is only half of it: the reply has to go back as an assistant
+message carrying `tool_calls`, with each result as a `tool` message naming its
+`tool_call_id`. Without that the model sees itself say nothing and tool results
+arriving unprompted — `agentic_mcp_hard_01` made one call, stopped, and scored
+0.40 against 0.93.
+
 ## Known limitations
 
 Deliberate trade-offs, not bugs. Each is a thing a number from this harness does
@@ -433,7 +463,8 @@ of the model buy nothing — more tasks or more judge samples are what would
 sharpen this.
 
 **Per-task token budgets bound the coding scores.** Coding tasks cap generation
-at `max_tokens: 24576` (planning at `12288`). In `run-20260830-231628` five of
+at `max_tokens: 32768` as of 2026-08-31, raised from 24576 (planning is at
+`12288`). In `run-20260830-231628` five of
 six models hit `finish_reason=length` on at least one coding task and scored
 `0.00` there, which is most of the spread in that dimension. A low coding score
 means "did not finish inside the budget" at least as often as it means "wrote bad

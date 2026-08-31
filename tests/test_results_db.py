@@ -315,3 +315,71 @@ def test_dimension_absent_from_run_is_not_reported():
         )
         avgs = db.get_dimension_averages("run-002", "model-a")
         assert set(avgs) == {"research"}
+
+
+def test_failed_tasks_count_as_zero_in_their_dimension():
+    """A failed task must drag its dimension down, not be excluded from it.
+
+    Filtering the average to completed tasks meant a model was scored only on
+    the tasks it managed to finish, so failing more tasks raised the average of
+    what was left. In run-20260831-173704 ornith's coding read 0.60 off the one
+    coding task of four that completed.
+    """
+    with _make_db() as db:
+        db.create_run("run-003", ["model-a"])
+        db.register_tasks(
+            "run-003",
+            ["model-a"],
+            [("t1", "coding", "easy"), ("t2", "coding", "hard"), ("t3", "coding", "medium")],
+        )
+        db.save_task_result(
+            run_id="run-003",
+            model_name="model-a",
+            task_id="t1",
+            final_response="r",
+            total_turns=1,
+            total_tool_calls=0,
+            total_latency_ms=100.0,
+            reached_max_turns=False,
+            weighted_score=0.9,
+        )
+        for tid in ("t2", "t3"):
+            db.save_task_result(
+                run_id="run-003",
+                model_name="model-a",
+                task_id=tid,
+                final_response="",
+                total_turns=1,
+                total_tool_calls=0,
+                total_latency_ms=100.0,
+                reached_max_turns=False,
+                weighted_score=0.0,
+                error="truncated: finish_reason=length",
+            )
+
+        avgs = db.get_dimension_averages("run-003", "model-a")
+        assert abs(avgs["coding"] - 0.3) < 0.01  # 0.9 / 3, not 0.9 / 1
+
+
+def test_pending_tasks_do_not_drag_a_dimension_down():
+    """An interrupted run must not score unrun tasks as failures."""
+    with _make_db() as db:
+        db.create_run("run-004", ["model-a"])
+        db.register_tasks(
+            "run-004",
+            ["model-a"],
+            [("t1", "coding", "easy"), ("t2", "coding", "hard")],
+        )
+        db.save_task_result(
+            run_id="run-004",
+            model_name="model-a",
+            task_id="t1",
+            final_response="r",
+            total_turns=1,
+            total_tool_calls=0,
+            total_latency_ms=100.0,
+            reached_max_turns=False,
+            weighted_score=0.9,
+        )
+        avgs = db.get_dimension_averages("run-004", "model-a")
+        assert abs(avgs["coding"] - 0.9) < 0.01
