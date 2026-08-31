@@ -39,6 +39,20 @@ class ToolEnv(Protocol):
 class Message:
     role: str
     content: str
+    # Native tool calling only. The OpenAI protocol needs the assistant turn to
+    # carry the calls it made and each tool result to name the call it answers;
+    # without them the model sees itself say nothing and tool results arriving
+    # unprompted, and gives up after a single round.
+    tool_calls: list[dict] | None = None
+    tool_call_id: str | None = None
+
+    def to_payload(self) -> dict:
+        payload: dict = {"role": self.role, "content": self.content}
+        if self.tool_calls:
+            payload["tool_calls"] = self.tool_calls
+        if self.tool_call_id:
+            payload["tool_call_id"] = self.tool_call_id
+        return payload
 
 
 @dataclass
@@ -395,15 +409,20 @@ def run_conversation(
             # stop executing inside the turn once we hit max_tool_calls so
             # we don't balloon the message history past the server's
             # ctx-size before the synthesis nudge gets a chance to fire.
+            # On the native path the calls live in a structured field, not in
+            # the text, so they have to be replayed as tool_calls or the model
+            # sees an empty assistant turn followed by unexplained results.
+            native_entries = _native_entries(parsed) if reply.native_tool_calls is not None else None
             messages.append(
                 Message(
                     role="assistant",
                     content=compact_tool_call_payloads(response_text, parsed, COMPACT_TOOL_CALL_OVER),
+                    tool_calls=native_entries,
                 )
             )
 
             dropped = 0
-            for tc in parsed.tool_calls:
+            for idx, tc in enumerate(parsed.tool_calls):
                 if total_tool_calls >= max_tool_calls:
                     dropped = len(parsed.tool_calls) - len(turn.tool_responses)
                     break
@@ -411,7 +430,8 @@ def run_conversation(
                 mock_result = mock_env.call(tc.name, tc.arguments)
                 tool_resp = format_tool_response(tc.name, mock_result)
                 turn.tool_responses.append({"name": tc.name, "arguments": tc.arguments, "result": mock_result})
-                messages.append(Message(role="tool", content=tool_resp))
+                call_id = native_entries[idx].get("id") if native_entries and idx < len(native_entries) else None
+                messages.append(Message(role="tool", content=tool_resp, tool_call_id=call_id))
 
             if dropped > 0:
                 logger.info(
@@ -661,6 +681,26 @@ def _extract_best_final_response(turns: list[TurnResult]) -> str:
     )
 
 
+def _native_entries(parsed: ParsedResponse) -> list[dict]:
+    """Rebuild the server's tool_call entries from a parsed native reply.
+
+    Each ToolCall.raw holds the entry verbatim, including the id the tool
+    result must reference. An id is synthesised when the server omitted one,
+    since the protocol pairs results to calls by it.
+    """
+    entries: list[dict] = []
+    for i, tc in enumerate(parsed.tool_calls):
+        try:
+            entry = json.loads(tc.raw)
+        except (json.JSONDecodeError, TypeError):
+            entry = {"type": "function", "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)}}
+        if not isinstance(entry, dict):
+            entry = {"type": "function", "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)}}
+        entry.setdefault("id", f"call_{i}")
+        entries.append(entry)
+    return entries
+
+
 def _parse_native_tool_calls(msg: dict, model_name: str) -> list[ToolCall] | None:
     """Convert the server's structured tool_calls into ToolCall objects.
 
@@ -712,7 +752,7 @@ def _call_model(
     """
     payload: dict = {
         "model": model_name,
-        "messages": [{"role": m.role, "content": m.content} for m in messages],
+        "messages": [m.to_payload() for m in messages],
         "temperature": temperature,
         "max_tokens": max_tokens,
     }

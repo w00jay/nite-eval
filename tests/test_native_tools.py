@@ -164,3 +164,85 @@ def test_arguments_already_an_object_are_accepted():
             native_tools=True,
         )
     assert reply.native_tool_calls[0].arguments == {"query": "x"}
+
+
+# --- The response half of the round-trip ---
+#
+# Sending `tools` is only half of native tool calling. The reply must go back
+# as an assistant message carrying the tool_calls array, and each result as a
+# tool message referencing its tool_call_id. Without that the model sees itself
+# say nothing and then tool results appearing from nowhere: on
+# agentic_mcp_hard_01 it made one call and stopped, scoring 0.40 against 0.93
+# on the prompt-text path.
+
+
+def test_assistant_tool_calls_are_sent_back():
+    payloads: list[dict] = []
+    with _client(payloads, NATIVE_REPLY) as client:
+        _call_model(
+            client,
+            "http://x",
+            "ornith-1.5-35b-a3b",
+            [
+                Message(role="user", content="search"),
+                Message(
+                    role="assistant",
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "web_search", "arguments": '{"query": "x"}'},
+                        }
+                    ],
+                ),
+                Message(role="tool", content='{"results": []}', tool_call_id="call_1"),
+            ],
+            0.0,
+            128,
+            None,
+            tools=TOOLS,
+            native_tools=True,
+        )
+    sent = payloads[0]["messages"]
+    assert sent[1]["tool_calls"][0]["id"] == "call_1"
+    assert sent[2]["tool_call_id"] == "call_1"
+
+
+def test_plain_messages_carry_no_tool_fields():
+    """A model on the prompt-text path must not gain OpenAI tool plumbing."""
+    payloads: list[dict] = []
+    reply = {"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
+    with _client(payloads, reply) as client:
+        _call_model(
+            client,
+            "http://x",
+            "qwen3.8-27b",
+            [Message(role="user", content="hi"), Message(role="tool", content="result")],
+            0.0,
+            128,
+            None,
+        )
+    for m in payloads[0]["messages"]:
+        assert "tool_calls" not in m
+        assert "tool_call_id" not in m
+
+
+def test_native_tool_calls_keep_their_ids():
+    """The id has to survive parsing so the tool result can reference it."""
+    body = json.loads(json.dumps(NATIVE_REPLY))
+    body["choices"][0]["message"]["tool_calls"][0]["id"] = "call_abc"
+    payloads: list[dict] = []
+    with _client(payloads, body) as client:
+        reply = _call_model(
+            client,
+            "http://x",
+            "ornith-1.5-35b-a3b",
+            [Message(role="user", content="search")],
+            0.0,
+            128,
+            None,
+            tools=TOOLS,
+            native_tools=True,
+        )
+    assert json.loads(reply.native_tool_calls[0].raw)["id"] == "call_abc"
