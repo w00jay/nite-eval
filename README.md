@@ -459,10 +459,26 @@ to `0.0`, `deterministic` criteria returning a free `1.0`, checklists matching o
 single keywords, a judge prompt capped at 1/3/5. Old runs remain in the database
 for provenance. They are not a baseline.
 
+**Coding is not reproducible, by construction.** Coding tasks run in a real
+container and the container's output enters the conversation. An `ls -la` on
+turn 1 returns the working directory's mtime, which is the container's creation
+time, so two runs of the same model at `temperature: 0` see different history
+from turn 2 and go on to write different code — ornith-1.5 emitted 65986, 66666
+and 65604 bytes of tool-call arguments across three runs of one task. Where the
+code it happened to write hit a real bug, both automated criteria scored 0
+instead of 1.00 and 0.93, moving that task 0.62 to 0.00. Per-task swings of
+0.1-0.6 and a dimension-level swing of 0.49 to 0.39 have been observed on
+identical configuration, so `scoring.dimension_min_detectable_difference` sets
+coding's threshold to 0.15 and reports print it. Timestamps are the cause found;
+anything else varying per container — `find` ordering, hostnames, mtimes on
+copied files — behaves the same way.
+
 **One sample per task.** 15 tasks, each run once, judge scores averaged over
 three. Composite gaps under 0.05 are inside judge variance; reports say so per
-run. The target is essentially deterministic at `temperature: 0`, so repeat runs
-of the model buy nothing — more tasks or more judge samples are what would
+run. On mock-backed tasks the target is essentially deterministic at
+`temperature: 0`, so repeat runs of the model buy nothing there — but see the
+entry above, which makes that false for coding. More tasks or more judge samples
+are what would
 sharpen this.
 
 **Per-task token budgets bound the coding scores.** Coding tasks cap generation

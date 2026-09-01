@@ -165,6 +165,26 @@ scoring:
   # ties. 15 tasks at one sample each does not resolve finer than this; raising
   # the task count or the judge sample count is what would lower it.
   min_detectable_difference: 0.05
+  # Some dimensions are noisier than the composite and must not be read against
+  # its threshold. Coding tasks run in a real container and the container's
+  # output enters the conversation: an `ls -la` on turn 1 returns the directory
+  # mtime, which is the container's creation time, so two runs of the same model
+  # at temperature 0 diverge from turn 2 and go on to write different code.
+  # ornith-1.5 emitted 65986 / 66666 / 65604 bytes of tool-call arguments across
+  # three runs of coding_artemis_medium_01, and in one of them the code it
+  # happened to write hit a real bug: both automated criteria scored 0 rather
+  # than 1.00 and 0.93, moving the task 0.62 -> 0.00.
+  #
+  # Observed per-task swings on identical configuration were 0.1-0.6, and the
+  # coding dimension moved 0.49 -> 0.39 between two such runs. 0.15 is set from
+  # that dimension-level spread, not from the per-task extremes.
+  #
+  # Accepted rather than fixed. Making the container reproducible means pinning
+  # its clock and every other varying surface; normalising timestamps in sandbox
+  # output is on the TODO as the cheaper partial fix. Until then the honest
+  # response is to stop over-reading coding gaps.
+  dimension_min_detectable_difference:
+    coding: 0.15
   dimension_weights:
     research: 0.25
     planning: 0.25
