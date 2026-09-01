@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import subprocess
 import uuid
 from dataclasses import dataclass, field
@@ -109,6 +110,37 @@ class SandboxSpec:
             cpus=str(data.get("cpus", DEFAULT_CPUS)),
             command_timeout=int(data.get("command_timeout", DEFAULT_COMMAND_TIMEOUT)),
         )
+
+
+# An `ls -l` entry: mode bits, link count, owner, group, size, then the date.
+# Anchored to the start of a line and required to carry the whole prefix, so a
+# date inside file contents cannot match — every shell result passes through
+# here, including `cat` behind read_file, and rewriting source the model is
+# about to copy would be far worse than the non-determinism being fixed.
+_LS_ENTRY = r"^([bcdlps-][rwxsStT-]{9}[.+]?\s+\d+\s+\S+\s+\S+\s+\d+\s+)"
+_LS_DATE_RE = re.compile(_LS_ENTRY + r"(\w{3}\s+\d{1,2}\s+(?:\d{2}:\d{2}|\d{4}))", re.MULTILINE)
+_LS_ISO_RE = re.compile(
+    _LS_ENTRY + r"(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:\s+[+-]\d{4})?)",
+    re.MULTILINE,
+)
+_LS_DATE_PLACEHOLDER = "Jan  1 00:00"
+_LS_ISO_PLACEHOLDER = "1970-01-01 00:00:00.000000000 +0000"
+
+
+def _normalize_volatile(text: str) -> str:
+    """Blank out timestamps that vary between container instances.
+
+    A directory's mtime is the container's creation time, so `ls -la` on turn 1
+    differs between two runs of the same model and the conversation diverges
+    from turn 2 onward — at temperature 0, producing different code and
+    different automated scores. See "Known limitations" in the README.
+
+    This covers the surface actually observed. Other per-container variation —
+    hostnames, `find` ordering, mtimes on files copied in by setup_cmd — is not
+    handled, so coding is less non-deterministic rather than reproducible.
+    """
+    text = _LS_ISO_RE.sub(lambda m: m.group(1) + _LS_ISO_PLACEHOLDER, text)
+    return _LS_DATE_RE.sub(lambda m: m.group(1) + _LS_DATE_PLACEHOLDER, text)
 
 
 def _truncate(text: str) -> str:
@@ -268,8 +300,8 @@ class SandboxToolEnv:
             )
         return ExecResult(
             exit_code=result.returncode,
-            stdout=_truncate(result.stdout),
-            stderr=_truncate(result.stderr),
+            stdout=_truncate(_normalize_volatile(result.stdout)),
+            stderr=_truncate(_normalize_volatile(result.stderr)),
         )
 
     def write_file(self, path: str, content: str) -> dict:
