@@ -318,17 +318,22 @@ embedding matrices and will differ slightly from the marketing number.
 
 Attention geometry, which is what determines how fast KV cache grows with context:
 
-| Name | Q heads | KV heads | Key length | Trained ctx | Tensors |
-|------|--------:|----------|-----------:|------------:|--------:|
-| `qwen3.5-27b` | 24 | 4 | 256 | 262144 | 851 |
-| `qwen3.5-9b` | 16 | 4 | 256 | 262144 | 427 |
-| `gemma4-26b-a4b` | 16 | 8, but 2 on every 6th layer | 512 | 262144 | 658 |
-| `qwen3.6-35b-a3b` | 16 | 2 | 256 | 262144 | 733 |
-| `qwen3.6-35b-a3b-strix` | 16 | 2 | 256 | 262144 | 733 |
-| `qwen3.8-27b` | 24 | 4 | 256 | 262144 | 866 |
-| `ornith-1.5-35b-a3b` | 16 | 2 | 256 | 262144 | 753 |
+| Name | Q heads | KV heads | Key length | Embedding | Vocab | Trained ctx | Tensors |
+|------|--------:|----------|-----------:|----------:|------:|------------:|--------:|
+| `qwen3.5-27b` | 24 | 4 | 256 | 5120 | 248320 | 262144 | 851 |
+| `qwen3.5-9b` | 16 | 4 | 256 | 4096 | 248320 | 262144 | 427 |
+| `gemma4-26b-a4b` | 16 | 8, but 2 on every 6th layer | 512 | 2816 | 262144 | 262144 | 658 |
+| `qwen3.6-35b-a3b` | 16 | 2 | 256 | 2048 | 248320 | 262144 | 733 |
+| `qwen3.6-35b-a3b-strix` | 16 | 2 | 256 | 2048 | 248320 | 262144 | 733 |
+| `qwen3.8-27b` | 24 | 4 | 256 | 5120 | 248320 | 262144 | 866 |
+| `ornith-1.5-35b-a3b` | 16 | 2 | 256 | 2048 | 248320 | 262144 | 753 |
 
-All six run under llama-swap with identical flags — `-ngl 999 --ctx-size 65536
+Every Qwen-derived model here shares the same 248320 vocabulary, including
+ornith; only gemma4 differs at 262144. So a parameter-count difference between
+two of them is architecture, not tokenizer — ornith's extra 0.85B over
+qwen3.6 is its multi-token-prediction block, not a larger vocab.
+
+All seven run under llama-swap with identical flags — `-ngl 999 --ctx-size 65536
 -fa on --cache-type-k q8_0 --cache-type-v q8_0` — pinned to the 3090 by UUID and
 in an `exclusive: true` group so only one is resident at a time. **Context is
 65536, not the 262144 the models were trained for**; see the VRAM measurements in
@@ -369,8 +374,9 @@ Per-model notes:
   only 10 carry full attention (blocks 3, 7, … 39, every 4th) and the other 30
   are linear attention. `block_count` reads 41 because the GGUF also carries a
   multi-token-prediction block (`blk.40.nextn.*`); whether llama.cpp uses it is
-  unverified. Its larger vocabulary (248320) accounts for most of the
-  parameter difference against qwen3.6. It runs with `enable_thinking: false`
+  unverified. That extra block accounts for the parameter difference against
+  qwen3.6 (35.51B vs 34.66B); the two share an identical 248320 vocabulary, so
+  it is not that. It runs with `enable_thinking: false`
   and is the only model with `native_tools: true` — see "Native tool calling"
   below. The two go together: thinking off used to wreck its hand-written
   tool-call JSON (1/8 parseable against 8/8), which no longer matters once the
