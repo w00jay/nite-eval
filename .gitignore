@@ -21,3 +21,4 @@ CLAUDE.md
 PLANS/
 TODO.md
 .claude/worktrees/
+.claude/settings.local.json
