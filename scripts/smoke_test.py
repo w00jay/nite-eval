@@ -151,7 +151,7 @@ def check_services() -> bool:
     return target_ok and judge_ok
 
 
-def run_smoke_test(model_name: str) -> bool:
+def run_smoke_test(model_name: str, skip_judge: bool = False) -> bool:
     """Run the full smoke test pipeline."""
     task = SMOKE_TASK
 
@@ -200,21 +200,27 @@ def run_smoke_test(model_name: str) -> bool:
     print(f"  Distractor avoidance (no send_email): {distractor:.2f}")
 
     # --- Step 4: Judge scoring ---
-    print("\n[4/4] Judge scoring...")
-    judge = JudgeClient(base_url=f"{JUDGE_URL}/v1")
-    judge_result = judge.evaluate(
-        dimension="synthesis",
-        rubric=(
-            "1 (Poor): Does not connect search results to the user's insight.\n"
-            "3 (Acceptable): Mentions the search results but connection is superficial.\n"
-            "5 (Excellent): Draws meaningful connections between the search results "
-            "and the user's autoresearch/MCP gateway insight."
-        ),
-        task_description="Capture a thought and find related thoughts about evaluation patterns.",
-        model_response=result.final_response,
-    )
-    print(f"  Judge result: {judge_result}")
-    judge.close()
+    # --skip-judge previously skipped only the health gate, then called the
+    # judge anyway and reported a connection error as if the judge had failed.
+    if skip_judge:
+        print("\n[4/4] Judge scoring skipped (--skip-judge)")
+        judge_result = None
+    else:
+        print("\n[4/4] Judge scoring...")
+        judge = JudgeClient(base_url=f"{JUDGE_URL}/v1")
+        judge_result = judge.evaluate(
+            dimension="synthesis",
+            rubric=(
+                "1 (Poor): Does not connect search results to the user's insight.\n"
+                "3 (Acceptable): Mentions the search results but connection is superficial.\n"
+                "5 (Excellent): Draws meaningful connections between the search results "
+                "and the user's autoresearch/MCP gateway insight."
+            ),
+            task_description="Capture a thought and find related thoughts about evaluation patterns.",
+            model_response=result.final_response,
+        )
+        print(f"  Judge result: {judge_result}")
+        judge.close()
 
     # --- Summary ---
     print("\n" + "=" * 60)
@@ -229,7 +235,9 @@ def run_smoke_test(model_name: str) -> bool:
 
     from nite_eval.judge import JudgeResult
 
-    if isinstance(judge_result, JudgeResult):
+    if judge_result is None:
+        print("  Judge:             skipped")
+    elif isinstance(judge_result, JudgeResult):
         print(f"  Judge score:       {judge_result.score}/5")
         print(f"  Judge reasoning:   {judge_result.reasoning[:200]}")
     else:
@@ -265,7 +273,7 @@ def main():
             print("    --config config/llama_swap_config.yaml --listen :8080")
             sys.exit(1)
 
-    success = run_smoke_test(args.model)
+    success = run_smoke_test(args.model, skip_judge=args.skip_judge)
     sys.exit(0 if success else 1)
 
 

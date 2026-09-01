@@ -529,7 +529,11 @@ def extract_tool_calls(response: str, tools: list[dict] | None = None) -> Parsed
             fixed_raw, repairs = _fix_json(raw_match)
             parsed = json.loads(fixed_raw)
             if repairs:
-                logger.warning("Repaired %d malformed JSON key(s) in tool call", repairs)
+                # "key(s)" named only qwen3.8's defect, and the same line was
+                # emitted for ornith's dropped name-value quote and its
+                # angle-bracket and XML-closer repairs — so the log attributed
+                # one model's defect to another's shape.
+                logger.warning("Repaired %d malformed JSON element(s) in tool call", repairs)
                 result.repaired += repairs
         except json.JSONDecodeError:
             # Ornith puts XML where JSON belongs. Try it before giving up —
