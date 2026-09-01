@@ -372,11 +372,32 @@ class ResultsDB:
         ]
 
     def get_dimension_averages(self, run_id: str, model_name: str) -> dict[str, float]:
-        """Get average weighted score per dimension for a model."""
+        """Get average weighted score per dimension for a model.
+
+        A failed task scores 0 in its dimension rather than being left out.
+        Averaging only completed tasks meant a model was judged on the tasks it
+        managed to finish, so failing more tasks raised the average of what
+        remained: in run-20260831-173704 ornith's coding read 0.60 off the one
+        coding task of four that completed, and in run-20260831-163006 all four
+        failed, the dimension vanished from the dict entirely, and
+        compute_composite renormalised over the survivors to give 0.80 where
+        four-dimension scoring gives 0.60.
+
+        Tasks still pending are excluded, so an interrupted run does not score
+        work it never attempted, and a dimension with nothing terminal in it —
+        a --dimension filtered run — stays absent rather than becoming a
+        phantom zero.
+
+        This changes what every dimension score means. Numbers from before it
+        are not comparable to numbers after, for any model.
+        """
         cursor = self._conn.execute(
-            "SELECT dimension, AVG(weighted_score) FROM task_results "
-            "WHERE run_id = ? AND model_name = ? AND status = 'completed' "
-            "GROUP BY dimension",
+            "SELECT dimension, "
+            "AVG(CASE WHEN status IN ('completed', 'failed') "
+            "    THEN COALESCE(weighted_score, 0.0) END) "
+            "FROM task_results WHERE run_id = ? AND model_name = ? "
+            "GROUP BY dimension "
+            "HAVING SUM(CASE WHEN status IN ('completed', 'failed') THEN 1 ELSE 0 END) > 0",
             (run_id, model_name),
         )
         return {row[0]: row[1] for row in cursor.fetchall()}

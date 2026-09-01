@@ -249,3 +249,137 @@ def test_resume_idempotent():
         db.register_tasks("run-001", ["model-a"], tasks)  # duplicate
         pending = db.get_pending_tasks("run-001", "model-a")
         assert len(pending) == 2
+
+
+def test_dimension_with_no_completed_tasks_scores_zero():
+    """A dimension whose tasks all failed must score 0, not vanish.
+
+    get_dimension_averages filtered to status='completed', so a wholly failed
+    dimension returned no key at all. The report rendered it as 0.00 via
+    .get(d, 0) while compute_composite renormalised over the surviving
+    dimensions — so in run-20260831-163006, ornith's four failed coding tasks
+    were dropped and its composite read 0.80 instead of 0.60. Failing a
+    dimension outright must not beat scoring badly in it.
+    """
+    with _make_db() as db:
+        db.create_run("run-001", ["model-a"])
+        db.register_tasks(
+            "run-001",
+            ["model-a"],
+            [("t1", "research", "easy"), ("t2", "coding", "hard")],
+        )
+        db.save_task_result(
+            run_id="run-001",
+            model_name="model-a",
+            task_id="t1",
+            final_response="r",
+            total_turns=1,
+            total_tool_calls=0,
+            total_latency_ms=100.0,
+            reached_max_turns=False,
+            weighted_score=0.8,
+        )
+        db.save_task_result(
+            run_id="run-001",
+            model_name="model-a",
+            task_id="t2",
+            final_response="",
+            total_turns=1,
+            total_tool_calls=0,
+            total_latency_ms=100.0,
+            reached_max_turns=False,
+            weighted_score=0.0,
+            error="truncated: finish_reason=length",
+        )
+
+        avgs = db.get_dimension_averages("run-001", "model-a")
+        assert avgs["coding"] == 0.0
+        assert abs(avgs["research"] - 0.8) < 0.01
+
+
+def test_dimension_absent_from_run_is_not_reported():
+    """A --dimension filtered run must not gain phantom zero dimensions."""
+    with _make_db() as db:
+        db.create_run("run-002", ["model-a"])
+        db.register_tasks("run-002", ["model-a"], [("t1", "research", "easy")])
+        db.save_task_result(
+            run_id="run-002",
+            model_name="model-a",
+            task_id="t1",
+            final_response="r",
+            total_turns=1,
+            total_tool_calls=0,
+            total_latency_ms=100.0,
+            reached_max_turns=False,
+            weighted_score=0.8,
+        )
+        avgs = db.get_dimension_averages("run-002", "model-a")
+        assert set(avgs) == {"research"}
+
+
+def test_failed_tasks_count_as_zero_in_their_dimension():
+    """A failed task must drag its dimension down, not be excluded from it.
+
+    Filtering the average to completed tasks meant a model was scored only on
+    the tasks it managed to finish, so failing more tasks raised the average of
+    what was left. In run-20260831-173704 ornith's coding read 0.60 off the one
+    coding task of four that completed.
+    """
+    with _make_db() as db:
+        db.create_run("run-003", ["model-a"])
+        db.register_tasks(
+            "run-003",
+            ["model-a"],
+            [("t1", "coding", "easy"), ("t2", "coding", "hard"), ("t3", "coding", "medium")],
+        )
+        db.save_task_result(
+            run_id="run-003",
+            model_name="model-a",
+            task_id="t1",
+            final_response="r",
+            total_turns=1,
+            total_tool_calls=0,
+            total_latency_ms=100.0,
+            reached_max_turns=False,
+            weighted_score=0.9,
+        )
+        for tid in ("t2", "t3"):
+            db.save_task_result(
+                run_id="run-003",
+                model_name="model-a",
+                task_id=tid,
+                final_response="",
+                total_turns=1,
+                total_tool_calls=0,
+                total_latency_ms=100.0,
+                reached_max_turns=False,
+                weighted_score=0.0,
+                error="truncated: finish_reason=length",
+            )
+
+        avgs = db.get_dimension_averages("run-003", "model-a")
+        assert abs(avgs["coding"] - 0.3) < 0.01  # 0.9 / 3, not 0.9 / 1
+
+
+def test_pending_tasks_do_not_drag_a_dimension_down():
+    """An interrupted run must not score unrun tasks as failures."""
+    with _make_db() as db:
+        db.create_run("run-004", ["model-a"])
+        db.register_tasks(
+            "run-004",
+            ["model-a"],
+            [("t1", "coding", "easy"), ("t2", "coding", "hard")],
+        )
+        db.save_task_result(
+            run_id="run-004",
+            model_name="model-a",
+            task_id="t1",
+            final_response="r",
+            total_turns=1,
+            total_tool_calls=0,
+            total_latency_ms=100.0,
+            reached_max_turns=False,
+            weighted_score=0.9,
+        )
+        avgs = db.get_dimension_averages("run-004", "model-a")
+        assert abs(avgs["coding"] - 0.9) < 0.01

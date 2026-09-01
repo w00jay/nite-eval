@@ -5,6 +5,7 @@ Implements the agent loop:
   until model produces a final text answer or max_turns is reached.
 """
 
+import json
 import logging
 import re
 import time
@@ -15,6 +16,7 @@ import httpx
 
 from nite_eval.hermes_parser import (
     ParsedResponse,
+    ToolCall,
     extract_tool_calls,
     format_tool_definitions,
     format_tool_response,
@@ -37,6 +39,20 @@ class ToolEnv(Protocol):
 class Message:
     role: str
     content: str
+    # Native tool calling only. The OpenAI protocol needs the assistant turn to
+    # carry the calls it made and each tool result to name the call it answers;
+    # without them the model sees itself say nothing and tool results arriving
+    # unprompted, and gives up after a single round.
+    tool_calls: list[dict] | None = None
+    tool_call_id: str | None = None
+
+    def to_payload(self) -> dict:
+        payload: dict = {"role": self.role, "content": self.content}
+        if self.tool_calls:
+            payload["tool_calls"] = self.tool_calls
+        if self.tool_call_id:
+            payload["tool_call_id"] = self.tool_call_id
+        return payload
 
 
 @dataclass
@@ -51,6 +67,10 @@ class ModelReply:
 
     text: str
     finish_reason: str | None = None
+    # Structured calls from the server's own tool-call parsing, when the model
+    # runs with native_tools. None means the model was not asked for them, and
+    # the caller should parse the text instead.
+    native_tool_calls: list[ToolCall] | None = None
 
     @property
     def truncated(self) -> bool:
@@ -128,6 +148,7 @@ def run_conversation(
     max_tokens: int = 2048,
     system_suffix: str = "",
     chat_template_kwargs: dict | None = None,
+    native_tools: bool = False,
 ) -> ConversationResult:
     """Run a multi-turn conversation with Hermes-format tool calling.
 
@@ -149,7 +170,13 @@ def run_conversation(
     YAML's timeout was decorative. A single generation is bounded separately
     by HTTP_READ_TIMEOUT, so a long answer is never killed mid-flight.
     """
-    full_system = format_tool_definitions(tools) + "\n\n" + system_prompt.rstrip()
+    # With native tool calling the server renders the model's own template,
+    # which carries its tool-call instructions — injecting ours as prose too
+    # would give the model two conflicting formats to satisfy.
+    if native_tools:
+        full_system = system_prompt.rstrip()
+    else:
+        full_system = format_tool_definitions(tools) + "\n\n" + system_prompt.rstrip()
     if system_suffix:
         full_system = full_system.rstrip() + "\n\n" + system_suffix.strip()
 
@@ -198,13 +225,26 @@ def run_conversation(
 
             start = time.monotonic()
 
-            reply = _call_model(client, base_url, model_name, messages, temperature, max_tokens, chat_template_kwargs)
+            reply = _call_model(
+                client,
+                base_url,
+                model_name,
+                messages,
+                temperature,
+                max_tokens,
+                chat_template_kwargs,
+                tools=tools,
+                native_tools=native_tools,
+            )
             response_text = reply.text
 
             latency = (time.monotonic() - start) * 1000
             total_latency += latency
 
-            parsed = extract_tool_calls(response_text)
+            if reply.native_tool_calls is not None:
+                parsed = ParsedResponse(tool_calls=reply.native_tool_calls, text=response_text)
+            else:
+                parsed = extract_tool_calls(response_text, tools)
             repaired_total += parsed.repaired
             turn = TurnResult(
                 turn=turn_num,
@@ -325,7 +365,7 @@ def run_conversation(
                     nudged_text = nudge_reply.text
                     nudge_latency = (time.monotonic() - nudge_start) * 1000
                     total_latency += nudge_latency
-                    nudge_parsed = extract_tool_calls(nudged_text)
+                    nudge_parsed = extract_tool_calls(nudged_text, tools)
                     nudge_turn = TurnResult(
                         turn=turn_num + 1,
                         response=nudged_text,
@@ -369,15 +409,20 @@ def run_conversation(
             # stop executing inside the turn once we hit max_tool_calls so
             # we don't balloon the message history past the server's
             # ctx-size before the synthesis nudge gets a chance to fire.
+            # On the native path the calls live in a structured field, not in
+            # the text, so they have to be replayed as tool_calls or the model
+            # sees an empty assistant turn followed by unexplained results.
+            native_entries = _native_entries(parsed) if reply.native_tool_calls is not None else None
             messages.append(
                 Message(
                     role="assistant",
                     content=compact_tool_call_payloads(response_text, parsed, COMPACT_TOOL_CALL_OVER),
+                    tool_calls=native_entries,
                 )
             )
 
             dropped = 0
-            for tc in parsed.tool_calls:
+            for idx, tc in enumerate(parsed.tool_calls):
                 if total_tool_calls >= max_tool_calls:
                     dropped = len(parsed.tool_calls) - len(turn.tool_responses)
                     break
@@ -385,7 +430,8 @@ def run_conversation(
                 mock_result = mock_env.call(tc.name, tc.arguments)
                 tool_resp = format_tool_response(tc.name, mock_result)
                 turn.tool_responses.append({"name": tc.name, "arguments": tc.arguments, "result": mock_result})
-                messages.append(Message(role="tool", content=tool_resp))
+                call_id = native_entries[idx].get("id") if native_entries and idx < len(native_entries) else None
+                messages.append(Message(role="tool", content=tool_resp, tool_call_id=call_id))
 
             if dropped > 0:
                 logger.info(
@@ -414,6 +460,7 @@ def run_conversation(
                     turn_num + 1,
                     turns,
                     chat_template_kwargs,
+                    tools,
                 )
                 cap_nudged = True
                 break
@@ -440,6 +487,7 @@ def run_conversation(
                 max_turns + 1,
                 turns,
                 chat_template_kwargs,
+                tools,
             )
 
         # The synthesis nudge produces the final answer on this path, so a
@@ -562,6 +610,7 @@ def _try_nudge(
     turn_number: int,
     turns: list[TurnResult],
     chat_template_kwargs: dict | None = None,
+    tools: list[dict] | None = None,
 ) -> float:
     """Append a synthesis-nudge user message and collect the model's reply.
 
@@ -586,7 +635,7 @@ def _try_nudge(
             f"({len(messages)} messages, max_tokens={max_tokens}): {body}"
         ) from e
     nudge_latency = (time.monotonic() - nudge_start) * 1000
-    nudge_parsed = extract_tool_calls(nudged_text)
+    nudge_parsed = extract_tool_calls(nudged_text, tools)
     turns.append(
         TurnResult(
             turn=turn_number,
@@ -632,6 +681,56 @@ def _extract_best_final_response(turns: list[TurnResult]) -> str:
     )
 
 
+def _native_entries(parsed: ParsedResponse) -> list[dict]:
+    """Rebuild the server's tool_call entries from a parsed native reply.
+
+    Each ToolCall.raw holds the entry verbatim, including the id the tool
+    result must reference. An id is synthesised when the server omitted one,
+    since the protocol pairs results to calls by it.
+    """
+    entries: list[dict] = []
+    for i, tc in enumerate(parsed.tool_calls):
+        try:
+            entry = json.loads(tc.raw)
+        except (json.JSONDecodeError, TypeError):
+            entry = {"type": "function", "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)}}
+        if not isinstance(entry, dict):
+            entry = {"type": "function", "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)}}
+        entry.setdefault("id", f"call_{i}")
+        entries.append(entry)
+    return entries
+
+
+def _parse_native_tool_calls(msg: dict, model_name: str) -> list[ToolCall] | None:
+    """Convert the server's structured tool_calls into ToolCall objects.
+
+    Returns None when the reply carries none, so the caller can fall back to
+    parsing text — a native-tools model still answers in prose on its final
+    turn. `arguments` is a JSON string per the OpenAI schema, but some servers
+    hand back an object, so both are accepted.
+    """
+    raw = msg.get("tool_calls")
+    if not raw:
+        return None
+    calls: list[ToolCall] = []
+    for entry in raw:
+        fn = entry.get("function") or {}
+        name = fn.get("name")
+        if not name:
+            continue
+        args = fn.get("arguments")
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except json.JSONDecodeError:
+                logger.warning("Native tool call from %s had unparseable arguments: %r", model_name, args)
+                continue
+        if not isinstance(args, dict):
+            args = {}
+        calls.append(ToolCall(name=name, arguments=args, raw=json.dumps(entry)))
+    return calls or None
+
+
 def _call_model(
     client: httpx.Client,
     base_url: str,
@@ -640,6 +739,8 @@ def _call_model(
     temperature: float,
     max_tokens: int,
     chat_template_kwargs: dict | None = None,
+    tools: list[dict] | None = None,
+    native_tools: bool = False,
 ) -> ModelReply:
     """Send messages to the model and return the response text.
 
@@ -651,12 +752,18 @@ def _call_model(
     """
     payload: dict = {
         "model": model_name,
-        "messages": [{"role": m.role, "content": m.content} for m in messages],
+        "messages": [m.to_payload() for m in messages],
         "temperature": temperature,
         "max_tokens": max_tokens,
     }
     if chat_template_kwargs:
         payload["chat_template_kwargs"] = chat_template_kwargs
+    # Native tool calling: hand the server the schemas so it renders the model's
+    # own template and parses the reply back into structured calls. Only for
+    # models flagged for it — this changes what the model is asked to do.
+    if native_tools and tools:
+        payload["tools"] = tools
+        payload["tool_choice"] = "auto"
     resp = client.post(f"{base_url}/v1/chat/completions", json=payload)
     resp.raise_for_status()
     data = resp.json()
@@ -664,6 +771,15 @@ def _call_model(
     msg = choice.get("message", {})
     content = msg.get("content") or ""
     finish = choice.get("finish_reason")
+
+    if native_tools:
+        native = _parse_native_tool_calls(msg, model_name)
+        if native is not None:
+            # Empty content alongside tool calls is correct here, not a stall,
+            # so the reasoning_content fallback below must not fire and hand the
+            # judge a chain of thought in place of the call.
+            return ModelReply(text=content, finish_reason=finish, native_tool_calls=native)
+
     if not content.strip():
         reasoning = msg.get("reasoning_content") or ""
         logger.warning(

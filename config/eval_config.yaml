@@ -68,6 +68,87 @@ models:
     # (every block where b % 4 != 3), but the final block 64 is attention-only.
     # Older builds apply the modulo rule to block 64 and expect SSM tensors.
 
+  - name: "ornith-1.5-35b-a3b"
+    backend: "llama.cpp"
+    # Ornith only. Its documented usage passes `tools` in the request and reads
+    # structured message.tool_calls; llama-server renders the model's own
+    # template and parses the call back. Probed on the live model: 5/5 clean
+    # calls, correct types (limit arrived as int), zero repairs.
+    #
+    # The harness default — tool definitions pasted into the system prompt, the
+    # reply parsed out of text — asks this model to hand-write JSON in prose,
+    # and it improvised a different malformation nearly every turn: dropped
+    # name-value quotes, `<function":` for `{"function":`, unclosed <tool_call>
+    # batches, JSON opened and closed in XML, closing tags used as openers.
+    # Three runs of repairs took it 8/15 -> 10/15 -> 12/15 and still needed 52
+    # repairs across 26 calls on coding_wine_medium_01 alone.
+    #
+    # Deliberately not switched on for the other six: it changes what a model is
+    # asked to do, so their scores would move and stop being comparable to the
+    # existing baseline. Ornith has no baseline to protect.
+    native_tools: true
+    # Thinking off. Measured both ways on the native path, 15 tasks each
+    # (run-20260831-192329 on, run-20260831-202252 off):
+    #
+    #   dimension   on     off    delta
+    #   research    0.80   0.81   +0.01
+    #   planning    0.80   0.79   -0.01
+    #   coding      0.22   0.49   +0.27
+    #   agentic     0.80   0.72   -0.08
+    #   composite   0.65   0.70   +0.05
+    #
+    # Coding more than doubles because all four tasks finish instead of one.
+    # With thinking on, coding_artemis_medium_01 spent the entire 32768-token
+    # budget on turn 1 without a single tool call, emitting 121k chars of
+    # deliberation — "Let me" 212x, "But" 151x, "Hmm" 72x against 28 def/class
+    # lines — and stopped mid-sentence on "I think I'm way overthinking this".
+    #
+    # Kept on until 2026-08-31 because enable_thinking: false wrecked
+    # hand-written tool-call JSON (1/8 parseable against 8/8). That reason went
+    # away with native_tools: the server's template and grammar produce the
+    # call, so the model formats nothing.
+    #
+    # Not the same finding as qwen3.8, which keeps reasoning_effort: medium
+    # because thinking off cost it research 0.80 -> 0.63. Ornith's research did
+    # not move. The two models react differently to the same switch; do not
+    # generalise either result to the other.
+    #
+    # The cost is real but smaller than the gain and concentrated in one task:
+    # agentic_mcp_hard_01 falls 0.89 -> 0.63 and accounts for most of the
+    # agentic loss. +0.05 composite also sits exactly on
+    # scoring.min_detectable_difference, so the composite alone does not carry
+    # this — 15/15 tasks against 12/15 does, as does latency
+    # (planning_mcp_medium_01 31.4s -> 6.4s).
+    chat_template_kwargs:
+      enable_thinking: false
+    # Thinking stays ON, deliberately, unlike every other reasoning model here.
+    #
+    # Its template's only reasoning switch is `enable_thinking` (there is no
+    # /no_think branch and no reasoning_effort), and turning it off wrecks the
+    # tool-call JSON. Measured on the live model, 8 prompts at temperature 0,
+    # counting how many tool calls the parser can read:
+    #
+    #   thinking ON   -> 4/8 valid Hermes, 4/8 dropped name-value quote
+    #                    = 8/8 usable once _repair_dropped_name_value_quote runs
+    #   thinking OFF  -> 1/8 valid, and the rest fragment into five shapes:
+    #                    {"search_thoughts", "parameters": {...}}
+    #                    {"search_thoughts", "limit": 10, "query": "..."}}
+    #                    {"capture_thought", "content": ..., "type": ...}
+    #                    {"search_thoughts", "params": {...}}
+    #                    plus the dropped-quote form
+    #                    = 1/8 usable, and the rest are not safely repairable
+    #                      because the arguments key is missing or renamed.
+    #
+    # So the budget risk of leaving thinking on is the lesser problem: a
+    # truncated answer still scores, a dropped tool call ends the turn with no
+    # tools at all. Watch max_tokens on coding tasks instead.
+    #
+    # Its template does hardcode an XML tool-call format
+    # (<function=NAME><parameter=KEY>...), and the parser handles that, but the
+    # model never emitted it in 16 samples — that branch only renders when
+    # tool definitions are passed to the template, and nite-eval injects them
+    # as prompt text instead.
+
 evaluation:
   temperature: 0.0
   max_tokens: 4096
@@ -84,6 +165,26 @@ scoring:
   # ties. 15 tasks at one sample each does not resolve finer than this; raising
   # the task count or the judge sample count is what would lower it.
   min_detectable_difference: 0.05
+  # Some dimensions are noisier than the composite and must not be read against
+  # its threshold. Coding tasks run in a real container and the container's
+  # output enters the conversation: an `ls -la` on turn 1 returns the directory
+  # mtime, which is the container's creation time, so two runs of the same model
+  # at temperature 0 diverge from turn 2 and go on to write different code.
+  # ornith-1.5 emitted 65986 / 66666 / 65604 bytes of tool-call arguments across
+  # three runs of coding_artemis_medium_01, and in one of them the code it
+  # happened to write hit a real bug: both automated criteria scored 0 rather
+  # than 1.00 and 0.93, moving the task 0.62 -> 0.00.
+  #
+  # Observed per-task swings on identical configuration were 0.1-0.6, and the
+  # coding dimension moved 0.49 -> 0.39 between two such runs. 0.15 is set from
+  # that dimension-level spread, not from the per-task extremes.
+  #
+  # Accepted rather than fixed. Making the container reproducible means pinning
+  # its clock and every other varying surface; normalising timestamps in sandbox
+  # output is on the TODO as the cheaper partial fix. Until then the honest
+  # response is to stop over-reading coding gaps.
+  dimension_min_detectable_difference:
+    coding: 0.15
   dimension_weights:
     research: 0.25
     planning: 0.25

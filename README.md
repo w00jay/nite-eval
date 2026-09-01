@@ -218,15 +218,96 @@ Path/binary configuration lives in `.env` (see `.env.example`).
 
 ## Default target models
 
-| Name | Model | Quant | Notes |
-|------|-------|-------|-------|
-| `qwen3.5-27b` | Qwen 3.5 27B | Q4_K_M | |
-| `qwen3.5-9b` | Qwen 3.5 9B | Q4_K_M | |
-| `gemma4-26b-a4b` | Gemma 4 26B-A4B | Q4_K_M | Emits Harmony-style tool calls |
-| `qwen3.6-35b-a3b` | Qwen 3.6 35B-A3B | UD-Q4_K_S | MoE reasoning; needs `system_suffix: "/no_think"` |
-| `qwen3.8-27b` | Qwen 3.8 27B | UD-Q4_K_XL | Hybrid attention+SSM (336 SSM tensors, 48 of 65 blocks). **Requires llama.cpp ≥ Aug 2026** — older builds fail with `missing tensor 'blk.64.ssm_conv1d.weight'` because they assume the final layer is an SSM block. **Needs `chat_template_kwargs: {reasoning_effort: medium}`** — its chat template has no `/no_think` branch, so that string is inert filler; the template defaults to `xhigh`. Without the override, on long prompts it exhausts the whole `max_tokens` budget inside `reasoning_content` and returns `finish_reason=length` with empty `content`. Observed on all 4 coding tasks in `run-20260829-040649` (11k–16k chars of reasoning, no answer). A short prompt returns `stop` normally, so this does not reproduce on a quick smoke test. Emits some tool calls as `{"function": ...}` instead of the Hermes `{"name": ...}`; the parser accepts both |
+Specs read from the GGUF headers on the reference host, not from model cards.
+Parameter counts are summed over actual tensor elements, so they include the
+embedding matrices and will differ slightly from the marketing number.
 
-Add or replace models by editing `config/llama_swap_config.yaml` and the `models:` block in `config/eval_config.yaml`. The `models:` block accepts an optional `system_suffix` per model for chat-template triggers like `/no_think`.
+| Name | Arch | Params | Layers | Experts (active) | Quant | GGUF | VRAM @ 64k |
+|------|------|-------:|-------:|------------------|-------|-----:|-----------:|
+| `qwen3.5-27b` | `qwen35` dense | 26.90B | 64 | — | Q4_K_M | 15.4 GiB | not measured |
+| `qwen3.5-9b` | `qwen35` dense | 8.95B | 32 | — | Q4_K_M | 5.3 GiB | not measured |
+| `gemma4-26b-a4b` | `gemma4` MoE | 25.23B | 30 | 128 (8) | Q4_K_M | 15.6 GiB | 17853 MiB |
+| `qwen3.6-35b-a3b` | `qwen35moe` MoE | 34.66B | 40 | 256 (8) | UD-Q4_K_S | 19.5 GiB | not measured |
+| `qwen3.6-35b-a3b-strix` | `qwen35moe` MoE | 34.66B | 40 | 256 (8) | Q4_K_M | 19.7 GiB | 21393 MiB |
+| `qwen3.8-27b` | `qwen35` hybrid | 27.32B | 65 | — | UD-Q4_K_XL | 16.4 GiB | 19211 MiB |
+| `ornith-1.5-35b-a3b` | `qwen35moe` MoE | 35.51B | 41 | 256 (8) | Q4_K_M | 20.2 GiB | 21412 MiB |
+
+Attention geometry, which is what determines how fast KV cache grows with context:
+
+| Name | Q heads | KV heads | Key length | Trained ctx | Tensors |
+|------|--------:|----------|-----------:|------------:|--------:|
+| `qwen3.5-27b` | 24 | 4 | 256 | 262144 | 851 |
+| `qwen3.5-9b` | 16 | 4 | 256 | 262144 | 427 |
+| `gemma4-26b-a4b` | 16 | 8, but 2 on every 6th layer | 512 | 262144 | 658 |
+| `qwen3.6-35b-a3b` | 16 | 2 | 256 | 262144 | 733 |
+| `qwen3.6-35b-a3b-strix` | 16 | 2 | 256 | 262144 | 733 |
+| `qwen3.8-27b` | 24 | 4 | 256 | 262144 | 866 |
+| `ornith-1.5-35b-a3b` | 16 | 2 | 256 | 262144 | 753 |
+
+All six run under llama-swap with identical flags — `-ngl 999 --ctx-size 65536
+-fa on --cache-type-k q8_0 --cache-type-v q8_0` — pinned to the 3090 by UUID and
+in an `exclusive: true` group so only one is resident at a time. **Context is
+65536, not the 262144 the models were trained for**; see the VRAM measurements in
+`CLAUDE.md` before raising it. `ornith-1.5-35b-a3b` is now the binding model at
+21412 MiB, a hair above `qwen3.6-35b-a3b-strix` at 21393, leaving ~3.1 GB
+headroom on the 24 GB card.
+
+Per-model notes:
+
+- **`gemma4-26b-a4b`** emits tool calls in a Harmony-style format
+  (`<|tool_call>call:FUNC{…}<tool_call|>`) rather than Hermes; the parser handles
+  both. Its `key_length` of 512 is twice every other model's, so on paper its KV
+  cache should be the largest here — in practice llama.cpp gives it
+  sliding-window attention (the `2` KV heads on every 6th layer above), and
+  doubling context cost it only ~500 MiB.
+- **`qwen3.6-35b-a3b` and `-strix`** are the same base model at different quants
+  (unsloth UD-Q4_K_S vs Sero/Strix Q4_K_M) — byte-for-byte identical metadata,
+  733 tensors each, differing only in quantization. Both are MoE reasoning models
+  and need `system_suffix: "/no_think"`, or they burn the whole token budget
+  inside `<think>…</think>`.
+- **`qwen3.8-27b`** reports `general.architecture = qwen35` but is not a plain
+  dense Qwen: it is a hybrid, with 336 SSM tensors across 48 of its 65 blocks and
+  conventional attention in only 17. **Requires llama.cpp ≥ Aug 2026** — older
+  builds fail with `missing tensor 'blk.64.ssm_conv1d.weight'` because they assume
+  the final layer is an SSM block. **Needs `chat_template_kwargs:
+  {reasoning_effort: medium}`**: its chat template has no `/no_think` branch, so
+  that string is inert filler and the template defaults to `xhigh`. Without the
+  override it exhausts the whole `max_tokens` budget inside `reasoning_content`
+  on long prompts and returns `finish_reason=length` with empty `content` —
+  observed on all 4 coding tasks in `run-20260829-040649` (11k–16k chars of
+  reasoning, no answer). A short prompt returns `stop` normally, so this does not
+  reproduce on a quick smoke test. It also emits some tool calls as
+  `{"function": ...}` instead of the Hermes `{"name": ...}`; the parser accepts both.
+
+- **`ornith-1.5-35b-a3b`** (`ornith-ai/Ornith-1.5-35B-A3B-GGUF`, Q4_K_M) is
+  structurally close to `qwen3.6-35b-a3b` — same `qwen35moe` arch, 256 experts
+  with 8 active, 16/2 heads — but it is a hybrid: of its 40 transformer layers
+  only 10 carry full attention (blocks 3, 7, … 39, every 4th) and the other 30
+  are linear attention. `block_count` reads 41 because the GGUF also carries a
+  multi-token-prediction block (`blk.40.nextn.*`); whether llama.cpp uses it is
+  unverified. Its larger vocabulary (248320) accounts for most of the
+  parameter difference against qwen3.6. It runs with `enable_thinking: false`
+  and is the only model with `native_tools: true` — see "Native tool calling"
+  below. The two go together: thinking off used to wreck its hand-written
+  tool-call JSON (1/8 parseable against 8/8), which no longer matters once the
+  server produces the call. Measured both ways on 15 tasks, thinking off is
+  +0.05 composite and 15/15 tasks against 12/15, almost all of it coding
+  (0.22 -> 0.49) against a smaller agentic loss (0.80 -> 0.72). This is not
+  qwen3.8's finding, where thinking off cost research 0.80 -> 0.63; Ornith's
+  research did not move. It
+  needs `chat_template_kwargs: {enable_thinking: false}`; its template has no
+  `/no_think` branch and no `reasoning_effort`, so the reasoning switch is
+  binary. **Not yet validated on this harness:** at 20.2 GiB it is the largest
+  target here and its VRAM at 64k is unmeasured, and it was post-trained on an
+  XML tool-call format (`<function=NAME><parameter=KEY>…`) that
+  `hermes_parser` cannot parse. nite-eval injects tool definitions as prompt
+  text rather than via a `tools` field, so the model is instructed in Hermes
+  JSON and that template branch never fires — whether it complies is untested.
+
+Add or replace models by editing `config/llama_swap_config.yaml` and the `models:`
+block in `config/eval_config.yaml`. The `models:` block accepts an optional
+`system_suffix` per model for chat-template triggers like `/no_think`, and
+`chat_template_kwargs` for templates that take structured options.
 
 ## Coding tasks run for real
 
@@ -313,6 +394,45 @@ the call, and records the count in `task_results.repaired_tool_calls`. Reports
 include a per-model repair rate. A high rate is a model-quality signal — see
 `CLAUDE.md` for the qwen3.8 case (34% of coding tool calls).
 
+Two repairs exist, for two one-character defects in different positions:
+
+| Model | Defect | Repair |
+|---|---|---|
+| qwen3.8-27b | drops the opening quote of the **key** after the name — `{"name": "write_file",\narguments":` | `_repair_dropped_key_quote` |
+| ornith-1.5-35b-a3b | drops the opening quote of the name's **value** — `{"name": search_thoughts",` | `_repair_dropped_name_value_quote` |
+
+They run value-first: a dropped value quote leaves an unbalanced quote that
+desynchronises the key repair's string tracking, which then rewrites
+`"arguments"` to `""arguments"`.
+
+### Native tool calling is per-model
+
+`config/eval_config.yaml` accepts `native_tools: true` per model. With it, the
+tool schemas go in the request and the server's structured `message.tool_calls`
+are read back; the model's own chat template renders its tool instructions, so
+the harness does not inject its own. Without it — the default — tool definitions
+are pasted into the system prompt and the reply is parsed out of the text by
+`hermes_parser`.
+
+Only `ornith-1.5-35b-a3b` uses it, because that is the usage its model card
+documents. Asked for tool calls in prose it emitted a different broken shape
+nearly every turn: a dropped quote on the name value, `<function":` where
+`{"function":` belongs, `<tool_call>` batches with one closing tag, payloads
+opened in JSON and closed in XML, closing tags used as openers. Three rounds of
+repairs took it from 8/15 to 12/15 tasks and still needed 52 repairs across 26
+calls on one task. On the native path it needs **none** — repairs went to zero
+across all 15 tasks — and `agentic_wine_medium_01` rose 0.56 to 0.75 because the
+model finally receives the argument schema as a schema rather than as prose.
+
+The flag is off for the other six deliberately. Switching a model changes what
+it is asked to do, so its scores move and stop being comparable to earlier runs.
+
+Sending the schemas is only half of it: the reply has to go back as an assistant
+message carrying `tool_calls`, with each result as a `tool` message naming its
+`tool_call_id`. Without that the model sees itself say nothing and tool results
+arriving unprompted — `agentic_mcp_hard_01` made one call, stopped, and scored
+0.40 against 0.93.
+
 ## Known limitations
 
 Deliberate trade-offs, not bugs. Each is a thing a number from this harness does
@@ -339,14 +459,31 @@ to `0.0`, `deterministic` criteria returning a free `1.0`, checklists matching o
 single keywords, a judge prompt capped at 1/3/5. Old runs remain in the database
 for provenance. They are not a baseline.
 
+**Coding is not reproducible, by construction.** Coding tasks run in a real
+container and the container's output enters the conversation. An `ls -la` on
+turn 1 returns the working directory's mtime, which is the container's creation
+time, so two runs of the same model at `temperature: 0` see different history
+from turn 2 and go on to write different code — ornith-1.5 emitted 65986, 66666
+and 65604 bytes of tool-call arguments across three runs of one task. Where the
+code it happened to write hit a real bug, both automated criteria scored 0
+instead of 1.00 and 0.93, moving that task 0.62 to 0.00. Per-task swings of
+0.1-0.6 and a dimension-level swing of 0.49 to 0.39 have been observed on
+identical configuration, so `scoring.dimension_min_detectable_difference` sets
+coding's threshold to 0.15 and reports print it. Timestamps are the cause found;
+anything else varying per container — `find` ordering, hostnames, mtimes on
+copied files — behaves the same way.
+
 **One sample per task.** 15 tasks, each run once, judge scores averaged over
 three. Composite gaps under 0.05 are inside judge variance; reports say so per
-run. The target is essentially deterministic at `temperature: 0`, so repeat runs
-of the model buy nothing — more tasks or more judge samples are what would
+run. On mock-backed tasks the target is essentially deterministic at
+`temperature: 0`, so repeat runs of the model buy nothing there — but see the
+entry above, which makes that false for coding. More tasks or more judge samples
+are what would
 sharpen this.
 
 **Per-task token budgets bound the coding scores.** Coding tasks cap generation
-at `max_tokens: 24576` (planning at `12288`). In `run-20260830-231628` five of
+at `max_tokens: 32768` as of 2026-08-31, raised from 24576 (planning is at
+`12288`). In `run-20260830-231628` five of
 six models hit `finish_reason=length` on at least one coding task and scored
 `0.00` there, which is most of the spread in that dimension. A low coding score
 means "did not finish inside the budget" at least as often as it means "wrote bad

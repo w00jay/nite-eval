@@ -125,7 +125,17 @@ timeout_seconds: 1200
 # implementation and its tests in one turn. coding_artemis_medium_01 emitted
 # 24725 chars on turn 2 and hit the cap. Under the mocks it wrote less, because
 # it was told its tests passed and stopped.
-max_tokens: 24576
+# Raised again from 24576 on 2026-08-31. ornith-1.5 truncated all four coding
+# tasks at 24576, emitting 89k-115k chars of genuine work each time — not the
+# malformed output the parser used to see, which is gone since it moved to
+# native tool calling. The budget is now the only thing failing these tasks.
+# 32768 is half the 65536 context, leaving the other half for prompt and
+# compacted history; going higher risks context exhaustion instead.
+#
+# This changes the task for every model, so coding scores before this date are
+# not comparable to ones after. Five of six models in run-20260830-231628 also
+# truncated on coding_artemis_medium_01, so the fleet needs re-running.
+max_tokens: 32768
 
 environment:
   image: nite-eval-go:1.23

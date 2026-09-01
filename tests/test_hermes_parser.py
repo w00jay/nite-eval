@@ -389,3 +389,373 @@ def test_genuinely_truncated_json_still_gets_closing_braces():
     import json as _json
 
     assert _json.loads(fixed)["arguments"]["path"] == "/a"
+
+
+# --- Ornith XML-format parsing (ornith-1.5-35b-a3b) ---
+#
+# Ornith's chat template hardcodes an XML tool-call format:
+#   <tool_call><function=NAME><parameter=KEY>value</parameter></function></tool_call>
+# The body is not JSON, so the Hermes path raises JSONDecodeError. Without a
+# fallback every Ornith tool call is discarded as malformed_json and the model
+# is scored on a tool-less answer.
+
+XML_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
+                "required": ["path", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer"},
+                    "fuzzy": {"type": "boolean"},
+                    "tags": {"type": "array"},
+                    "opts": {"type": "object"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+]
+
+
+def test_xml_single_call():
+    response = (
+        "<tool_call>\n<function=search>\n<parameter=query>\nrust ownership\n</parameter>\n</function>\n</tool_call>"
+    )
+    parsed = extract_tool_calls(response, XML_TOOLS)
+    assert len(parsed.tool_calls) == 1
+    assert parsed.tool_calls[0].name == "search"
+    assert parsed.tool_calls[0].arguments == {"query": "rust ownership"}
+    assert parsed.errors == []
+
+
+def test_xml_multiline_value_preserved():
+    """Multi-line values must survive verbatim — this is how files get written."""
+    body = 'package auth\n\nimport (\n\t"fmt"\n)\n'
+    response = (
+        f"<tool_call>\n<function=write_file>\n<parameter=path>\nauth.go\n</parameter>\n"
+        f"<parameter=content>\n{body}</parameter>\n</function>\n</tool_call>"
+    )
+    parsed = extract_tool_calls(response, XML_TOOLS)
+    assert parsed.tool_calls[0].arguments["path"] == "auth.go"
+    assert parsed.tool_calls[0].arguments["content"] == body.rstrip("\n")
+
+
+def test_xml_typed_coercion_against_schema():
+    """XML carries no types; the declared schema type decides."""
+    response = (
+        "<tool_call>\n<function=search>\n"
+        "<parameter=query>\nx\n</parameter>\n"
+        "<parameter=limit>\n5\n</parameter>\n"
+        "<parameter=fuzzy>\ntrue\n</parameter>\n"
+        '<parameter=tags>\n["a", "b"]\n</parameter>\n'
+        '<parameter=opts>\n{"deep": true}\n</parameter>\n'
+        "</function>\n</tool_call>"
+    )
+    parsed = extract_tool_calls(response, XML_TOOLS)
+    args = parsed.tool_calls[0].arguments
+    assert args["limit"] == 5
+    assert args["fuzzy"] is True
+    assert args["tags"] == ["a", "b"]
+    assert args["opts"] == {"deep": True}
+    assert validate_tool_calls(parsed, XML_TOOLS) == []
+
+
+def test_xml_string_param_is_never_coerced():
+    """A JSON-looking string param stays a string — coding tasks write JSON files."""
+    response = (
+        "<tool_call>\n<function=write_file>\n"
+        "<parameter=path>\nconfig.json\n</parameter>\n"
+        '<parameter=content>\n{"a": 1}\n</parameter>\n'
+        "</function>\n</tool_call>"
+    )
+    parsed = extract_tool_calls(response, XML_TOOLS)
+    assert parsed.tool_calls[0].arguments["content"] == '{"a": 1}'
+    assert validate_tool_calls(parsed, XML_TOOLS) == []
+
+
+def test_xml_without_schema_keeps_strings():
+    """No tools passed: stay a string rather than guessing a type."""
+    response = "<tool_call>\n<function=search>\n<parameter=limit>\n5\n</parameter>\n</function>\n</tool_call>"
+    parsed = extract_tool_calls(response)
+    assert parsed.tool_calls[0].arguments["limit"] == "5"
+
+
+def test_xml_multiple_calls():
+    response = (
+        "<tool_call>\n<function=search>\n<parameter=query>\na\n</parameter>\n</function>\n</tool_call>\n"
+        "<tool_call>\n<function=search>\n<parameter=query>\nb\n</parameter>\n</function>\n</tool_call>"
+    )
+    parsed = extract_tool_calls(response, XML_TOOLS)
+    assert [tc.arguments["query"] for tc in parsed.tool_calls] == ["a", "b"]
+
+
+def test_xml_zero_arg_call():
+    response = "<tool_call>\n<function=list_files>\n</function>\n</tool_call>"
+    parsed = extract_tool_calls(response, XML_TOOLS)
+    assert parsed.tool_calls[0].name == "list_files"
+    assert parsed.tool_calls[0].arguments == {}
+
+
+def test_xml_stripped_from_text():
+    """Raw XML must not leak into the answer the judge sees."""
+    response = (
+        "Let me look that up.\n<tool_call>\n<function=search>\n"
+        "<parameter=query>\nx\n</parameter>\n</function>\n</tool_call>"
+    )
+    parsed = extract_tool_calls(response, XML_TOOLS)
+    assert "<function=" not in parsed.text
+    assert parsed.text == "Let me look that up."
+
+
+def test_xml_without_tool_call_wrapper():
+    """Models drop the wrapper; the call should still be found."""
+    response = "<function=search>\n<parameter=query>\nunwrapped\n</parameter>\n</function>"
+    parsed = extract_tool_calls(response, XML_TOOLS)
+    assert len(parsed.tool_calls) == 1
+    assert parsed.tool_calls[0].arguments == {"query": "unwrapped"}
+
+
+def test_hermes_still_wins_over_xml():
+    """A valid Hermes call must not be reparsed by the XML path."""
+    response = '<tool_call>{"name": "search", "arguments": {"query": "hermes"}}</tool_call>'
+    parsed = extract_tool_calls(response, XML_TOOLS)
+    assert len(parsed.tool_calls) == 1
+    assert parsed.tool_calls[0].arguments == {"query": "hermes"}
+
+
+def test_xml_malformed_still_errors():
+    """Junk inside <tool_call> that is neither JSON nor XML stays an error."""
+    response = "<tool_call>\nnot json and not xml\n</tool_call>"
+    parsed = extract_tool_calls(response, XML_TOOLS)
+    assert parsed.tool_calls == []
+    assert parsed.errors[0]["error"] == "malformed_json"
+
+
+# --- Ornith dropped name-value quote (ornith-1.5-35b-a3b) ---
+#
+# Measured on the live model at temperature 0, thinking on, 8 prompts: 4 came
+# back as valid Hermes and 4 dropped the opening quote of the *value* after
+# "name". That is one character away from qwen3.8's defect, which drops the
+# opening quote of the following *key* — different position, so
+# _repair_dropped_key_quote does not catch it.
+
+ORNITH_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "search_thoughts",
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}},
+                "required": ["query"],
+            },
+        },
+    },
+]
+
+
+def test_ornith_dropped_name_value_quote():
+    """Verbatim sample from the live model."""
+    response = (
+        '<tool_call>\n{"name": search_thoughts", "arguments": '
+        '{"query": "local LLM benchmarking", "limit": 5}}\n</tool_call>'
+    )
+    parsed = extract_tool_calls(response, ORNITH_TOOLS)
+    assert len(parsed.tool_calls) == 1
+    assert parsed.tool_calls[0].name == "search_thoughts"
+    assert parsed.tool_calls[0].arguments == {"query": "local LLM benchmarking", "limit": 5}
+    assert parsed.errors == []
+
+
+def test_ornith_repair_is_counted():
+    """The repair must stay visible in the report, not be silently absorbed."""
+    response = '<tool_call>{"name": search_thoughts", "arguments": {"query": "x"}}</tool_call>'
+    parsed = extract_tool_calls(response, ORNITH_TOOLS)
+    assert parsed.repaired == 1
+
+
+def test_valid_hermes_is_not_counted_as_repaired():
+    response = '<tool_call>{"name": "search_thoughts", "arguments": {"query": "x"}}</tool_call>'
+    parsed = extract_tool_calls(response, ORNITH_TOOLS)
+    assert parsed.repaired == 0
+    assert parsed.tool_calls[0].name == "search_thoughts"
+
+
+def test_dropped_name_quote_repair_is_string_aware():
+    """An identifier-then-quote sequence inside a string value must survive."""
+    response = (
+        '<tool_call>{"name": "capture_thought", "arguments": '
+        '{"content": "he wrote map[string]any{x\\": 1} then stopped"}}</tool_call>'
+    )
+    parsed = extract_tool_calls(response, ORNITH_TOOLS)
+    assert parsed.repaired == 0
+    assert parsed.tool_calls[0].arguments["content"] == 'he wrote map[string]any{x": 1} then stopped'
+
+
+def test_qwen38_key_quote_repair_still_works():
+    """The pre-existing qwen3.8 repair must not regress."""
+    response = '<tool_call>\n{"name": "write_file",\narguments": {"content": "package auth"}}\n</tool_call>'
+    parsed = extract_tool_calls(response)
+    assert len(parsed.tool_calls) == 1
+    assert parsed.tool_calls[0].name == "write_file"
+    assert parsed.repaired >= 1
+
+
+# --- Ornith defects seen in run-20260831-163006 ---
+#
+# The first live run lost 10 tool calls across 5 tasks to two further defects.
+# Payloads below are verbatim from that run's log.
+
+
+def test_ornith_angle_bracket_for_brace():
+    """`<function"` where `{"function"` belongs — a one-token substitution.
+
+    The model reaches for its native XML form, does not finish it, and
+    completes the payload as JSON.
+    """
+    response = (
+        '<tool_call>\n<function": "web_search", "arguments": '
+        '{"query": "TimesFM foundation model"}}\n</tool_call>'
+    )
+    parsed = extract_tool_calls(response, ORNITH_TOOLS)
+    assert len(parsed.tool_calls) == 1
+    assert parsed.tool_calls[0].name == "web_search"
+    assert parsed.tool_calls[0].arguments == {"query": "TimesFM foundation model"}
+    assert parsed.repaired >= 1
+
+
+def test_ornith_angle_bracket_with_dropped_value_quote():
+    """Both defects at once, as seen on coding_mcp_easy_01."""
+    response = (
+        '<tool_call>\n<function": run_code", "arguments": '
+        '{"command": "go version"}}\n</tool_call>'
+    )
+    parsed = extract_tool_calls(response, ORNITH_TOOLS)
+    assert len(parsed.tool_calls) == 1
+    assert parsed.tool_calls[0].name == "run_code"
+    assert parsed.tool_calls[0].arguments == {"command": "go version"}
+
+
+def test_ornith_angle_bracket_with_fully_bare_value():
+    """coding_wine_medium_01: the value carries no quotes at all."""
+    response = (
+        '<tool_call>\n<function": run_code, "arguments": '
+        '{"command": "ls -la /app"}}\n</tool_call>'
+    )
+    parsed = extract_tool_calls(response, ORNITH_TOOLS)
+    assert len(parsed.tool_calls) == 1
+    assert parsed.tool_calls[0].name == "run_code"
+
+
+def test_bare_value_true_false_null_are_not_quoted():
+    """JSON literals must stay literals, not become strings."""
+    response = '<tool_call>{"name": "search_thoughts", "arguments": {"query": "x", "deep": true}}</tool_call>'
+    parsed = extract_tool_calls(response, ORNITH_TOOLS)
+    assert parsed.tool_calls[0].arguments["deep"] is True
+
+
+def test_ornith_unclosed_tool_call_batch():
+    """Three calls, one closing tag — cost 4 calls on research_finance_hard_01.
+
+    TOOL_CALL_RE is non-greedy, so it captures from the first <tool_call> to the
+    only </tool_call> and swallows all three payloads into one body.
+    """
+    response = (
+        '<tool_call>\n{"name": "search_thoughts", "arguments": {"query": "a"}}\n\n'
+        '<tool_call>\n{"name": "search_thoughts", "arguments": {"query": "b"}}\n\n'
+        '<tool_call>\n{"name": "search_thoughts", "arguments": {"query": "c"}}\n</tool_call>'
+    )
+    parsed = extract_tool_calls(response, ORNITH_TOOLS)
+    assert len(parsed.tool_calls) == 3
+    assert [tc.arguments["query"] for tc in parsed.tool_calls] == ["a", "b", "c"]
+    assert parsed.errors == []
+
+
+def test_properly_closed_batch_still_works():
+    """The normal multi-call case must not regress."""
+    response = (
+        '<tool_call>{"name": "search_thoughts", "arguments": {"query": "a"}}</tool_call>\n'
+        '<tool_call>{"name": "search_thoughts", "arguments": {"query": "b"}}</tool_call>'
+    )
+    parsed = extract_tool_calls(response, ORNITH_TOOLS)
+    assert [tc.arguments["query"] for tc in parsed.tool_calls] == ["a", "b"]
+
+
+def test_angle_bracket_inside_string_is_untouched():
+    """A payload legitimately containing `<function` in a value must survive."""
+    response = (
+        '<tool_call>{"name": "capture_thought", "arguments": '
+        '{"content": "use <function=x> in the template"}}</tool_call>'
+    )
+    parsed = extract_tool_calls(response, ORNITH_TOOLS)
+    assert parsed.tool_calls[0].arguments["content"] == "use <function=x> in the template"
+    assert parsed.repaired == 0
+
+
+# --- Ornith mid-payload format switching (run-20260831-170238) ---
+#
+# The model opens a call in JSON and closes it in XML, terminating with
+# </parameter>, </function> or a tag named after the parameter itself, instead
+# of the JSON `"}}`. Payloads verbatim from that run's final_response column.
+
+
+def test_ornith_json_start_xml_close_with_terminated_string():
+    """coding_mcp_easy_01: value quote present, JSON braces never closed."""
+    response = (
+        '<tool_call>\n<function": run_code", "arguments": '
+        '{"command": "go env GOPATH GOMODCACHE"\n</parameter>\n</function>\n</tool_call>'
+    )
+    parsed = extract_tool_calls(response, ORNITH_TOOLS)
+    assert len(parsed.tool_calls) == 1
+    assert parsed.tool_calls[0].name == "run_code"
+    assert parsed.tool_calls[0].arguments["command"] == "go env GOPATH GOMODCACHE"
+
+
+def test_ornith_json_start_xml_close_with_unterminated_string():
+    """coding_wine_medium_01: the content string is not closed either."""
+    response = (
+        '<tool_call>\n<function": write_file, "arguments": '
+        '{"path": "/app/a.ts", "content": "export default createHandler;\n</content>\n</tool_call>'
+    )
+    parsed = extract_tool_calls(response, ORNITH_TOOLS)
+    assert len(parsed.tool_calls) == 1
+    assert parsed.tool_calls[0].name == "write_file"
+    assert parsed.tool_calls[0].arguments["path"] == "/app/a.ts"
+    assert "createHandler" in parsed.tool_calls[0].arguments["content"]
+
+
+def test_ornith_xml_name_with_json_arguments():
+    """research_mcp_easy_01: XML name, no </function>, args as nested JSON."""
+    response = (
+        "<tool_call>\n<function=web_search>\n<tool_call>\n"
+        '{"query": "Docker mcp-gateway"}\n</tool_call>'
+    )
+    parsed = extract_tool_calls(response, ORNITH_TOOLS)
+    assert len(parsed.tool_calls) == 1
+    assert parsed.tool_calls[0].name == "web_search"
+    assert parsed.tool_calls[0].arguments == {"query": "Docker mcp-gateway"}
+
+
+def test_xml_closer_inside_string_value_is_kept():
+    """A payload legitimately ending with markup in its value must survive."""
+    response = (
+        '<tool_call>{"name": "write_file", "arguments": '
+        '{"path": "a.html", "content": "<div>hi</div>"}}</tool_call>'
+    )
+    parsed = extract_tool_calls(response, ORNITH_TOOLS)
+    assert parsed.tool_calls[0].arguments["content"] == "<div>hi</div>"
+    assert parsed.repaired == 0

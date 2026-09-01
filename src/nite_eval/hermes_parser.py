@@ -29,6 +29,28 @@ GEMMA_CHANNEL_RE = re.compile(r"<\|channel>(.*?)<channel\|>", re.DOTALL)
 GEMMA_CALL_PREFIX_RE = re.compile(r"\s*call:([A-Za-z_][A-Za-z0-9_]*)\s*(\{.*\})\s*$", re.DOTALL)
 GEMMA_STRING_DELIM = '<|"|>'
 
+# Ornith's chat template hardcodes an XML tool-call format rather than Hermes JSON:
+#   <tool_call>
+#   <function=write_file>
+#   <parameter=path>
+#   auth.go
+#   </parameter>
+#   </function>
+#   </tool_call>
+# The body is not JSON, so the Hermes path raises and the call would be dropped.
+XML_FUNCTION_RE = re.compile(r"<function=([A-Za-z_][A-Za-z0-9_]*)\s*>(.*?)</function>", re.DOTALL)
+XML_PARAMETER_RE = re.compile(r"<parameter=([A-Za-z_][A-Za-z0-9_.\-]*)\s*>(.*?)</parameter>", re.DOTALL)
+
+# ornith-1.5 also emits a half-finished hybrid: it starts the XML form, does not
+# complete it, and finishes the payload as JSON, substituting `<` for the
+# opening `{"`::
+#
+#     <function": "web_search", "arguments": {"query": "..."}}
+#
+# Anchored to the payload start so a legitimate `<function` inside a string
+# value is never rewritten.
+ANGLE_CALL_RE = re.compile(r'^<(?=(?:function|name)")')
+
 
 @dataclass
 class ToolCall:
@@ -101,6 +123,122 @@ def _repair_dropped_key_quote(s: str) -> tuple[str, int]:
     return "".join(out), repairs
 
 
+def _repair_dropped_name_value_quote(s: str) -> tuple[str, int]:
+    """Restore the opening quote on a value that lost it.
+
+    ornith-1.5-35b-a3b reproducibly drops the opening quote of the *value*
+    after "name", at temperature 0::
+
+        {"name": search_thoughts", "arguments": {"query": "x", "limit": 5}}
+
+    One character from qwen3.8's defect, which drops the opening quote of the
+    following *key* — different position, so _repair_dropped_key_quote does not
+    catch it. Measured across 8 prompts on the live model with thinking on,
+    4 came back valid and 4 like the above; without this repair half of the
+    model's tool calls are discarded and it is scored on a tool-less answer.
+
+    A candidate is only rewritten where a value is expected — directly after a
+    colon, outside any string literal — so an `ident"` sequence inside escaped
+    source code is never touched.
+
+    Returns (repaired, count).
+    """
+    out: list[str] = []
+    i = 0
+    in_string = False
+    repairs = 0
+    last_significant = ""
+    broken_value = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)"')
+    # The same value sometimes arrives with no quotes at all, terminated by the
+    # next comma or brace. JSON literals are left alone so `true` stays a bool.
+    bare_value = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)(?=\s*[,}])")
+    json_literals = {"true", "false", "null"}
+
+    while i < len(s):
+        ch = s[i]
+        if in_string:
+            if ch == "\\" and i + 1 < len(s):
+                out.append(s[i : i + 2])
+                i += 2
+                continue
+            if ch == '"':
+                in_string = False
+            out.append(ch)
+            i += 1
+            continue
+        if ch == '"':
+            in_string = True
+            out.append(ch)
+            last_significant = '"'
+            i += 1
+            continue
+        if last_significant == ":" and not ch.isspace():
+            m = broken_value.match(s, i)
+            if m:
+                out.append(f'"{m.group(1)}"')
+                i = m.end()
+                repairs += 1
+                last_significant = '"'
+                continue
+            m = bare_value.match(s, i)
+            if m and m.group(1) not in json_literals:
+                out.append(f'"{m.group(1)}"')
+                i = m.end()
+                repairs += 1
+                last_significant = '"'
+                continue
+        out.append(ch)
+        if not ch.isspace():
+            last_significant = ch
+        i += 1
+
+    return "".join(out), repairs
+
+
+XML_CLOSER_TAIL_RE = re.compile(r"(?:\s*</[A-Za-z_][A-Za-z0-9_.\-]*>)+\s*$")
+XML_NAME_ONLY_RE = re.compile(r"^\s*<function=([A-Za-z_][A-Za-z0-9_]*)\s*>\s*$")
+
+
+def _strip_trailing_xml_closers(s: str) -> tuple[str, int]:
+    """Drop XML closing tags that terminate a payload which began as JSON.
+
+    ornith-1.5 switches format mid-call: it opens in JSON and closes in XML,
+    ending with </parameter>, </function>, or a tag named after the parameter
+    itself, instead of the JSON `"}}`::
+
+        <function": run_code", "arguments": {"command": "go env"
+        </parameter>
+        </function>
+
+    Only a run of closers at the very end is removed, so markup inside a string
+    value — a `content` holding HTML — is untouched.
+
+    Returns (stripped, count).
+    """
+    stripped, n = XML_CLOSER_TAIL_RE.subn("", s)
+    return stripped, (1 if n else 0)
+
+
+def _close_unterminated_string(s: str) -> tuple[str, int]:
+    """Close a JSON string left open by a payload that stopped mid-value."""
+    in_string = False
+    i = 0
+    while i < len(s):
+        ch = s[i]
+        if in_string:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == '"':
+                in_string = False
+        elif ch == '"':
+            in_string = True
+        i += 1
+    if in_string:
+        return s + '"', 1
+    return s, 0
+
+
 def _count_unclosed_braces(s: str) -> int:
     """Count braces that are outside string literals.
 
@@ -150,8 +288,21 @@ def _fix_json(raw: str) -> tuple[str, int]:
     else:
         return stripped, 0
 
-    fixed = TRAILING_COMMA_RE.sub(r"\1", stripped)
-    fixed, repairs = _repair_dropped_key_quote(fixed)
+    fixed, angle_repairs = ANGLE_CALL_RE.subn('{"', stripped)
+    fixed = TRAILING_COMMA_RE.sub(r"\1", fixed)
+    # Order matters. A dropped value quote leaves an unbalanced quote that
+    # desynchronises the key repair's string tracking: it then reads
+    # `"arguments"` as bare text and rewrites it to `""arguments"`. Restoring
+    # the value quote first puts the walk back in sync.
+    fixed, repairs = _repair_dropped_name_value_quote(fixed)
+    fixed, key_repairs = _repair_dropped_key_quote(fixed)
+    repairs += key_repairs + angle_repairs
+
+    # A payload that switched to XML mid-call: drop the trailing closers, then
+    # close whatever JSON they replaced.
+    fixed, closer_repairs = _strip_trailing_xml_closers(fixed)
+    fixed, string_repairs = _close_unterminated_string(fixed)
+    repairs += closer_repairs + string_repairs
 
     unclosed = _count_unclosed_braces(fixed)
     if unclosed > 0:
@@ -201,6 +352,63 @@ def _quote_bare_keys(s: str) -> str:
     return "".join(out)
 
 
+def _param_types(tools: list[dict] | None) -> dict[str, dict[str, str]]:
+    """Map function name -> {param name -> declared JSON type} from tool schemas."""
+    types: dict[str, dict[str, str]] = {}
+    for tool in tools or []:
+        func = tool.get("function", {})
+        name = func.get("name")
+        if not name:
+            continue
+        props = func.get("parameters", {}).get("properties", {})
+        types[name] = {k: v.get("type") for k, v in props.items() if isinstance(v, dict)}
+    return types
+
+
+def _coerce_xml_value(raw: str, json_type: str | None) -> object:
+    """Coerce an XML parameter body to the type its schema declares.
+
+    XML carries no type information — every value arrives as text — so the
+    declared schema type decides. Without a schema the value stays a string:
+    guessing would corrupt string parameters, and a coding task writing a JSON
+    file passes a `content` that looks exactly like an object.
+    """
+    if json_type in (None, "string"):
+        return raw
+    try:
+        match json_type:
+            case "integer":
+                return int(raw.strip())
+            case "number":
+                f = float(raw.strip())
+                return int(f) if f.is_integer() else f
+            case "boolean":
+                s = raw.strip().lower()
+                if s in ("true", "false"):
+                    return s == "true"
+                return raw
+            case "array" | "object":
+                return json.loads(raw.strip())
+    except (ValueError, json.JSONDecodeError):
+        return raw
+    return raw
+
+
+def _extract_xml_tool_calls(segment: str, param_types: dict[str, dict[str, str]]) -> list[ToolCall]:
+    """Extract Ornith-style `<function=NAME><parameter=KEY>…` calls."""
+    calls: list[ToolCall] = []
+    for name, body in XML_FUNCTION_RE.findall(segment):
+        declared = param_types.get(name, {})
+        args: dict = {}
+        for key, value in XML_PARAMETER_RE.findall(body):
+            # Values sit on their own line between the tags. Strip only the
+            # framing newlines — leading spaces and tabs are real indentation
+            # in a file being written.
+            args[key] = _coerce_xml_value(value.strip("\n"), declared.get(key))
+        calls.append(ToolCall(name=name, arguments=args, raw=body))
+    return calls
+
+
 def _extract_gemma_tool_calls(response: str) -> tuple[list[ToolCall], list[dict]]:
     """Extract Gemma-format tool calls. Returns (calls, errors)."""
     calls: list[ToolCall] = []
@@ -237,12 +445,18 @@ def _extract_gemma_tool_calls(response: str) -> tuple[list[ToolCall], list[dict]
     return calls, errors
 
 
-def extract_tool_calls(response: str) -> ParsedResponse:
+def extract_tool_calls(response: str, tools: list[dict] | None = None) -> ParsedResponse:
     """Extract all tool calls and scratch pad from a Hermes-format response.
 
     Falls back to Gemma/Harmony-style `<|tool_call>call:FUNC{…}<tool_call|>`
     when no Hermes tool calls are present — lets gemma4 models participate
     in tool-driven tasks instead of being silently handicapped.
+
+    Also falls back to Ornith's XML style, `<function=NAME><parameter=KEY>…`,
+    which appears inside `<tool_call>` tags where JSON is expected. `tools`
+    supplies the schemas used to type XML values, which arrive as text; pass it
+    whenever the caller has them, or integer and boolean parameters will stay
+    strings and fail validation.
     """
     result = ParsedResponse()
 
@@ -255,9 +469,61 @@ def extract_tool_calls(response: str) -> ParsedResponse:
     text = SCRATCH_PAD_RE.sub("", text)
     text = GEMMA_TOOL_CALL_RE.sub("", text)
     text = GEMMA_CHANNEL_RE.sub("", text)
+    text = XML_FUNCTION_RE.sub("", text)
     result.text = text.strip()
 
-    matches = TOOL_CALL_RE.findall(response)
+    param_types = _param_types(tools)
+
+    # ornith-1.5 batches several calls but closes only the last tag::
+    #
+    #     <tool_call>{...}  <tool_call>{...}  <tool_call>{...}</tool_call>
+    #
+    # TOOL_CALL_RE is non-greedy, so it captures from the first opening tag to
+    # the only closing one and swallows every payload into a single body. Each
+    # fragment is valid on its own, so split them apart — but only when the body
+    # does not parse as it stands, so a value legitimately containing the
+    # literal text `<tool_call>` is never torn in half.
+    matches: list[str] = []
+    for raw_match in TOOL_CALL_RE.findall(response):
+        if "<tool_call>" not in raw_match:
+            matches.append(raw_match)
+            continue
+        try:
+            json.loads(raw_match)
+        except json.JSONDecodeError:
+            matches.extend(f.strip() for f in raw_match.split("<tool_call>") if f.strip())
+        else:
+            matches.append(raw_match)
+
+    # A third hybrid: the name arrives in XML with no </function>, and the
+    # arguments follow as a bare JSON object in a nested <tool_call>::
+    #
+    #     <function=web_search>
+    #     <tool_call>
+    #     {"query": "..."}
+    #
+    # Splitting above leaves the name and its arguments as separate fragments;
+    # rejoin them so neither is discarded as malformed_json / missing_name.
+    merged: list[str] = []
+    pending_name: str | None = None
+    for frag in matches:
+        name_only = XML_NAME_ONLY_RE.match(frag)
+        if name_only:
+            pending_name = name_only.group(1)
+            continue
+        if pending_name is not None:
+            try:
+                args = json.loads(_fix_json(frag)[0])
+            except json.JSONDecodeError:
+                args = None
+            if isinstance(args, dict):
+                merged.append(json.dumps({"name": pending_name, "arguments": args}))
+                pending_name = None
+                continue
+            pending_name = None
+        merged.append(frag)
+    matches = merged
+
     for raw_match in matches:
         try:
             fixed_raw, repairs = _fix_json(raw_match)
@@ -266,6 +532,13 @@ def extract_tool_calls(response: str) -> ParsedResponse:
                 logger.warning("Repaired %d malformed JSON key(s) in tool call", repairs)
                 result.repaired += repairs
         except json.JSONDecodeError:
+            # Ornith puts XML where JSON belongs. Try it before giving up —
+            # a discarded call ends the turn with no tools and the judge
+            # scores a tool-less answer.
+            xml_calls = _extract_xml_tool_calls(raw_match, param_types)
+            if xml_calls:
+                result.tool_calls.extend(xml_calls)
+                continue
             result.errors.append({"error": "malformed_json", "raw": raw_match})
             continue
 
@@ -301,6 +574,12 @@ def extract_tool_calls(response: str) -> ParsedResponse:
             channel_match = GEMMA_CHANNEL_RE.search(response)
             if channel_match:
                 result.scratch_pad = channel_match.group(1).strip()
+
+    # Models routinely drop the <tool_call> wrapper the template mandates.
+    # Only runs when nothing else parsed, so a valid Hermes or Gemma response
+    # is never re-read here.
+    if not result.tool_calls and XML_FUNCTION_RE.search(response):
+        result.tool_calls.extend(_extract_xml_tool_calls(response, param_types))
 
     return result
 

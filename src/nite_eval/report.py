@@ -31,6 +31,7 @@ def generate_report(
     run_id: str,
     weights: dict[str, float] | None = None,
     mdd: float = MIN_DETECTABLE_DIFFERENCE,
+    dimension_mdd: dict[str, float] | None = None,
     judge_samples: int = 3,
 ) -> str:
     """Generate a Markdown report for a run."""
@@ -100,6 +101,18 @@ def generate_report(
             lines.append("")
         else:
             lines.append(f"Every adjacent pair differs by more than {mdd:.2f}.")
+            lines.append("")
+
+        # Some dimensions are noisier than the composite and must not be read
+        # against its threshold.
+        if dimension_mdd:
+            lines.append(
+                "Dimensions with a wider noise floor than the composite, whose gaps "
+                "must be read against their own threshold:"
+            )
+            lines.append("")
+            for dim, threshold in sorted(dimension_mdd.items()):
+                lines.append(f"- **{dim}**: gaps below {threshold:.2f} carry no information")
             lines.append("")
 
     # Per-task breakdown
@@ -242,10 +255,11 @@ def save_report(
     output_dir: Path,
     weights: dict[str, float] | None = None,
     mdd: float = MIN_DETECTABLE_DIFFERENCE,
+    dimension_mdd: dict[str, float] | None = None,
     judge_samples: int = 3,
 ) -> Path:
     """Generate and save a report to disk."""
-    report = generate_report(db, run_id, weights, mdd=mdd, judge_samples=judge_samples)
+    report = generate_report(db, run_id, weights, mdd=mdd, dimension_mdd=dimension_mdd, judge_samples=judge_samples)
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / f"{run_id}.md"
     path.write_text(report)
