@@ -17,72 +17,60 @@ Each task runs as a multi-turn conversation. Research, planning and agentic task
 
 ## Sample results
 
-Run `run-20260831-212124` on the reference hardware, 15 tasks per model, current
-harness, llama.cpp `cd26896c1`.
-
-**Three of seven models.** The other four — qwen3.5-27b, qwen3.5-9b,
-gemma4-26b-a4b, qwen3.6-35b-a3b-strix — have not been re-run since the scoring
-changed on 2026-08-31, so they are absent rather than stale. The run is
-resumable and will pick up exactly those four:
-
-```bash
-NITE_RESUME=run-20260831-212124 scripts/run_nightly.sh
-```
+Run `run-20260901-043322` on the reference hardware, 7 models × 15 tasks,
+llama.cpp `cd26896c1`. The first sweep where every number means what it says:
+failed tasks score 0 in their dimension rather than being dropped, coding runs
+at `max_tokens: 32768`, the fixture gaps that returned errors to well-formed
+calls are closed, container timestamps no longer reach the model, and any call
+the mocks cannot answer is counted and reported.
 
 | Model | Research | Planning | Coding | Agentic | Composite | Tasks |
 |-------|---------:|---------:|-------:|--------:|----------:|------:|
-| **qwen3.8-27b** | 0.87 | 0.78 | 0.93 | 0.84 | **0.85** | 15/15 |
-| ornith-1.5-35b-a3b | 0.81 | 0.77 | 0.39 | 0.74 | **0.68** | 15/15 |
-| qwen3.6-35b-a3b (UD-Q4_K_S) | 0.72 | 0.77 | 0.27 | 0.73 | **0.62** | 13/15 |
-
-### Per task
-
-| Task | Diff | qwen3.8-27b | ornith-1.5 | qwen3.6-a3b |
-|------|------|------------:|-----------:|------------:|
-| research_finance_hard_01 | H | 0.80 | 0.80 | 0.75 |
-| research_mcp_easy_01 | E | 0.88 | 0.77 | 0.59 |
-| research_wine_medium_01 | M | 0.93 | 0.86 | 0.82 |
-| planning_finance_hard_01 | H | 0.81 | 0.81 | 0.76 |
-| planning_mcp_medium_01 | M | 0.76 | 0.75 | 0.79 |
-| planning_wine_easy_01 | E | 0.75 | 0.75 | 0.77 |
-| coding_artemis_medium_01 | M | 0.91 | 0.62 | 0.00 † |
-| coding_mcp_easy_01 | E | 0.95 | 0.00 | 0.22 |
-| coding_mcp_hard_01 | H | 1.00 | 0.15 | 0.00 † |
-| coding_wine_medium_01 | M | 0.85 | 0.81 | 0.86 |
-| agentic_artemis_medium_01 | M | 0.85 | 0.70 | 0.82 |
-| agentic_brain_easy_01 | E | 0.93 | 0.95 | 0.92 |
-| agentic_finance_hard_01 | H | 0.69 | 0.72 | 0.68 |
-| agentic_mcp_hard_01 | H | 0.88 | 0.65 | 0.62 |
-| agentic_wine_medium_01 | M | 0.86 | 0.67 | 0.62 |
-
-† Failed: qwen3.6 truncated both on turn 1 (91293 and 114849 chars) without
-emitting a tool call. Failed tasks score 0 in their dimension.
+| **qwen3.8-27b** | 0.87 | 0.80 | 0.94 | 0.85 | **0.86** | 15/15 |
+| ornith-1.5-35b-a3b | 0.80 | 0.79 | 0.47 | 0.76 | **0.70** | 15/15 |
+| qwen3.6-35b-a3b (UD-Q4_K_S) | 0.75 | 0.76 | 0.28 | 0.75 | **0.63** | 13/15 |
+| qwen3.5-9b | 0.77 | 0.73 | 0.15 | 0.71 | **0.59** | 12/15 |
+| qwen3.6-35b-a3b-strix (Q4_K_M) | 0.80 | 0.49 | 0.28 | 0.77 | **0.59** | 12/15 |
+| gemma4-26b-a4b | 0.68 | 0.68 | 0.17 | 0.81 | **0.58** | 13/15 |
+| qwen3.5-27b | 0.86 | 0.70 | 0.04 | 0.72 | **0.58** | 12/15 |
 
 ### Reading this
 
-**Coding is the whole story.** Strip it out and the three are close — qwen3.8
-averages 0.83 over the other three dimensions, ornith 0.77, qwen3.6 0.74.
-qwen3.8's 0.93 coding against 0.39 and 0.27 is what produces the composite gaps.
+**qwen3.8-27b wins outright** — first in all four dimensions, 0.16 clear of
+second, and one of only two models to complete every task. Its coding at 0.94
+against a field where nobody else passes 0.47 is the largest single gap here.
 
-**Planning does not discriminate.** 0.78 / 0.77 / 0.77, with every per-task
-difference at or below 0.04. That dimension says nothing about these models.
+**The bottom four are a four-way tie.** 0.58, 0.58, 0.59, 0.59 — every adjacent
+pair inside `scoring.min_detectable_difference`, and the report says so per run.
+Ranking them is reading noise.
 
-**ornith and qwen3.6 are closer than 0.68 vs 0.62 looks.** Coding carries its own
-0.15 threshold (see `scoring.dimension_min_detectable_difference` and the
-reproducibility note in "Known limitations"), so their 0.12 coding gap is not a
-result. Planning and agentic are ties. Research (+0.09) is the only dimension
-genuinely separating them, and it leans on `research_mcp_easy_01`, 0.77 vs 0.59.
+**Coding is what separates the field, and it is mostly a completion problem.**
+13 of the 15 task failures are coding truncations. `coding_artemis_medium_01`
+failed for five of seven models and `coding_mcp_hard_01` for four; qwen3.8 and
+ornith are the only models that finish all four coding tasks. A low coding score
+here usually means the model did not get to the end, not that the code was bad —
+and coding carries its own 0.15 threshold, so gaps below that carry no
+information at all.
 
-**Latency does not track quality.** ornith averages 36.3s per task against
-qwen3.8's 146.2s — four times faster, while making more tool calls (181 vs 125).
+**strix's 0.49 planning is one failed task, not a quant difference.** It scores
+0.76 and 0.71 on the two planning tasks it completes and truncates
+`planning_wine_easy_01`, which every other model passes at 0.75-0.78. The two
+Qwen3.6 quants are otherwise equal — identical coding (0.28), close agentic
+(0.77 vs 0.75), and statistically identical wikitext-2 perplexity. Do not read
+the 0.59 vs 0.63 composite as a quant-quality signal.
+
+**Latency does not track quality, and the spread is 8x.** qwen3.5-9b averages
+18.6s per task and scores 0.59; qwen3.8-27b takes 145.8s for its 0.86; ornith
+reaches 0.70 at 37.5s, four times faster than the winner.
 
 Notes:
 
-- `unscored_weight` is 0% for all three models: every declared criterion was measured.
-- Repairs are effectively gone: 0 of 181 calls for ornith, 0 of 80 for qwen3.6, 1 of 125 for qwen3.8. ornith needs none because it runs on the native tool-call path; see "Native tool calling is per-model".
-- Qwen models use the standard Hermes tool-call format. Gemma 4 emits tool calls in a Harmony-style format (`<|tool_call>call:FUNC{…}<tool_call|>`); the parser handles both.
-- Reasoning-mode models differ in how thinking is disabled and in whether it should be. Qwen 3.6 takes `/no_think` via `system_suffix`; qwen3.8 keeps `reasoning_effort: medium` because turning thinking off cost it research 0.80 → 0.63; ornith runs with `enable_thinking: false` — see below.
-- The Qwen3.6 quant pair (unsloth UD-Q4_K_S vs Sero/Strix Q4_K_M) has statistically identical wikitext-2 perplexity, 5.91 vs 5.92 ±0.04 — see [`docs/comparisons/qwen3-family-2026-04-19.md`](docs/comparisons/qwen3-family-2026-04-19.md). That analysis rests on the superseded April baseline; its perplexity and metadata findings still hold, its eval-score numbers do not. Only UD-Q4_K_S has been re-run here.
+- One unanswered tool call across all 105 tasks, and it is a model defect rather than a fixture gap: gemma4 emitted `call_mcp_tool` with `server` nested one level too deep, which no mock can match. See "Unanswered Tool Calls" in the report.
+- Repairs are effectively gone: 1 salvaged JSON element across the whole sweep, for qwen3.8. ornith needs none because it runs on the native tool-call path.
+- `unscored_weight` is 0% everywhere: every declared criterion was measured.
+- Each model has a different shape, which the composite flattens. gemma4 leads agentic at 0.81 while trailing everywhere else; qwen3.5-27b is second in research at 0.86 with the worst coding at 0.04.
+- Qwen models use the standard Hermes tool-call format. Gemma 4 emits Harmony-style calls (`<|tool_call>call:FUNC{…}<tool_call|>`); the parser handles both. ornith uses the native `tools` API — see "Native tool calling is per-model".
+- Thinking is configured per model and by measurement, not convention: Qwen 3.6 takes `/no_think`; qwen3.8 keeps `reasoning_effort: medium` because turning thinking off cost it research 0.80 → 0.63; ornith runs with `enable_thinking: false` — see below.
 
 ### ornith-1.5: coding, and why thinking is off
 
@@ -101,10 +89,12 @@ both ways over 15 tasks on the native tool-call path:
 | agentic | 0.80 | 0.72 |
 | composite | 0.65 | **0.70** |
 
-Coding reads 0.49 here and 0.39 in the table above, both with thinking off. That
-is the same configuration measured twice, and the spread is the reproducibility
-problem described under "Known limitations" — which is why coding carries a 0.15
-threshold rather than the composite's 0.05.
+Coding has since read 0.33, 0.39 and 0.47 across further runs of that same
+thinking-off configuration, against the 0.49 above. Four samples spanning 0.16
+is the reproducibility problem described under "Known limitations", and it is
+why coding carries a 0.15 threshold rather than the composite's 0.05. The
+thinking-on and thinking-off coding figures differ by more than that spread,
+which is what makes the comparison usable; the individual numbers are not.
 
 **With thinking on it does not finish.** Reasoning and the tool call compete for
 one contiguous `max_tokens`, and reasoning wins: `coding_artemis_medium_01` spent
@@ -140,7 +130,10 @@ research did not move. Neither result generalises to the other model.
 **Not comparable to the table above.** Two changes on 2026-08-31 altered what
 these numbers mean, for every model: a failed task now scores 0 in its dimension
 rather than being excluded from the average, and coding `max_tokens` went from
-24576 to 32768. Kept for provenance until the remaining four models are re-run.
+24576 to 32768, and three fixture gaps that returned errors to well-formed tool
+calls were closed. All seven models have since been re-run on the current
+harness, so this is kept for provenance only — the table above supersedes it
+entirely.
 
 | Model | Research | Planning | Coding | Agentic | Composite | Tasks |
 |-------|---------:|---------:|-------:|--------:|----------:|------:|
