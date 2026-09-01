@@ -21,6 +21,7 @@ Usage:
 import argparse
 import sys
 import time
+from pathlib import Path
 
 from nite_eval.conversation_runner import run_conversation
 from nite_eval.judge import JudgeClient
@@ -151,6 +152,29 @@ def check_services() -> bool:
     return target_ok and judge_ok
 
 
+def _model_config(model_name: str) -> dict:
+    """The model's entry from eval_config.yaml, or empty if it has none.
+
+    The smoke test is the first thing run against a new model, so it has to
+    exercise the same path the orchestrator will.
+    """
+    try:
+        import yaml
+
+        cfg = yaml.safe_load(Path(__file__).resolve().parent.parent.joinpath("config/eval_config.yaml").read_text())
+    except Exception as e:  # noqa: BLE001 - a missing config must not fail the smoke test
+        print(f"  (could not read eval_config.yaml: {e}; using defaults)")
+        return {}
+    for m in cfg.get("models", []):
+        if m.get("name") == model_name:
+            flags = [k for k in ("native_tools", "chat_template_kwargs", "system_suffix") if m.get(k)]
+            if flags:
+                print(f"  Using config for {model_name}: {', '.join(flags)}")
+            return m
+    print(f"  ({model_name} is not in eval_config.yaml; using defaults)")
+    return {}
+
+
 def run_smoke_test(model_name: str, skip_judge: bool = False) -> bool:
     """Run the full smoke test pipeline."""
     task = SMOKE_TASK
@@ -167,6 +191,11 @@ def run_smoke_test(model_name: str, skip_judge: bool = False) -> bool:
     mock_env = MockToolEnv.from_task_yaml(task["mock_responses"])
 
     start = time.monotonic()
+    # Apply the model's own configuration. Without this the smoke test ran every
+    # model on the prompt-text path regardless of how it is set up, which
+    # misrepresents any model configured for native tool calling: lfm2.5-2.6b
+    # made 3/3 clean structured calls when probed and 0 tool calls here.
+    cfg = _model_config(model_name)
     result = run_conversation(
         base_url=TARGET_URL,
         model_name=model_name,
@@ -175,6 +204,9 @@ def run_smoke_test(model_name: str, skip_judge: bool = False) -> bool:
         user_message=task["user_message"],
         mock_env=mock_env,
         max_turns=task["max_turns"],
+        system_suffix=cfg.get("system_suffix", ""),
+        chat_template_kwargs=cfg.get("chat_template_kwargs") or None,
+        native_tools=bool(cfg.get("native_tools")),
     )
     elapsed = time.monotonic() - start
 

@@ -51,6 +51,87 @@ models:
       -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
     group: "target-gpu"
 
+  # LFM2.5-2.6B (LiquidAI/LFM2.5-2.6B-GGUF, Q4_K_M, 1.6 GiB). arch `lfm2`:
+  # 22 conv layers and 8 attention, 30 total. Its generation prompt opens
+  # `<think>` unconditionally — there is no switch to turn reasoning off, so
+  # watch max_tokens the way ornith needed watching.
+  "lfm2.5-2.6b":
+    cmd: >
+      env CUDA_VISIBLE_DEVICES=GPU-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+      /ABS/PATH/TO/llama.cpp/build/bin/llama-server
+      -m /ABS/PATH/TO/gguf/LFM2.5-2.6B-Q4_K_M.gguf
+      --port ${PORT} -ngl 999 --ctx-size 65536
+      -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
+    group: "target-gpu"
+
+  # LFM2.5-8B-A1B (LiquidAI/LFM2.5-8B-A1B-GGUF, Q4_K_M, 4.8 GiB). arch
+  # `lfm2moe`: 32 experts with 4 active, 18 conv layers and 6 attention.
+  # Unlike its smaller sibling its generation prompt does NOT open `<think>`,
+  # so reasoning is the model's choice rather than the template's.
+  "lfm2.5-8b-a1b":
+    cmd: >
+      env CUDA_VISIBLE_DEVICES=GPU-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+      /ABS/PATH/TO/llama.cpp/build/bin/llama-server
+      -m /ABS/PATH/TO/gguf/LFM2.5-8B-A1B-Q4_K_M.gguf
+      --port ${PORT} -ngl 999 --ctx-size 65536
+      -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
+    group: "target-gpu"
+
+  # Muse-Glimmer-30B (meta-models/Muse-Glimmer-30B-GGUF, Q4_K_M, 15.6 GiB).
+  # arch `muse-glimmer`: 52 layers, 39 sliding-attention and 13 full, vocab
+  # 202048. Multimodal upstream; the mmproj is not loaded since nite-eval is
+  # text-only. Its template emits a custom <atem:function_calls> format that
+  # hermes_parser cannot read, so it is native_tools only.
+  "muse-glimmer-30b":
+    cmd: >
+      env CUDA_VISIBLE_DEVICES=GPU-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+      /ABS/PATH/TO/llama.cpp/build/bin/llama-server
+      -m /ABS/PATH/TO/gguf/Muse-Glimmer-30B-Q4_K_M.gguf
+      --port ${PORT} -ngl 999 --ctx-size 65536
+      -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
+    group: "target-gpu"
+
+  # LFM2.5-8B-A1B (LiquidAI/LFM2.5-8B-A1B-GGUF, Q4_K_M, 4.8 GiB). arch
+  # `lfm2moe`: 32 experts with 4 active, 18 conv layers and 6 attention.
+  # Unlike its smaller sibling its generation prompt does NOT open `<think>`,
+  # so reasoning is the model's choice rather than the template's.
+  "lfm2.5-8b-a1b":
+    cmd: >
+      env CUDA_VISIBLE_DEVICES=GPU-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+      /ABS/PATH/TO/llama.cpp/build/bin/llama-server
+      -m /ABS/PATH/TO/gguf/LFM2.5-8B-A1B-Q4_K_M.gguf
+      --port ${PORT} -ngl 999 --ctx-size 65536
+      -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
+    group: "target-gpu"
+
+  # Muse-Glimmer-30B (meta-models/Muse-Glimmer-30B-GGUF, Q4_K_M, 15.6 GiB).
+  # arch `muse-glimmer`: 52 layers, 39 sliding-attention and 13 full, vocab
+  # 202048. Multimodal upstream; the mmproj is not loaded since nite-eval is
+  # text-only. Its template emits a custom <atem:function_calls> format that
+  # hermes_parser cannot read, so it is native_tools only.
+  "muse-glimmer-30b":
+    cmd: >
+      env CUDA_VISIBLE_DEVICES=GPU-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+      /ABS/PATH/TO/llama.cpp/build/bin/llama-server
+      -m /ABS/PATH/TO/gguf/Muse-Glimmer-30B-Q4_K_M.gguf
+      --port ${PORT} -ngl 999 --ctx-size 65536
+      -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
+    group: "target-gpu"
+
+  # Muse-Glimmer-30B (meta-models/Muse-Glimmer-30B-GGUF, Q4_K_M, 15.6 GiB).
+  # arch `muse-glimmer`: 52 layers, 39 sliding-attention and 13 full, vocab
+  # 202048. Multimodal upstream; the mmproj is not loaded since nite-eval is
+  # text-only. Its template emits a custom <atem:function_calls> format that
+  # hermes_parser cannot read, so it is native_tools only.
+  "muse-glimmer-30b":
+    cmd: >
+      env CUDA_VISIBLE_DEVICES=GPU-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+      /ABS/PATH/TO/llama.cpp/build/bin/llama-server
+      -m /ABS/PATH/TO/gguf/Muse-Glimmer-30B-Q4_K_M.gguf
+      --port ${PORT} -ngl 999 --ctx-size 65536
+      -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
+    group: "target-gpu"
+
 groups:
   "target-gpu":
     exclusive: true

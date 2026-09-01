@@ -142,6 +142,56 @@ models:
     # tool definitions are passed to the template, and nite-eval injects them
     # as prompt text instead.
 
+  - name: "lfm2.5-2.6b"
+    backend: "llama.cpp"
+    native_tools: true
+    # arch `lfm2`: 22 conv layers, 8 attention. Its generation prompt opens
+    # `<think>` unconditionally and the template has no switch to close it, so
+    # unlike ornith there is no thinking decision to make — only a budget to
+    # watch. Probed on the live model: 3/3 clean structured calls, reasoning
+    # correctly separated into reasoning_content with empty content.
+    #
+    # `preserve_thinking` exists in the template but controls whether *prior*
+    # thinking blocks stay in history, not whether the model thinks. Its
+    # default of false is what we want.
+
+  - name: "lfm2.5-8b-a1b"
+    backend: "llama.cpp"
+    native_tools: true
+    # arch `lfm2moe`: 32 experts with 4 active, 18 conv layers and 6 attention.
+    # Its generation prompt does NOT open `<think>`, unlike the 2.6B, so
+    # reasoning is the model's choice. It reasons anyway — 318-510 chars of
+    # reasoning_content on short prompts — and shows better judgment about when
+    # a tool is needed: asked for 17*23 it answered 391 directly where the 2.6B
+    # reached for run_code.
+
+  - name: "muse-glimmer-30b"
+    backend: "llama.cpp"
+    native_tools: true
+    # arch `muse-glimmer`: 52 layers, 39 sliding-attention and 13 full, vocab
+    # 202048. 16400 MiB at ctx 65536. Probed on the live model: 2/2 clean
+    # structured calls, and it answers 17*23 directly rather than reaching for
+    # a tool.
+    #
+    # native_tools is not optional here. Its template emits a wholly custom
+    # format that hermes_parser cannot read at all:
+    #   <atem:function_calls><atem:invoke name="F"><atem:parameter name="p">
+    # and it raises a template exception if tool_call.function.arguments is not
+    # a dict. On the prompt-text path it would score zero on every tool task.
+    #
+    # `reasoning_strength` is left at its template default of 'high'
+    # deliberately, not by omission. Measured on short prompts, the knob barely
+    # touches tool calls (114/87 chars of reasoning at every setting) and only
+    # moves the reasoning-heavy case: 624 chars at high, 508 at medium, 192 at
+    # low. That is not enough to justify picking one blind.
+    #
+    # The risk to watch is coding. qwen3.8's template defaults to xhigh and
+    # exhausted its whole max_tokens inside reasoning before emitting an
+    # answer, which is why it carries reasoning_effort: medium; ornith with
+    # thinking on did the same. If Muse-Glimmer truncates coding tasks, try
+    # reasoning_strength: medium before raising max_tokens — with ornith,
+    # raising the budget only bought more deliberation.
+
 evaluation:
   temperature: 0.0
   max_tokens: 4096
