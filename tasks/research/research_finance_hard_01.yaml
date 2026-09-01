@@ -206,6 +206,20 @@ mock_responses:
           snippet: Transformer-based time-series models split into zero-shot foundation models (TimesFM,
             Chronos, Moirai, Lag-Llama) and fine-tunable specialists (TFT, PatchTST). Trade-offs revolve
             around data volume, domain specificity, and deployment constraints.
+  # fetch_url is declared in tools: and had no mocks at all, so every call
+  # returned an error — qwen3.6 spent 4 of its 14 tool calls on it and scored
+  # 0.75 with no sign in the report that the fixture, not the model, was at
+  # fault. Deliberately does not invent article text: this task is meant to be
+  # answered from search snippets, and fabricating full pages would hand the
+  # model more material than the task intends and change what it measures.
+  # A neutral reply lets it fall back to the snippets instead of reading an
+  # error as a broken harness and retrying.
+  fetch_url:
+  - match: {}
+    response:
+      content:
+        status: unavailable
+        note: full page text is not retrievable here; use the web_search snippets
   summarize_findings:
   - match:
       topic_contains: any

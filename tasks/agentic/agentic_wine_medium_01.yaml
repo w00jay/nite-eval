@@ -214,6 +214,16 @@ mock_responses:
           region: Tuscany
           vintage: 2018
           wine_type: red
+  # Catch-all, must stay last: the matcher takes the first mock that fits.
+  # Without it an unfiltered query_inventory({}) and any wine_type outside
+  # white/rosé/red — ornith asked for sparkling — got an error, which reads as
+  # a broken tool and invites the model to retry and burn turns. An empty
+  # cellar is the truthful answer to "any sparkling?" and lets it move on.
+  - match: {}
+    response:
+      content:
+        bottles: []
+        note: no bottles match those filters
   check_drinking_window:
   - match:
       bottle_ids_contains: b001
