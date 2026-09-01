@@ -100,6 +100,9 @@ HTTP_READ_TIMEOUT = 1200.0
 # more would let a broken model burn the whole turn budget on retries.
 MAX_PARSE_RETRIES = 1
 
+# How much of an unparsable payload to keep in the task's error field.
+UNPARSED_RAW_CHARS = 2000
+
 # Tool calls larger than this are summarised in conversation history rather than
 # carried verbatim. Sized above a typical search query or shell command so only
 # file-sized payloads are affected.
@@ -301,7 +304,11 @@ def run_conversation(
             # valid JSON on the second attempt is a genuine failure.
             if not parsed.tool_calls and parsed.errors:
                 kinds = sorted({e.get("error", "unknown") for e in parsed.errors})
-                bad_raw = str(parsed.errors[0].get("raw", ""))[:400]
+                # 400 chars hid the shape of three separate ornith defects for
+                # several runs: the head looked identical while the defect that
+                # mattered was past the cut. final_response carries the whole
+                # text, but the error field is what a failure is read from.
+                bad_raw = str(parsed.errors[0].get("raw", ""))[:UNPARSED_RAW_CHARS]
                 turns.append(turn)
 
                 if parse_retries < MAX_PARSE_RETRIES:

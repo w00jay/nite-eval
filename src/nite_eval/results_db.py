@@ -138,6 +138,10 @@ class ResultsDB:
         # over 35% of the criteria is not the same claim as 0.86 over all of
         # them.
         ("task_results", "unscored_weight", "REAL DEFAULT 0"),
+        # Tool calls the task's mocks could not answer. A fixture gap and a bad
+        # answer are indistinguishable in a score, so the count is stored to
+        # keep them apart.
+        ("task_results", "unmatched_mock_calls", "INTEGER DEFAULT 0"),
     )
 
     def _add_missing_columns(self, cursor: sqlite3.Cursor) -> None:
@@ -227,6 +231,7 @@ class ResultsDB:
         error: str | None = None,
         repaired_tool_calls: int = 0,
         unscored_weight: float = 0.0,
+        unmatched_mock_calls: int = 0,
     ) -> None:
         """Save a completed task result (the checkpoint)."""
         status = "failed" if error else "completed"
@@ -235,7 +240,7 @@ class ResultsDB:
             "status = ?, finished_at = ?, final_response = ?, "
             "total_turns = ?, total_tool_calls = ?, total_latency_ms = ?, "
             "reached_max_turns = ?, weighted_score = ?, error = ?, "
-            "repaired_tool_calls = ?, unscored_weight = ? "
+            "repaired_tool_calls = ?, unscored_weight = ?, unmatched_mock_calls = ? "
             "WHERE run_id = ? AND model_name = ? AND task_id = ?",
             (
                 status,
@@ -249,6 +254,7 @@ class ResultsDB:
                 error,
                 repaired_tool_calls,
                 unscored_weight,
+                unmatched_mock_calls,
                 run_id,
                 model_name,
                 task_id,
