@@ -202,6 +202,34 @@ def generate_report(
         lines.extend(repair_rows)
         lines.append("")
 
+    # Fixture gaps. A score cannot tell "answered badly" from "the fixture had
+    # nothing to answer with", and the difference was previously visible only as
+    # a warning in the run log. A model penalised here was not necessarily worse.
+    gap_rows = []
+    for model in models:
+        cur = db._conn.execute(
+            "SELECT task_id, unmatched_mock_calls FROM task_results "
+            "WHERE run_id = ? AND model_name = ? AND COALESCE(unmatched_mock_calls, 0) > 0 "
+            "ORDER BY unmatched_mock_calls DESC",
+            (run_id, model),
+        )
+        for task_id, n in cur.fetchall():
+            gap_rows.append(f"| {model} | {task_id} | {n} |")
+
+    if gap_rows:
+        lines.append("## Unanswered Tool Calls (mock gaps)")
+        lines.append("")
+        lines.append("Calls the task's mocks could not answer, either because no mock matched")
+        lines.append("the arguments or because the tool has no mocks at all. The model was")
+        lines.append("handed an error and scored on what it did next, so these depress a score")
+        lines.append("without indicating the model was wrong — check the fixture before")
+        lines.append("attributing a low score here to the model.")
+        lines.append("")
+        lines.append("| Model | Task | Unanswered |")
+        lines.append("|-------|------|------------|")
+        lines.extend(gap_rows)
+        lines.append("")
+
     # Partial measurement warning. A dimension carrying excluded weight is not
     # comparable to one that is fully scored, and is not comparable to its own
     # historical values from before the criteria were excluded.

@@ -371,6 +371,7 @@ def run_task(
             weighted_score=0.0,
             error=conv.error,
             repaired_tool_calls=conv.repaired_tool_calls,
+            unmatched_mock_calls=len(getattr(tool_env, "unmatched_calls", [])),
         )
         return 0.0
 
@@ -454,6 +455,7 @@ def run_task(
         reached_max_turns=conv.reached_max_turns,
         weighted_score=weighted,
         repaired_tool_calls=conv.repaired_tool_calls,
+        unmatched_mock_calls=len(getattr(tool_env, "unmatched_calls", [])),
         unscored_weight=unscored_weight,
     )
 

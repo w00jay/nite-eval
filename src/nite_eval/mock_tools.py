@@ -28,6 +28,9 @@ class MockToolEnv:
     responses: dict[str, list[MockResponse]] = field(default_factory=dict)
     call_counts: dict[str, int] = field(default_factory=dict)
     call_log: list[dict] = field(default_factory=list)
+    # Calls the fixture could not answer. Kept separate from call_log so a
+    # fixture gap is legible in the report rather than only in the run log.
+    unmatched_calls: list[dict] = field(default_factory=list)
 
     @classmethod
     def from_task_yaml(cls, mock_responses: dict) -> "MockToolEnv":
@@ -58,6 +61,7 @@ class MockToolEnv:
 
         if tool_name not in self.responses:
             logger.warning("No mock responses defined for tool: %s", tool_name)
+            self._record_miss(tool_name, arguments, call_number, "no_mock_for_tool")
             return {"error": f"No mock defined for tool '{tool_name}'"}
 
         for mock in self.responses[tool_name]:
@@ -65,7 +69,21 @@ class MockToolEnv:
                 return self._resolve_response(mock, call_number)
 
         logger.warning("No matching mock for %s(%s)", tool_name, arguments)
+        self._record_miss(tool_name, arguments, call_number, "no_matching_mock")
         return {"error": f"No matching mock response for {tool_name} with given arguments"}
+
+    def _record_miss(self, tool_name: str, arguments: dict, call_number: int, reason: str) -> None:
+        """Note a call the fixture could not answer.
+
+        The model is told it failed either way; this exists so the report can
+        say the fixture was short rather than the model wrong. Without it a
+        fixture gap is indistinguishable from a bad answer, and quietly
+        penalises whichever model phrases a call differently from the person
+        who wrote the mocks.
+        """
+        self.unmatched_calls.append(
+            {"name": tool_name, "arguments": arguments, "call_number": call_number, "reason": reason}
+        )
 
     def _matches(self, match: dict, arguments: dict, call_number: int) -> bool:
         """Check if arguments satisfy match criteria."""
@@ -127,3 +145,4 @@ class MockToolEnv:
         """Reset call counts and log for a fresh run."""
         self.call_counts.clear()
         self.call_log.clear()
+        self.unmatched_calls.clear()
