@@ -206,6 +206,24 @@ mock_responses:
         - title: NVIDIA Announces Next-Gen Blackwell Ultra Architecture
           sentiment: 0.7
           date: '2026-04-03'
+  # Same company, spelled out. The fixture matched the ticker only, so ornith
+  # searching "Nvidia stock analyst price target AI" got an error — a
+  # distinction between the ticker and the company name is not something to
+  # score a model on. Same articles as the NVDA branch.
+  - match:
+      query_contains: Nvidia
+    response:
+      content:
+        articles:
+        - title: NVIDIA Data Center Revenue Beats Expectations
+          sentiment: 0.8
+          date: '2026-03-28'
+        - title: Export Controls Tightened on AI Chips to China
+          sentiment: -0.6
+          date: '2026-04-01'
+        - title: NVIDIA Announces Next-Gen Blackwell Ultra Architecture
+          sentiment: 0.7
+          date: '2026-04-03'
   rag_search:
   - match:
       query_contains: NVDA earnings
