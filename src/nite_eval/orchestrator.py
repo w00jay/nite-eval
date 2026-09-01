@@ -6,7 +6,7 @@ Supports checkpoint/resume — restarting picks up from the last incomplete task
 
 Usage:
     uv run python -m nite_eval.orchestrator
-    uv run python -m nite_eval.orchestrator --models qwen3.5-9b
+    uv run python -m nite_eval.orchestrator --models qwen3.8-27b
     uv run python -m nite_eval.orchestrator --dimension agentic --resume run-20260405
 """
 

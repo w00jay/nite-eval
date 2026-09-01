@@ -8,24 +8,6 @@
 #   or drop the `env CUDA_VISIBLE_DEVICES=...` prefix and pin via the launcher.
 
 models:
-  "qwen3.5-27b":
-    cmd: >
-      env CUDA_VISIBLE_DEVICES=GPU-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
-      /ABS/PATH/TO/llama.cpp/build/bin/llama-server
-      -m /ABS/PATH/TO/gguf/Qwen3.5-27B.Q4_K_M.gguf
-      --port ${PORT} -ngl 999 --ctx-size 65536
-      -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
-    group: "target-gpu"
-
-  "qwen3.5-9b":
-    cmd: >
-      env CUDA_VISIBLE_DEVICES=GPU-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
-      /ABS/PATH/TO/llama.cpp/build/bin/llama-server
-      -m /ABS/PATH/TO/gguf/Qwen3.5-9B-Q4_K_M.gguf
-      --port ${PORT} -ngl 999 --ctx-size 65536
-      -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
-    group: "target-gpu"
-
   "gemma4-26b-a4b":
     cmd: >
       env CUDA_VISIBLE_DEVICES=GPU-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
@@ -41,16 +23,6 @@ models:
       env CUDA_VISIBLE_DEVICES=GPU-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
       /ABS/PATH/TO/llama.cpp/build/bin/llama-server
       -m /ABS/PATH/TO/gguf/Qwen3.6-35B-A3B-UD-Q4_K_S.gguf
-      --port ${PORT} -ngl 999 --ctx-size 65536
-      -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
-    group: "target-gpu"
-
-  # Same base model as above, different quant (Q4_K_M vs UD-Q4_K_S).
-  "qwen3.6-35b-a3b-strix":
-    cmd: >
-      env CUDA_VISIBLE_DEVICES=GPU-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
-      /ABS/PATH/TO/llama.cpp/build/bin/llama-server
-      -m /ABS/PATH/TO/gguf/Qwen3.6-35B-A3B-Q4_K_M.gguf
       --port ${PORT} -ngl 999 --ctx-size 65536
       -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
     group: "target-gpu"
