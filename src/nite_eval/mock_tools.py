@@ -5,10 +5,44 @@ Supports exact match, partial/contains match, sequenced responses (for error-rec
 tasks), and fallback responses.
 """
 
+import json
 import logging
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
+
+# How much of an unmatched call to keep for the report. A gap is diagnosed by
+# looking at the arguments, so a handful of examples is worth more than every
+# repetition of the same miss — a model that retries the same rejected call
+# twenty times would otherwise fill the report with one fact.
+MAX_UNMATCHED_SAMPLES = 5
+MAX_UNMATCHED_ARG_CHARS = 400
+
+
+def summarise_unmatched(calls: list[dict]) -> str | None:
+    """Serialise a bounded sample of unanswered calls for storage.
+
+    The count alone cannot say whether the fixture was too narrow or the model
+    emitted a call nothing could match, and those need opposite responses: one
+    is a harness bug that unfairly depresses a score, the other is a real model
+    defect. Distinguishing them automatically is not possible — a call that
+    matches no mock looks identical either way — so the arguments are kept and
+    a human decides.
+    """
+    if not calls:
+        return None
+    sample = []
+    for call in calls[:MAX_UNMATCHED_SAMPLES]:
+        args = json.dumps(call.get("arguments", {}), default=str, sort_keys=True)
+        sample.append(
+            {
+                "name": call.get("name", "?"),
+                "arguments": args[:MAX_UNMATCHED_ARG_CHARS],
+                "truncated": len(args) > MAX_UNMATCHED_ARG_CHARS,
+                "reason": call.get("reason", "unknown"),
+            }
+        )
+    return json.dumps({"total": len(calls), "sample": sample})
 
 
 @dataclass

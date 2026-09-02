@@ -244,29 +244,56 @@ def generate_report(
     # nothing to answer with", and the difference was previously visible only as
     # a warning in the run log. A model penalised here was not necessarily worse.
     gap_rows = []
+    gap_samples: list[tuple[str, str, str]] = []
     for model in models:
         cur = db._conn.execute(
-            "SELECT task_id, unmatched_mock_calls FROM task_results "
+            "SELECT task_id, unmatched_mock_calls, unmatched_mock_samples FROM task_results "
             "WHERE run_id = ? AND model_name = ? AND COALESCE(unmatched_mock_calls, 0) > 0 "
             "ORDER BY unmatched_mock_calls DESC",
             (run_id, model),
         )
-        for task_id, n in cur.fetchall():
+        for task_id, n, samples in cur.fetchall():
             gap_rows.append(f"| {model} | {task_id} | {n} |")
+            rendered = _render_unmatched_sample(samples)
+            if rendered:
+                gap_samples.append((model, task_id, rendered))
 
     if gap_rows:
         lines.append("## Unanswered Tool Calls (mock gaps)")
         lines.append("")
-        lines.append("Calls the task's mocks could not answer, either because no mock matched")
-        lines.append("the arguments or because the tool has no mocks at all. The model was")
-        lines.append("handed an error and scored on what it did next, so these depress a score")
-        lines.append("without indicating the model was wrong — check the fixture before")
-        lines.append("attributing a low score here to the model.")
+        lines.append("Calls the task's mocks could not answer. Two different things produce")
+        lines.append("this and the count cannot tell them apart:")
+        lines.append("")
+        lines.append("- **The fixture was too narrow.** The model made a reasonable call the")
+        lines.append("  mocks did not anticipate — searching `Nvidia` against a matcher keyed")
+        lines.append("  on `NVDA`. The model is right and the score is unfairly depressed.")
+        lines.append("- **The model emitted a call nothing could match.** A wrong shape, an")
+        lines.append("  argument nested a level too deep, a tool that was never declared. The")
+        lines.append("  fixture is right and so is the score.")
+        lines.append("")
+        lines.append("Either way the model was handed an error and scored on what it did next.")
+        lines.append("The recorded arguments below are what separates the two cases; read them")
+        lines.append("before attributing a low score to either the harness or the model.")
         lines.append("")
         lines.append("| Model | Task | Unanswered |")
         lines.append("|-------|------|------------|")
         lines.extend(gap_rows)
         lines.append("")
+        if gap_samples:
+            lines.append("### Recorded arguments")
+            lines.append("")
+            for model, task_id, rendered in gap_samples:
+                lines.append(f"**{model} / {task_id}**")
+                lines.append("")
+                lines.append("```")
+                lines.append(rendered)
+                lines.append("```")
+                lines.append("")
+        else:
+            lines.append("No arguments were recorded — this run predates the")
+            lines.append("`unmatched_mock_samples` column, so the cause cannot be read off the")
+            lines.append("report and must be dug out of the run log.")
+            lines.append("")
 
     # Partial measurement warning. A dimension carrying excluded weight is not
     # comparable to one that is fully scored, and is not comparable to its own
@@ -342,6 +369,33 @@ def _get_run_info(db: ResultsDB, run_id: str) -> dict | None:
     if not row:
         return None
     return {"started_at": row[0], "finished_at": row[1], "status": row[2], "models": row[3]}
+
+
+def _render_unmatched_sample(raw: str | None) -> str:
+    """Format the stored sample of unanswered calls for the report.
+
+    Returns "" for a run recorded before the column existed, so the report can
+    say the arguments are unavailable rather than imply there were none.
+    """
+    if not raw:
+        return ""
+    try:
+        payload = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return ""
+    sample = payload.get("sample") or []
+    if not sample:
+        return ""
+    out = []
+    for call in sample:
+        args = call.get("arguments", "")
+        if call.get("truncated"):
+            args += " …"
+        out.append(f"{call.get('name', '?')}({args})  [{call.get('reason', 'unknown')}]")
+    total = payload.get("total", len(sample))
+    if total > len(sample):
+        out.append(f"… and {total - len(sample)} more")
+    return "\n".join(out)
 
 
 def _get_task_result(db: ResultsDB, run_id: str, model: str, task_id: str) -> dict | None:

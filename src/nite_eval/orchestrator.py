@@ -29,7 +29,7 @@ from nite_eval.conversation_runner import ConversationResult, run_conversation
 from nite_eval.gpu_check import GpuPlacementError, resolve_expected_uuids, verify_runtime_placement
 from nite_eval.gpu_check import preflight as gpu_preflight
 from nite_eval.judge import FLOW_JUDGE_DIMENSIONS, RoutedJudgeClient
-from nite_eval.mock_tools import MockToolEnv
+from nite_eval.mock_tools import MockToolEnv, summarise_unmatched
 from nite_eval.model_manager import check_health, warm_up_model
 from nite_eval.report import save_report  # noqa: TC001
 from nite_eval.results_db import ResultsDB
@@ -372,6 +372,7 @@ def run_task(
             error=conv.error,
             repaired_tool_calls=conv.repaired_tool_calls,
             unmatched_mock_calls=len(getattr(tool_env, "unmatched_calls", [])),
+            unmatched_mock_samples=summarise_unmatched(getattr(tool_env, "unmatched_calls", [])),
             # 0 across a whole task means the server never reported a usage block,
             # not that the model generated nothing, so store NULL and let the
             # report say "unavailable" rather than print a fabricated 0 tok/s.
@@ -461,6 +462,7 @@ def run_task(
         weighted_score=weighted,
         repaired_tool_calls=conv.repaired_tool_calls,
         unmatched_mock_calls=len(getattr(tool_env, "unmatched_calls", [])),
+        unmatched_mock_samples=summarise_unmatched(getattr(tool_env, "unmatched_calls", [])),
         unscored_weight=unscored_weight,
         # 0 across a whole task means the server never reported a usage block,
         # not that the model generated nothing, so store NULL and let the

@@ -142,6 +142,11 @@ class ResultsDB:
         # answer are indistinguishable in a score, so the count is stored to
         # keep them apart.
         ("task_results", "unmatched_mock_calls", "INTEGER DEFAULT 0"),
+        # A bounded JSON sample of those calls. The count says a gap happened;
+        # only the arguments say whether the fixture was too narrow or the
+        # model emitted a call nothing could match, and the report told readers
+        # to assume the former.
+        ("task_results", "unmatched_mock_samples", "TEXT"),
         # Tokens generated and consumed across every generation the task made.
         # total_latency_ms alone measures how long a model took, not how fast
         # it generates, so a terse model and a quick one are indistinguishable
@@ -241,6 +246,7 @@ class ResultsDB:
         unmatched_mock_calls: int = 0,
         completion_tokens: int | None = None,
         prompt_tokens: int | None = None,
+        unmatched_mock_samples: str | None = None,
     ) -> None:
         """Save a completed task result (the checkpoint)."""
         status = "failed" if error else "completed"
@@ -250,7 +256,7 @@ class ResultsDB:
             "total_turns = ?, total_tool_calls = ?, total_latency_ms = ?, "
             "reached_max_turns = ?, weighted_score = ?, error = ?, "
             "repaired_tool_calls = ?, unscored_weight = ?, unmatched_mock_calls = ?, "
-            "completion_tokens = ?, prompt_tokens = ? "
+            "completion_tokens = ?, prompt_tokens = ?, unmatched_mock_samples = ? "
             "WHERE run_id = ? AND model_name = ? AND task_id = ?",
             (
                 status,
@@ -267,6 +273,7 @@ class ResultsDB:
                 unmatched_mock_calls,
                 completion_tokens,
                 prompt_tokens,
+                unmatched_mock_samples,
                 run_id,
                 model_name,
                 task_id,
