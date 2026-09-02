@@ -25,10 +25,11 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
-from nite_eval.judge import JudgeClient, JudgeResult
-from nite_eval.model_manager import check_health
 from rich.console import Console
 from rich.table import Table
+
+from nite_eval.judge import JudgeClient, JudgeResult
+from nite_eval.model_manager import check_health
 
 logger = logging.getLogger(__name__)
 console = Console()

@@ -99,7 +99,7 @@ def print_summary(label: str, path: str, summary: dict) -> None:
     if isinstance(ct, str):
         print(f"  chat_template:        len={len(ct)} sha256(16)={short_hash(ct)}")
     else:
-        print(f"  chat_template:        <missing>")
+        print("  chat_template:        <missing>")
 
     arch = meta.get("general.architecture")
     if isinstance(arch, str):
@@ -107,7 +107,7 @@ def print_summary(label: str, path: str, summary: dict) -> None:
         for key in sorted(k for k in meta if k.startswith(f"{arch}.")):
             print(f"    {key}: {fmt_value(meta[key])}")
 
-    print(f"  --- tensor quant breakdown ---")
+    print("  --- tensor quant breakdown ---")
     counts = summary["quant_counts"]
     bytes_by = summary["quant_bytes"]
     total_bytes = sum(bytes_by.values())

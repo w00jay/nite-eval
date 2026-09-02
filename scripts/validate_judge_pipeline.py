@@ -25,6 +25,9 @@ import argparse
 import logging
 import sys
 
+from rich.console import Console
+from rich.table import Table
+
 from nite_eval.judge import (
     FLOW_JUDGE_DIMENSIONS,
     JudgeResult,
@@ -32,8 +35,6 @@ from nite_eval.judge import (
 )
 from nite_eval.model_manager import check_health
 from nite_eval.task_loader import TaskDefinition, load_tasks
-from rich.console import Console
-from rich.table import Table
 
 logger = logging.getLogger(__name__)
 console = Console()
