@@ -25,26 +25,27 @@ fixes (see below).
 | Model | Research | Planning | Coding | Agentic | Composite | Tasks | s/task | Run |
 |-------|---------:|---------:|-------:|--------:|----------:|------:|-------:|-----|
 | **qwen3.8-27b** | 0.88 | 0.80 | **0.92** | 0.84 | **0.86** | 15/15 | 147.8 | `…175407` |
-| **muse-glimmer-30b** | 0.83 | 0.78 | 0.88 | **0.86** | **0.84** | 15/15 | 107.2 | `…021824` |
+| **muse-glimmer-30b** | 0.83 | 0.78 | 0.89 | **0.86** | **0.84** | 15/15 | 122.1 | `…045418` |
 | ornith-1.5-35b-a3b | 0.78 | 0.76 | 0.49 | 0.76 | **0.70** | 15/15 | 34.2 | `…175407` |
-| qwen3.6-35b-a3b | 0.75 | 0.76 | 0.28 | 0.75 | **0.63** | 13/15 | 60.7 | `…043322`† |
+| qwen3.6-35b-a3b | 0.75 | 0.77 | 0.28 | 0.72 | **0.63** | 13/15 | 60.3 | `…045418` |
 | lfm2.5-2.6b | 0.80 | 0.71 | 0.22 | 0.72 | **0.61** | 14/15 | 28.5 | `…175407` |
-| gemma4-26b-a4b | 0.68 | 0.68 | 0.17 | 0.81 | **0.58** | 13/15 | 42.5 | `…043322`† |
+| gemma4-26b-a4b | 0.66 | 0.70 | 0.17 | 0.81 | **0.58** | 13/15 | 42.4 | `…045418` |
 | lfm2.5-8b-a1b | 0.74 | 0.73 | 0.14 | 0.58 | **0.55** | 15/15 | 13.4 | `…175407` |
 
-† Measured before the fixture gaps were closed — `query_inventory` had no
-catch-all, `search_news` matched the ticker but not the company name, and
-`fetch_url` had no mocks at all. gemma4 took an unanswered call in that run.
-Both numbers are probably slightly pessimistic and should be re-run before being
-quoted against the rest.
+Every row is now measured on current fixtures. qwen3.6 and gemma4 were re-run
+after the fixture gaps were closed and both landed on the same composite as
+before (0.63 and 0.58) — the gaps were 6 unanswered calls across 45 tasks, and
+closing them moved nothing beyond judge variance. Worth having measured rather
+than assumed.
 
 ### Reading this
 
 **The top two are a tie.** 0.86 against 0.84 is inside
-`scoring.min_detectable_difference`. qwen3.8 has four consecutive runs at
-0.85-0.86 behind it; muse-glimmer's 0.84 is one run at a corrected
-`reasoning_strength`. Tied on the evidence, with qwen3.8 the better-established
-number — and muse-glimmer wins agentic outright (0.86 vs 0.84) while running 27%
+`scoring.min_detectable_difference`, and both numbers are now established rather
+than provisional: qwen3.8 has four consecutive runs at 0.85-0.86, and
+muse-glimmer has reproduced 0.84 twice at `reasoning_strength: medium` — 0.83 /
+0.78 / 0.88 / 0.86 and 0.83 / 0.78 / 0.89 / 0.86, three dimensions identical to
+two decimal places. muse-glimmer wins agentic outright (0.86 vs 0.84) and runs
 faster.
 
 **Coding is the discriminator.** 0.92 and 0.88 at the top, then a cliff to 0.49
@@ -161,6 +162,13 @@ Running the full suite at `medium` settled it:
 | **composite** | **0.71** | **0.84** | **+0.13** |
 | tasks | 13/15 | **15/15** | |
 | s/task | 279.9 | **107.2** | 2.6x faster |
+
+A second run at `medium` reproduced it: 0.83 / 0.78 / **0.89** / 0.86 for a
+composite of 0.84 again, with three dimensions identical to two decimal places
+and coding within 0.01. Coding reproducing that tightly is worth noting on its
+own, given the dimension carries a 0.15 noise floor — this model appears far
+less sensitive to the container non-determinism than ornith, whose coding spans
+0.33 to 0.49 across four runs of one configuration.
 
 The cost that was feared did not really arrive: agentic gave back 0.04 and
 planning 0.02, both inside judge variance, against +0.32 on coding and +0.26 on
