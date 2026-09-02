@@ -191,6 +191,17 @@ models:
     # thinking on did the same. If Muse-Glimmer truncates coding tasks, try
     # reasoning_strength: medium before raising max_tokens — with ornith,
     # raising the budget only bought more deliberation.
+    #
+    # UPDATE after run-20260901-175407, where the risk landed three ways:
+    #   - coding_artemis_medium_01 truncated on turn 4 after 22.6 minutes
+    #   - research_finance_hard_01 died on the *synthesis nudge*, which
+    #     generated 21049 chars after being told to stop calling tools and
+    #     write its answer
+    #   - slowest model measured, 192.2s/task against qwen3.8's 147.8
+    # It still scored 0.90 agentic (best in fleet) and 0.93/0.85 on two coding
+    # tasks, so this is a setting problem rather than a capability one.
+    chat_template_kwargs:
+      reasoning_strength: medium
 
 evaluation:
   temperature: 0.0

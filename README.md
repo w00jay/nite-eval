@@ -17,63 +17,61 @@ Each task runs as a multi-turn conversation. Research, planning and agentic task
 
 ## Sample results
 
-Run `run-20260901-043322` on the reference hardware, 7 models × 15 tasks,
-llama.cpp `cd26896c1`. Three of those models — `qwen3.5-27b`, `qwen3.5-9b` and
-`qwen3.6-35b-a3b-strix` — were retired on the strength of this run and are no
-longer in `config/eval_config.yaml`; the table is left whole because it is the
-measurement that retired them. The first sweep where every number means what it says:
-failed tasks score 0 in their dimension rather than being dropped, coding runs
-at `max_tokens: 32768`, the fixture gaps that returned errors to well-formed
-calls are closed, container timestamps no longer reach the model, and any call
-the mocks cannot answer is counted and reported.
+Each model's most recent complete 15-task run on the reference hardware,
+llama.cpp `cd26896c1`. **This is a fleet snapshot, not a single head-to-head** —
+the run each number comes from is given, and two of them predate the fixture
+fixes (see below).
 
-| Model | Research | Planning | Coding | Agentic | Composite | Tasks |
-|-------|---------:|---------:|-------:|--------:|----------:|------:|
-| **qwen3.8-27b** | 0.87 | 0.80 | 0.94 | 0.85 | **0.86** | 15/15 |
-| ornith-1.5-35b-a3b | 0.80 | 0.79 | 0.47 | 0.76 | **0.70** | 15/15 |
-| qwen3.6-35b-a3b (UD-Q4_K_S) | 0.75 | 0.76 | 0.28 | 0.75 | **0.63** | 13/15 |
-| qwen3.5-9b | 0.77 | 0.73 | 0.15 | 0.71 | **0.59** | 12/15 |
-| qwen3.6-35b-a3b-strix (Q4_K_M) | 0.80 | 0.49 | 0.28 | 0.77 | **0.59** | 12/15 |
-| gemma4-26b-a4b | 0.68 | 0.68 | 0.17 | 0.81 | **0.58** | 13/15 |
-| qwen3.5-27b | 0.86 | 0.70 | 0.04 | 0.72 | **0.58** | 12/15 |
+| Model | Research | Planning | Coding | Agentic | Composite | Tasks | s/task | Run |
+|-------|---------:|---------:|-------:|--------:|----------:|------:|-------:|-----|
+| **qwen3.8-27b** | 0.88 | 0.80 | **0.92** | 0.84 | **0.86** | 15/15 | 147.8 | `…175407` |
+| **muse-glimmer-30b** | 0.83 | 0.78 | 0.88 | **0.86** | **0.84** | 15/15 | 107.2 | `…021824` |
+| ornith-1.5-35b-a3b | 0.78 | 0.76 | 0.49 | 0.76 | **0.70** | 15/15 | 34.2 | `…175407` |
+| qwen3.6-35b-a3b | 0.75 | 0.76 | 0.28 | 0.75 | **0.63** | 13/15 | 60.7 | `…043322`† |
+| lfm2.5-2.6b | 0.80 | 0.71 | 0.22 | 0.72 | **0.61** | 14/15 | 28.5 | `…175407` |
+| gemma4-26b-a4b | 0.68 | 0.68 | 0.17 | 0.81 | **0.58** | 13/15 | 42.5 | `…043322`† |
+| lfm2.5-8b-a1b | 0.74 | 0.73 | 0.14 | 0.58 | **0.55** | 15/15 | 13.4 | `…175407` |
+
+† Measured before the fixture gaps were closed — `query_inventory` had no
+catch-all, `search_news` matched the ticker but not the company name, and
+`fetch_url` had no mocks at all. gemma4 took an unanswered call in that run.
+Both numbers are probably slightly pessimistic and should be re-run before being
+quoted against the rest.
 
 ### Reading this
 
-**qwen3.8-27b wins outright** — first in all four dimensions, 0.16 clear of
-second, and one of only two models to complete every task. Its coding at 0.94
-against a field where nobody else passes 0.47 is the largest single gap here.
+**The top two are a tie.** 0.86 against 0.84 is inside
+`scoring.min_detectable_difference`. qwen3.8 has four consecutive runs at
+0.85-0.86 behind it; muse-glimmer's 0.84 is one run at a corrected
+`reasoning_strength`. Tied on the evidence, with qwen3.8 the better-established
+number — and muse-glimmer wins agentic outright (0.86 vs 0.84) while running 27%
+faster.
 
-**The bottom four are a four-way tie.** 0.58, 0.58, 0.59, 0.59 — every adjacent
-pair inside `scoring.min_detectable_difference`, and the report says so per run.
-Ranking them is reading noise.
+**Coding is the discriminator.** 0.92 and 0.88 at the top, then a cliff to 0.49
+and below. It also carries its own noise floor of 0.15 rather than the
+composite's 0.05, because container output is not reproducible; see "Known
+limitations".
 
-**Coding is what separates the field, and it is mostly a completion problem.**
-13 of the 15 task failures are coding truncations. `coding_artemis_medium_01`
-failed for five of seven models and `coding_mcp_hard_01` for four; qwen3.8 and
-ornith are the only models that finish all four coding tasks. A low coding score
-here usually means the model did not get to the end, not that the code was bad —
-and coding carries its own 0.15 threshold, so gaps below that carry no
-information at all.
+**Nothing here separates places 3 through 7 cleanly.** ornith at 0.70 is clear
+of the rest, but 0.63 / 0.61 / 0.58 / 0.55 spans less than judge variance plus
+the coding floor.
 
-**strix's 0.49 planning is one failed task, not a quant difference.** It scores
-0.76 and 0.71 on the two planning tasks it completes and truncates
-`planning_wine_easy_01`, which every other model passes at 0.75-0.78. The two
-Qwen3.6 quants are otherwise equal — identical coding (0.28), close agentic
-(0.77 vs 0.75), and statistically identical wikitext-2 perplexity. Do not read
-the 0.59 vs 0.63 composite as a quant-quality signal.
+**Speed does not follow size or score.** lfm2.5-8b-a1b is the fastest at 13.4s
+and last on composite; qwen3.8 is the slowest of the leaders. lfm2.5-2.6b reaches
+0.61 on **2642 MiB** of VRAM, beating three larger models retired the same week.
 
-**Latency does not track quality, and the spread is 8x.** qwen3.5-9b averages
-18.6s per task and scores 0.59; qwen3.8-27b takes 145.8s for its 0.86; ornith
-reaches 0.70 at 37.5s, four times faster than the winner.
+**Two models needed their reasoning default corrected before they were
+measurable**, and both looked like weak models until it was:
+qwen3.8 (`reasoning_effort` defaulting to `xhigh`) and muse-glimmer
+(`reasoning_strength` defaulting to `high`). ornith needed its binary
+`enable_thinking` turned off. See the two sections below.
 
 Notes:
 
-- One unanswered tool call across all 105 tasks, and it is a model defect rather than a fixture gap: gemma4 emitted `call_mcp_tool` with `server` nested one level too deep, which no mock can match. See "Unanswered Tool Calls" in the report.
-- Repairs are effectively gone: 1 salvaged JSON element across the whole sweep, for qwen3.8. ornith needs none because it runs on the native tool-call path.
-- `unscored_weight` is 0% everywhere: every declared criterion was measured.
-- Each model has a different shape, which the composite flattens. gemma4 leads agentic at 0.81 while trailing everywhere else; qwen3.5-27b is second in research at 0.86 with the worst coding at 0.04.
-- Qwen models use the standard Hermes tool-call format. Gemma 4 emits Harmony-style calls (`<|tool_call>call:FUNC{…}<tool_call|>`); the parser handles both. ornith uses the native `tools` API — see "Native tool calling is per-model".
-- Thinking is configured per model and by measurement, not convention: Qwen 3.6 takes `/no_think`; qwen3.8 keeps `reasoning_effort: medium` because turning thinking off cost it research 0.80 → 0.63; ornith runs with `enable_thinking: false` — see below.
+- Zero unanswered tool calls and one JSON repair across the 75 tasks of `…175407`. Four of five models there run on the native tool-call path, where the server parses the call rather than the harness recovering it from text.
+- muse-glimmer needs `native_tools`, not by preference: its template emits `<atem:function_calls><atem:invoke name="F">`, which `hermes_parser` cannot read at all. On the prompt-text path it would score zero on every tool-using task.
+- lfm2.5-8b-a1b loses to its smaller sibling on tool use alone — 35 calls against 83, with **zero on all four coding tasks and all three planning tasks**. It wrote 5.6KB of correct-looking Go into its prose answer instead of calling `write_file`. Planning tolerates that (0.73); coding does not (0.14).
+- `coding_artemis_medium_01` has failed for seven of the nine models ever run against it. Only qwen3.8 and muse-glimmer complete it reliably.
 
 ### ornith-1.5: coding, and why thinking is off
 
@@ -126,6 +124,85 @@ has a non-converging one. The implementation and its tests are preserved on the
 Note also that this is **not** qwen3.8's finding. Thinking off cost qwen3.8
 research 0.80 → 0.63, which is why it keeps `reasoning_effort: medium`. ornith's
 research did not move. Neither result generalises to the other model.
+
+### Muse-Glimmer: reasoning strength
+
+Its template exposes a graded `reasoning_strength`, defaulting to `high`:
+
+```jinja
+{%- set rs = reasoning_strength if reasoning_strength is defined and reasoning_strength else 'high' -%}
+{{- 'Reasoning strength: ' + rs + '.' -}}
+```
+
+That default cost it three things in `run-20260901-175407`:
+
+- `coding_artemis_medium_01` truncated on turn 4 after **22.6 minutes**, having made 3 tool calls
+- `research_finance_hard_01` failed on the **synthesis nudge** — told to stop calling tools and write its answer, it produced **21049 characters** and ran out of budget
+- it was the slowest model measured, **192.2s per task** against qwen3.8's 147.8
+
+None of that is a capability limit. On the same run it scored **0.90 agentic**,
+the best of any model on any dimension outside qwen3.8's coding, and 0.93 and
+0.85 on two of the four coding tasks.
+
+Measured on short prompts, the knob barely moves tool-calling behaviour — 114
+and 87 characters of reasoning at every setting — and only affects the
+reasoning-heavy case: 624 characters at `high`, 508 at `medium`, 192 at `low`.
+That was not enough to pick a setting blind, which is why the first run used the
+default and let the failures identify themselves.
+
+Running the full suite at `medium` settled it:
+
+| dimension | `high` | `medium` | delta |
+|---|---:|---:|---:|
+| research | 0.57 | **0.83** | +0.26 |
+| planning | 0.80 | 0.78 | -0.02 |
+| coding | 0.57 | **0.88** | +0.32 |
+| agentic | 0.90 | 0.86 | -0.04 |
+| **composite** | **0.71** | **0.84** | **+0.13** |
+| tasks | 13/15 | **15/15** | |
+| s/task | 279.9 | **107.2** | 2.6x faster |
+
+The cost that was feared did not really arrive: agentic gave back 0.04 and
+planning 0.02, both inside judge variance, against +0.32 on coding and +0.26 on
+research. Research gained because the failure there was the *synthesis nudge*
+truncating, not the research itself.
+
+`coding_artemis_medium_01` is the clearest single case: **0.00 to 0.95**, and
+22.6 minutes to 4.7. The turn and tool-call counts are identical at both
+settings — 4 turns, 3 calls — so the model was doing the same work either way.
+At `high` it simply could not fit its reasoning inside the budget. That is why
+the remedy is to cut reasoning rather than raise `max_tokens`: more budget only
+helps a model whose reasoning converges.
+
+The same shape has now appeared three times across three different models, with
+three different knobs: qwen3.8's `reasoning_effort` defaults to `xhigh` and had
+to be set to `medium`; ornith's binary `enable_thinking` had to be turned off;
+Muse-Glimmer's `reasoning_strength` defaults to `high`. **Check a new model's
+template for its reasoning default before the first scored run** — the failure
+looks like a weak model and is not one.
+
+<details>
+<summary>Prior full sweep: <code>run-20260901-043322</code> (7 models, before qwen3.5/strix were retired)</summary>
+
+Same harness and scoring as the table above. Kept because it is the run that
+retired qwen3.5-27b, qwen3.5-9b and qwen3.6-35b-a3b-strix — they finished in a
+four-way tie with gemma4 that the run could not separate.
+
+| Model | Research | Planning | Coding | Agentic | Composite | Tasks |
+|-------|---------:|---------:|-------:|--------:|----------:|------:|
+| **qwen3.8-27b** | 0.87 | 0.78 | 0.94 | 0.85 | **0.86** | 15/15 |
+| ornith-1.5-35b-a3b | 0.80 | 0.79 | 0.47 | 0.76 | **0.70** | 15/15 |
+| qwen3.6-35b-a3b | 0.75 | 0.76 | 0.28 | 0.75 | **0.63** | 13/15 |
+| qwen3.5-9b | 0.77 | 0.73 | 0.15 | 0.71 | **0.59** | 12/15 |
+| qwen3.6-35b-a3b-strix | 0.80 | 0.49 | 0.28 | 0.77 | **0.59** | 12/15 |
+| gemma4-26b-a4b | 0.68 | 0.68 | 0.17 | 0.81 | **0.58** | 13/15 |
+| qwen3.5-27b | 0.86 | 0.70 | 0.04 | 0.72 | **0.58** | 12/15 |
+
+strix's 0.49 planning is one truncated task, not a quant difference: it scores
+0.76 and 0.71 on the two planning tasks it completes, and matches UD-Q4_K_S
+exactly on coding.
+
+</details>
 
 <details>
 <summary>Superseded: <code>run-20260830-231628</code> (6 models, pre-2026-08-31 scoring)</summary>
