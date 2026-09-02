@@ -565,6 +565,48 @@ narrower claim than 0.86 over all of them, not a better result. As of
 so every criterion is measured. A task added without a hidden suite will sit
 below 100% without failing loudly — check the column before quoting a number.
 
+### Speed is reported in tokens per second, not seconds per task
+
+`task_results.total_latency_ms` measures how long a model took. That is not how
+fast it generates, and the two come apart badly on a mixture-of-experts model: a
+MoE activating a fraction of its weights and a dense model that simply says less
+look identical in seconds-per-task and nothing alike in throughput.
+
+`task_results.completion_tokens` and `prompt_tokens` record the server's `usage`
+block summed over every generation a task made — retries and synthesis nudges
+included, so they divide into the same wall clock the latency column measures.
+Reports carry a "Latency and throughput" table with generated tok/s alongside
+the timings.
+
+The tok/s figure is generated tokens over wall-clock request time, so it
+includes prompt processing and tool-result round trips. It is end-to-end
+throughput for the task, not decode speed.
+
+Both columns are nullable. A run recorded before they existed, or against a
+server that reports no `usage`, shows `—` rather than 0 — a zero would read as a
+measurement. Prompt tokens are kept because they make history compaction
+measurable; the 1500-char tool-call summary is asserted to save context and has
+never been measured saving any.
+
+### Mock gaps record their arguments, because the count cannot explain itself
+
+`task_results.unmatched_mock_calls` counts calls the task's fixtures could not
+answer. Two different things produce that count and it cannot tell them apart:
+
+| Cause | Example | Who is wrong |
+|---|---|---|
+| The fixture was too narrow | searching `Nvidia` against a matcher keyed on `NVDA` | the harness — the score is unfairly depressed |
+| The model emitted a call nothing could match | an argument nested a level too deep inside `call_mcp_tool` | the model — the score is correct |
+
+Both appeared in `run-20260901-043322`. Telling them apart automatically is not
+possible, since a call that matches no mock looks identical either way, so
+`task_results.unmatched_mock_samples` stores a bounded JSON sample of the actual
+arguments (5 calls, 400 chars each, with the true total kept) and the report
+prints them under "Recorded arguments" for a person to judge.
+
+Read those before attributing a low score to either side. A run from before the
+column says the arguments are unavailable rather than implying there were none.
+
 ### Malformed tool calls are repaired and counted
 
 Some models emit structurally broken tool-call JSON. Where the defect is
