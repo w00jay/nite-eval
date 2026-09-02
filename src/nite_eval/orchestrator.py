@@ -372,6 +372,11 @@ def run_task(
             error=conv.error,
             repaired_tool_calls=conv.repaired_tool_calls,
             unmatched_mock_calls=len(getattr(tool_env, "unmatched_calls", [])),
+            # 0 across a whole task means the server never reported a usage block,
+            # not that the model generated nothing, so store NULL and let the
+            # report say "unavailable" rather than print a fabricated 0 tok/s.
+            completion_tokens=conv.total_completion_tokens or None,
+            prompt_tokens=conv.total_prompt_tokens or None,
         )
         return 0.0
 
@@ -457,6 +462,11 @@ def run_task(
         repaired_tool_calls=conv.repaired_tool_calls,
         unmatched_mock_calls=len(getattr(tool_env, "unmatched_calls", [])),
         unscored_weight=unscored_weight,
+        # 0 across a whole task means the server never reported a usage block,
+        # not that the model generated nothing, so store NULL and let the
+        # report say "unavailable" rather than print a fabricated 0 tok/s.
+        completion_tokens=conv.total_completion_tokens or None,
+        prompt_tokens=conv.total_prompt_tokens or None,
     )
 
     turns_str = f"{len(conv.turns)}t/{conv.total_tool_calls}tc"

@@ -160,18 +160,56 @@ def generate_report(
             lines.append(f"| {short_id} | {diff} | " + " | ".join(cells) + f" | {turns_str} |")
         lines.append("")
 
-    # Latency comparison
-    lines.append("## Latency")
+    # Latency alone measures how long a model took, not how fast it generates,
+    # so a terse model and a quick one read the same. LFM2.5-8B-A1B activating
+    # ~1B of 8B parameters per token and a dense 2.6B saying less are the case
+    # this table exists to separate.
+    lines.append("## Latency and throughput")
     lines.append("")
-    lines.append("| Model | Avg (ms) | Total (s) |")
-    lines.append("|-------|----------|-----------|")
+    lines.append("| Model | Avg (ms) | Total (s) | Gen tok/s | Avg gen tok | Avg prompt tok |")
+    lines.append("|-------|----------|-----------|-----------|-------------|----------------|")
+    measured_any = False
     for model in models:
         scores = db.get_model_scores(run_id, model)
         latencies = [s["latency_ms"] for s in scores if s["latency_ms"]]
-        if latencies:
-            avg_ms = sum(latencies) / len(latencies)
-            total_s = sum(latencies) / 1000
-            lines.append(f"| {model} | {avg_ms:.0f} | {total_s:.0f} |")
+        if not latencies:
+            continue
+        avg_ms = sum(latencies) / len(latencies)
+        total_s = sum(latencies) / 1000
+
+        # Restricted to rows that actually carry counts, so the divisor matches
+        # the numerator. A run that predates this column, or a server that
+        # reported no usage, leaves NULL — mixing those tasks' latency into the
+        # denominator would understate tok/s instead of admitting it is unknown.
+        cur = db._conn.execute(
+            "SELECT COALESCE(SUM(completion_tokens), 0), COALESCE(SUM(prompt_tokens), 0), "
+            "COALESCE(SUM(total_latency_ms), 0), COUNT(*) "
+            "FROM task_results "
+            "WHERE run_id = ? AND model_name = ? AND completion_tokens IS NOT NULL",
+            (run_id, model),
+        )
+        gen_tok, prompt_tok, tok_latency_ms, measured = cur.fetchone()
+        if measured and gen_tok and tok_latency_ms > 0:
+            measured_any = True
+            tok_s = f"{gen_tok / (tok_latency_ms / 1000):.1f}"
+            avg_gen = f"{gen_tok / measured:.0f}"
+            avg_prompt = f"{prompt_tok / measured:.0f}" if prompt_tok else "—"
+        else:
+            tok_s = avg_gen = avg_prompt = "—"
+        lines.append(f"| {model} | {avg_ms:.0f} | {total_s:.0f} | {tok_s} | {avg_gen} | {avg_prompt} |")
+    lines.append("")
+    if measured_any:
+        lines.append(
+            "Gen tok/s is generated tokens over wall-clock request time, so it includes "
+            "prompt processing and tool-result round trips — it is end-to-end throughput "
+            "for the task, not decode speed. Avg prompt tok is per task across all its "
+            "turns, so it grows with conversation length and is what history compaction acts on."
+        )
+    else:
+        lines.append(
+            "Token counts unavailable for this run — either it predates the "
+            "`completion_tokens` column or the server reported no usage block."
+        )
     lines.append("")
 
     # Malformed tool-call rate. Repaired calls would otherwise be invisible:

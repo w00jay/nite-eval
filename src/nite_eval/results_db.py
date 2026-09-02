@@ -142,6 +142,13 @@ class ResultsDB:
         # answer are indistinguishable in a score, so the count is stored to
         # keep them apart.
         ("task_results", "unmatched_mock_calls", "INTEGER DEFAULT 0"),
+        # Tokens generated and consumed across every generation the task made.
+        # total_latency_ms alone measures how long a model took, not how fast
+        # it generates, so a terse model and a quick one are indistinguishable
+        # in the report. NULL means the server reported no usage block; 0 would
+        # claim the model generated nothing.
+        ("task_results", "completion_tokens", "INTEGER"),
+        ("task_results", "prompt_tokens", "INTEGER"),
     )
 
     def _add_missing_columns(self, cursor: sqlite3.Cursor) -> None:
@@ -232,6 +239,8 @@ class ResultsDB:
         repaired_tool_calls: int = 0,
         unscored_weight: float = 0.0,
         unmatched_mock_calls: int = 0,
+        completion_tokens: int | None = None,
+        prompt_tokens: int | None = None,
     ) -> None:
         """Save a completed task result (the checkpoint)."""
         status = "failed" if error else "completed"
@@ -240,7 +249,8 @@ class ResultsDB:
             "status = ?, finished_at = ?, final_response = ?, "
             "total_turns = ?, total_tool_calls = ?, total_latency_ms = ?, "
             "reached_max_turns = ?, weighted_score = ?, error = ?, "
-            "repaired_tool_calls = ?, unscored_weight = ?, unmatched_mock_calls = ? "
+            "repaired_tool_calls = ?, unscored_weight = ?, unmatched_mock_calls = ?, "
+            "completion_tokens = ?, prompt_tokens = ? "
             "WHERE run_id = ? AND model_name = ? AND task_id = ?",
             (
                 status,
@@ -255,6 +265,8 @@ class ResultsDB:
                 repaired_tool_calls,
                 unscored_weight,
                 unmatched_mock_calls,
+                completion_tokens,
+                prompt_tokens,
                 run_id,
                 model_name,
                 task_id,

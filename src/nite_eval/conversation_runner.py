@@ -10,7 +10,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import NamedTuple, Protocol
 
 import httpx
 
@@ -71,6 +71,11 @@ class ModelReply:
     # runs with native_tools. None means the model was not asked for them, and
     # the caller should parse the text instead.
     native_tool_calls: list[ToolCall] | None = None
+    # From the server's `usage` block. 0 means usage was not reported, not that
+    # nothing was generated — the report has to keep those apart rather than
+    # print a fabricated 0 tok/s.
+    completion_tokens: int = 0
+    prompt_tokens: int = 0
 
     @property
     def truncated(self) -> bool:
@@ -86,6 +91,8 @@ class TurnResult:
     latency_ms: float = 0.0
     finish_reason: str | None = None
     truncated: bool = False
+    completion_tokens: int = 0
+    prompt_tokens: int = 0
 
 
 # Per-HTTP-request read timeout — decoupled from the task wall-clock budget.
@@ -102,6 +109,25 @@ MAX_PARSE_RETRIES = 1
 
 # How much of an unparsable payload to keep in the task's error field.
 UNPARSED_RAW_CHARS = 2000
+
+# Models whose server reported no `usage` block. Warned about once each, since
+# the alternative is one line per generation for the whole run.
+_USAGE_MISSING: set[str] = set()
+
+
+class NudgeCost(NamedTuple):
+    """What one synthesis nudge cost, so the caller can add it to the totals.
+
+    A bare latency float was enough while latency was the only thing measured;
+    returning a tuple keeps the nudge's tokens from being silently dropped out
+    of the per-task total the way they would be if the caller had to remember
+    to read them off `turns[-1]`.
+    """
+
+    latency_ms: float
+    completion_tokens: int
+    prompt_tokens: int
+
 
 # Tool calls larger than this are summarised in conversation history rather than
 # carried verbatim. Sized above a typical search query or shell command so only
@@ -130,6 +156,13 @@ class ConversationResult:
     final_response: str
     total_tool_calls: int
     total_latency_ms: float
+    # Summed over every generation the task made — retries and nudges included,
+    # exactly like total_latency_ms, so the two divide into a real tok/s.
+    # Required rather than defaulted on purpose: a construction site that
+    # forgets them should fail loudly instead of reporting a model that
+    # generated nothing.
+    total_completion_tokens: int
+    total_prompt_tokens: int
     reached_max_turns: bool
     error: str | None = None
     # Tool calls that parsed only after JSON repair — a model-quality signal
@@ -191,6 +224,8 @@ def run_conversation(
     turns: list[TurnResult] = []
     total_tool_calls = 0
     total_latency = 0.0
+    total_completion = 0
+    total_prompt = 0
     cap_nudged = False  # Set when the max_tool_calls nudge fires so the max_turns nudge doesn't double-nudge.
     parse_retries = 0  # Corrective retries spent on unparsable tool calls.
     repaired_total = 0  # Tool calls salvaged by JSON repair.
@@ -218,6 +253,8 @@ def run_conversation(
                     final_response="",
                     total_tool_calls=total_tool_calls,
                     total_latency_ms=total_latency,
+                    total_completion_tokens=total_completion,
+                    total_prompt_tokens=total_prompt,
                     reached_max_turns=False,
                     repaired_tool_calls=repaired_total,
                     error=(
@@ -243,6 +280,8 @@ def run_conversation(
 
             latency = (time.monotonic() - start) * 1000
             total_latency += latency
+            total_completion += reply.completion_tokens
+            total_prompt += reply.prompt_tokens
 
             if reply.native_tool_calls is not None:
                 parsed = ParsedResponse(tool_calls=reply.native_tool_calls, text=response_text)
@@ -256,6 +295,8 @@ def run_conversation(
                 latency_ms=latency,
                 finish_reason=reply.finish_reason,
                 truncated=reply.truncated,
+                completion_tokens=reply.completion_tokens,
+                prompt_tokens=reply.prompt_tokens,
             )
 
             # A generation cut off at max_tokens is not an answer. Previously
@@ -273,6 +314,8 @@ def run_conversation(
                         final_response="",
                         total_tool_calls=total_tool_calls,
                         total_latency_ms=total_latency,
+                        total_completion_tokens=total_completion,
+                        total_prompt_tokens=total_prompt,
                         reached_max_turns=False,
                         repaired_tool_calls=repaired_total,
                         error=(
@@ -286,6 +329,8 @@ def run_conversation(
                     final_response="",
                     total_tool_calls=total_tool_calls,
                     total_latency_ms=total_latency,
+                    total_completion_tokens=total_completion,
+                    total_prompt_tokens=total_prompt,
                     reached_max_turns=False,
                     repaired_tool_calls=repaired_total,
                     error=(
@@ -339,6 +384,8 @@ def run_conversation(
                     final_response="",
                     total_tool_calls=total_tool_calls,
                     total_latency_ms=total_latency,
+                    total_completion_tokens=total_completion,
+                    total_prompt_tokens=total_prompt,
                     reached_max_turns=False,
                     repaired_tool_calls=repaired_total,
                     error=(
@@ -372,6 +419,8 @@ def run_conversation(
                     nudged_text = nudge_reply.text
                     nudge_latency = (time.monotonic() - nudge_start) * 1000
                     total_latency += nudge_latency
+                    total_completion += nudge_reply.completion_tokens
+                    total_prompt += nudge_reply.prompt_tokens
                     nudge_parsed = extract_tool_calls(nudged_text, tools)
                     nudge_turn = TurnResult(
                         turn=turn_num + 1,
@@ -380,6 +429,8 @@ def run_conversation(
                         latency_ms=nudge_latency,
                         finish_reason=nudge_reply.finish_reason,
                         truncated=nudge_reply.truncated,
+                        completion_tokens=nudge_reply.completion_tokens,
+                        prompt_tokens=nudge_reply.prompt_tokens,
                     )
                     turns.append(nudge_turn)
                     final = nudged_text.strip() or (
@@ -393,6 +444,8 @@ def run_conversation(
                         final_response=final,
                         total_tool_calls=total_tool_calls,
                         total_latency_ms=total_latency,
+                        total_completion_tokens=total_completion,
+                        total_prompt_tokens=total_prompt,
                         reached_max_turns=False,
                     )
 
@@ -407,6 +460,8 @@ def run_conversation(
                     final_response=final,
                     total_tool_calls=total_tool_calls,
                     total_latency_ms=total_latency,
+                    total_completion_tokens=total_completion,
+                    total_prompt_tokens=total_prompt,
                     reached_max_turns=False,
                     repaired_tool_calls=repaired_total,
                 )
@@ -456,7 +511,7 @@ def run_conversation(
                     "Do not call any more tools. Based on everything you've gathered, "
                     "write your final answer to the original question now."
                 )
-                total_latency += _try_nudge(
+                nudge_cost = _try_nudge(
                     client,
                     base_url,
                     model_name,
@@ -469,6 +524,9 @@ def run_conversation(
                     chat_template_kwargs,
                     tools,
                 )
+                total_latency += nudge_cost.latency_ms
+                total_completion += nudge_cost.completion_tokens
+                total_prompt += nudge_cost.prompt_tokens
                 cap_nudged = True
                 break
 
@@ -483,7 +541,7 @@ def run_conversation(
                 "Do not call any more tools. Based on everything you've gathered, "
                 "write your final answer to the original question now."
             )
-            total_latency += _try_nudge(
+            nudge_cost = _try_nudge(
                 client,
                 base_url,
                 model_name,
@@ -496,6 +554,9 @@ def run_conversation(
                 chat_template_kwargs,
                 tools,
             )
+            total_latency += nudge_cost.latency_ms
+            total_completion += nudge_cost.completion_tokens
+            total_prompt += nudge_cost.prompt_tokens
 
         # The synthesis nudge produces the final answer on this path, so a
         # truncated nudge is a truncated answer. The main loop checked for this
@@ -507,6 +568,8 @@ def run_conversation(
                 final_response="",
                 total_tool_calls=total_tool_calls,
                 total_latency_ms=total_latency,
+                total_completion_tokens=total_completion,
+                total_prompt_tokens=total_prompt,
                 reached_max_turns=True,
                 repaired_tool_calls=repaired_total,
                 error=(
@@ -521,6 +584,8 @@ def run_conversation(
             final_response=final,
             total_tool_calls=total_tool_calls,
             total_latency_ms=total_latency,
+            total_completion_tokens=total_completion,
+            total_prompt_tokens=total_prompt,
             reached_max_turns=True,
             repaired_tool_calls=repaired_total,
         )
@@ -532,6 +597,8 @@ def run_conversation(
             final_response="",
             total_tool_calls=total_tool_calls,
             total_latency_ms=total_latency,
+            total_completion_tokens=total_completion,
+            total_prompt_tokens=total_prompt,
             reached_max_turns=False,
             error=str(e),
         )
@@ -618,10 +685,10 @@ def _try_nudge(
     turns: list[TurnResult],
     chat_template_kwargs: dict | None = None,
     tools: list[dict] | None = None,
-) -> float:
+) -> NudgeCost:
     """Append a synthesis-nudge user message and collect the model's reply.
 
-    Returns the nudge's latency in ms.
+    Returns what the nudge cost, for the caller to fold into the task totals.
 
     HTTP failures are raised, not swallowed. This used to log a warning and
     fall back to the best already-collected turn, which silently converted
@@ -651,9 +718,11 @@ def _try_nudge(
             latency_ms=nudge_latency,
             finish_reason=nudge_reply.finish_reason,
             truncated=nudge_reply.truncated,
+            completion_tokens=nudge_reply.completion_tokens,
+            prompt_tokens=nudge_reply.prompt_tokens,
         )
     )
-    return nudge_latency
+    return NudgeCost(nudge_latency, nudge_reply.completion_tokens, nudge_reply.prompt_tokens)
 
 
 def _extract_best_final_response(turns: list[TurnResult]) -> str:
@@ -779,13 +848,31 @@ def _call_model(
     content = msg.get("content") or ""
     finish = choice.get("finish_reason")
 
+    # llama-server returns usage on every non-streaming completion, and this
+    # discarded it — which left latency as the only timing signal, conflating a
+    # fast model with a terse one. A MoE that activates a fraction of its
+    # weights and a dense model that simply says less look identical in
+    # seconds-per-task and nothing alike in tokens per second.
+    usage = data.get("usage") or {}
+    completion_tokens = int(usage.get("completion_tokens") or 0)
+    prompt_tokens = int(usage.get("prompt_tokens") or 0)
+    if not usage and model_name not in _USAGE_MISSING:
+        _USAGE_MISSING.add(model_name)
+        logger.warning("No usage block from %s; tok/s will be unavailable for this model", model_name)
+
     if native_tools:
         native = _parse_native_tool_calls(msg, model_name)
         if native is not None:
             # Empty content alongside tool calls is correct here, not a stall,
             # so the reasoning_content fallback below must not fire and hand the
             # judge a chain of thought in place of the call.
-            return ModelReply(text=content, finish_reason=finish, native_tool_calls=native)
+            return ModelReply(
+                text=content,
+                finish_reason=finish,
+                native_tool_calls=native,
+                completion_tokens=completion_tokens,
+                prompt_tokens=prompt_tokens,
+            )
 
     if not content.strip():
         reasoning = msg.get("reasoning_content") or ""
@@ -797,11 +884,21 @@ def _call_model(
             len(reasoning),
         )
         if reasoning.strip():
-            return ModelReply(text=reasoning, finish_reason=finish)
+            return ModelReply(
+                text=reasoning,
+                finish_reason=finish,
+                completion_tokens=completion_tokens,
+                prompt_tokens=prompt_tokens,
+            )
     if finish == "length":
         logger.warning(
             "Truncated generation from %s (finish=length, content_len=%d) — raise max_tokens for this task",
             model_name,
             len(content),
         )
-    return ModelReply(text=content, finish_reason=finish)
+    return ModelReply(
+        text=content,
+        finish_reason=finish,
+        completion_tokens=completion_tokens,
+        prompt_tokens=prompt_tokens,
+    )
