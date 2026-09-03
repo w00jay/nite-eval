@@ -27,9 +27,14 @@ def summarize(path: str):
 
     meta: dict[str, object] = {}
     for name, field in reader.fields.items():
-        if name.startswith(("general.", "tokenizer.ggml.")) or "." in name and name.split(".", 1)[0] not in {
-            "tokenizer",
-        }:
+        if (
+            name.startswith(("general.", "tokenizer.ggml."))
+            or "." in name
+            and name.split(".", 1)[0]
+            not in {
+                "tokenizer",
+            }
+        ):
             try:
                 value = field.contents()
             except Exception as exc:  # pragma: no cover
@@ -112,10 +117,10 @@ def print_summary(label: str, path: str, summary: dict) -> None:
     bytes_by = summary["quant_bytes"]
     total_bytes = sum(bytes_by.values())
     for qtype in sorted(counts):
-        mb = bytes_by[qtype] / (1024 ** 2)
+        mb = bytes_by[qtype] / (1024**2)
         pct = 100 * bytes_by[qtype] / total_bytes if total_bytes else 0
         print(f"    {qtype:12s}  {counts[qtype]:5d} tensors  {mb:8.0f} MB  ({pct:5.1f}%)")
-    print(f"    total       :  {sum(counts.values()):5d} tensors  {total_bytes/(1024**2):8.0f} MB")
+    print(f"    total       :  {sum(counts.values()):5d} tensors  {total_bytes / (1024**2):8.0f} MB")
 
 
 def diff_summaries(label_a: str, sa: dict, label_b: str, sb: dict) -> int:
@@ -159,8 +164,8 @@ def diff_summaries(label_a: str, sa: dict, label_b: str, sb: dict) -> int:
     for qtype in all_types:
         ca = sa["quant_counts"].get(qtype, 0)
         cb = sb["quant_counts"].get(qtype, 0)
-        ba = sa["quant_bytes"].get(qtype, 0) / (1024 ** 2)
-        bb = sb["quant_bytes"].get(qtype, 0) / (1024 ** 2)
+        ba = sa["quant_bytes"].get(qtype, 0) / (1024**2)
+        bb = sb["quant_bytes"].get(qtype, 0) / (1024**2)
         marker = "!!" if ca != cb else "  "
         print(f"   {marker} {qtype:12s}  {label_a}={ca:5d}t/{ba:7.0f}MB   {label_b}={cb:5d}t/{bb:7.0f}MB")
         if ca != cb:

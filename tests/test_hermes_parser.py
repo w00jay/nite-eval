@@ -357,7 +357,7 @@ def test_valid_json_containing_code_is_not_corrupted():
     """
     from nite_eval.hermes_parser import extract_tool_calls
 
-    go_source = 'func h(w http.ResponseWriter) {\\n\\twriteJSON(w, map[string]any{\\\"error\\\": \\\"x\\\"})\\n'
+    go_source = 'func h(w http.ResponseWriter) {\\n\\twriteJSON(w, map[string]any{\\"error\\": \\"x\\"})\\n'
     raw = (
         '<tool_call>\n{"name": "run_code", "arguments": {"command": "cat > a.go <<EOF\\n'
         + go_source
@@ -628,8 +628,7 @@ def test_ornith_angle_bracket_for_brace():
     completes the payload as JSON.
     """
     response = (
-        '<tool_call>\n<function": "web_search", "arguments": '
-        '{"query": "TimesFM foundation model"}}\n</tool_call>'
+        '<tool_call>\n<function": "web_search", "arguments": {"query": "TimesFM foundation model"}}\n</tool_call>'
     )
     parsed = extract_tool_calls(response, ORNITH_TOOLS)
     assert len(parsed.tool_calls) == 1
@@ -640,10 +639,7 @@ def test_ornith_angle_bracket_for_brace():
 
 def test_ornith_angle_bracket_with_dropped_value_quote():
     """Both defects at once, as seen on coding_mcp_easy_01."""
-    response = (
-        '<tool_call>\n<function": run_code", "arguments": '
-        '{"command": "go version"}}\n</tool_call>'
-    )
+    response = '<tool_call>\n<function": run_code", "arguments": {"command": "go version"}}\n</tool_call>'
     parsed = extract_tool_calls(response, ORNITH_TOOLS)
     assert len(parsed.tool_calls) == 1
     assert parsed.tool_calls[0].name == "run_code"
@@ -652,10 +648,7 @@ def test_ornith_angle_bracket_with_dropped_value_quote():
 
 def test_ornith_angle_bracket_with_fully_bare_value():
     """coding_wine_medium_01: the value carries no quotes at all."""
-    response = (
-        '<tool_call>\n<function": run_code, "arguments": '
-        '{"command": "ls -la /app"}}\n</tool_call>'
-    )
+    response = '<tool_call>\n<function": run_code, "arguments": {"command": "ls -la /app"}}\n</tool_call>'
     parsed = extract_tool_calls(response, ORNITH_TOOLS)
     assert len(parsed.tool_calls) == 1
     assert parsed.tool_calls[0].name == "run_code"
@@ -740,10 +733,7 @@ def test_ornith_json_start_xml_close_with_unterminated_string():
 
 def test_ornith_xml_name_with_json_arguments():
     """research_mcp_easy_01: XML name, no </function>, args as nested JSON."""
-    response = (
-        "<tool_call>\n<function=web_search>\n<tool_call>\n"
-        '{"query": "Docker mcp-gateway"}\n</tool_call>'
-    )
+    response = '<tool_call>\n<function=web_search>\n<tool_call>\n{"query": "Docker mcp-gateway"}\n</tool_call>'
     parsed = extract_tool_calls(response, ORNITH_TOOLS)
     assert len(parsed.tool_calls) == 1
     assert parsed.tool_calls[0].name == "web_search"
@@ -753,8 +743,7 @@ def test_ornith_xml_name_with_json_arguments():
 def test_xml_closer_inside_string_value_is_kept():
     """A payload legitimately ending with markup in its value must survive."""
     response = (
-        '<tool_call>{"name": "write_file", "arguments": '
-        '{"path": "a.html", "content": "<div>hi</div>"}}</tool_call>'
+        '<tool_call>{"name": "write_file", "arguments": {"path": "a.html", "content": "<div>hi</div>"}}</tool_call>'
     )
     parsed = extract_tool_calls(response, ORNITH_TOOLS)
     assert parsed.tool_calls[0].arguments["content"] == "<div>hi</div>"

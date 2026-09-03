@@ -411,8 +411,7 @@ def main():
     if not check_health(f"http://127.0.0.1:{args.port}"):
         console.print(f"[red]No judge server on :{args.port}[/red]")
         console.print(
-            "Start with: CUDA_VISIBLE_DEVICES=1 $LLAMA_SWAP_BIN "
-            "--config config/judge_swap_config.yaml --listen :9091"
+            "Start with: CUDA_VISIBLE_DEVICES=1 $LLAMA_SWAP_BIN --config config/judge_swap_config.yaml --listen :9091"
         )
         sys.exit(1)
 
