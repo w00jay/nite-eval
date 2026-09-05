@@ -267,6 +267,34 @@ which makes sense once stated — code is more locally predictable than natural
 language, so a small draft head guesses it more reliably. That is the workload
 this harness spends most of its time on.
 
+### Only three of the fleet's models can use MTP
+
+Checked from the GGUF headers across everything in `GGUF_DIR` — a draft head
+requires both `<arch>.nextn_predict_layers` and `blk.N.nextn.*` tensors:
+
+| model | arch | draft head |
+|---|---|---|
+| `ornith-1.5-35b-a3b` | `qwen35moe` | **yes** |
+| `qwen3.8-27b` | `qwen35` | **yes** |
+| `qwopus3.8-27b-q4km` / `-q5km` | `qwen35` | **yes** |
+| `qwen3.6-35b-a3b` | `qwen35moe` | no |
+| `gemma4-26b-a4b` | `gemma4` | no |
+| `lfm2.5-2.6b` | `lfm2` | no |
+| `lfm2.5-8b-a1b` | `lfm2moe` | no |
+| `muse-glimmer-30b` | `muse-glimmer` | no |
+
+Two things follow. **It is not an architecture property**: `qwen3.6-35b-a3b`
+shares `qwen35moe` with ornith and has no head, so it cannot be inferred from
+the arch string — check the metadata per file. And **ornith-1.5-35b-a3b has
+one**, which was not expected; it is the VRAM-binding model and among the
+slower ones, so it is exactly where the time is.
+
+This narrows the recommendation. "Run the fleet with MTP" would speed up three
+models and do nothing for the other four, so it is not a fleet-wide switch. It
+is a per-model one — `llama_swap_config.yaml` already gives each model its own
+command line — and only the three that gain need re-baselining. The other four
+keep their history untouched.
+
 **Rough wall-clock implication.** For qwen3.8-27b in `run-20260905-063950`,
 Gen tok/s was 38.4 against a measured decode rate of ~41 tok/s, so decode
 accounts for roughly 90% of task wall clock and prompt processing plus tool
@@ -355,13 +383,13 @@ and the tasks are short enough that non-termination rarely triggers.
   criteria on files it wrote. That 0.62 had been read here as a success.
 - **Settle the quant question properly** with `compare_quants.sh` (perplexity +
   determinism) if it ever matters. On this evidence it does not.
-- **Run the whole fleet with MTP.** This is now the highest-value item here.
-  +73-75% decode on both models tested, and the gain **holds at 36k context and
-  is largest on code** (+80%), which is what the harness spends its time on. It
-  needs re-baselining every model once, since MTP changes output — but nothing
-  else on this list buys hours per sweep. Verify first that every model in the
-  fleet actually carries a draft head; this was checked for the Qwen3.8 family
-  only, and gemma4 / lfm2.5 / muse-glimmer have not been looked at.
+- **Enable MTP for the three models that can use it** — `qwen3.8-27b`,
+  `ornith-1.5-35b-a3b` and `qwopus3.8-27b-*`. +73-75% decode, holding at 36k
+  context and largest on code (+80%), which is what the harness spends its time
+  on. Per-model in `llama_swap_config.yaml`, so only those three need
+  re-baselining and the other four keep their history. Ornith is the most
+  valuable of the three: it is the VRAM-binding model and among the slowest.
+  Measure a real sweep rather than trusting the ~40% wall-clock estimate above.
 - ~~**Does `--spec-draft-n-max 1` preserve output?**~~ Tested: no. It diverges
   from no-spec on exactly the same prompts as n-max 2 while being 14% slower.
   All MTP depths produce identical output to each other, so the only boundary
