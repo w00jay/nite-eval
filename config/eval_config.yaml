@@ -203,6 +203,54 @@ models:
     chat_template_kwargs:
       reasoning_strength: medium
 
+  # Qwopus3.8-27B-Flash — Jackrong's fine-tune of Qwen/Qwen3.8-27B, carried in
+  # two quants to be compared against the qwen3.8-27b entry above. Its pitch is
+  # lower reasoning cost at slightly lower accuracy: the author reports MMLU-Pro
+  # 91.28% vs the base's 92.73% (-1.45pp) for +12.8% decode throughput and -9.9%
+  # output characters.
+  #
+  # NO chat_template_kwargs. This is the important part, and it is the same trap
+  # documented above for "/no_think" on qwen3.8, in reverse. Qwopus did NOT keep
+  # the base chat template: 4718 chars against Qwen3.8's 9993, with
+  # `reasoning_effort` appearing 0 times instead of 8. The base template's
+  # `reasoning_effort|default('xhigh')` machinery — and the "Reasoning effort is
+  # set to xhigh. Please think carefully..." string it injects — was removed
+  # outright. So `reasoning_effort: medium`, which qwen3.8-27b depends on, is
+  # inert here: Jinja does not error on an unused variable, it silently does
+  # nothing. Copying the baseline config would have looked correct and changed
+  # nothing.
+  #
+  # Measured on the live server, "What is 17*23?" at temp 0, completion tokens /
+  # reasoning_content length:
+  #                            Q4_K_M      Q5_K_M
+  #   baseline (no kwargs)     86 / 128    81 / 105
+  #   reasoning_effort low     86 / 128    81 / 105   <- identical to baseline
+  #   reasoning_effort medium  86 / 128    81 / 105   <- identical to baseline
+  #   enable_thinking false   178 /   0    96 /   0   <- the only knob that acts
+  #
+  # `enable_thinking` is left at its template default (thinking ON) deliberately.
+  # The author's agentic battery ran with thinking disabled, but on the BASE
+  # model enable_thinking:false cost 0.68 -> 0.62 composite (see qwen3.8 above),
+  # and the runaway-reasoning problem that motivated disabling it is already
+  # gone here — the template no longer tells the model to think maximally. If
+  # coding tasks truncate, try enable_thinking: false before raising max_tokens.
+  #
+  # No native_tools: the prompt-text path emits well-formed Hermes <tool_call>
+  # JSON (probed on both quants), and the qwen3.8-27b baseline uses that same
+  # path. Switching Qwopus to structured tools would change what the model is
+  # asked to do and break the comparison this entry exists for.
+  #
+  # Two quants because neither is an exact match for the baseline's unsloth
+  # UD-Q4_K_XL, a mixed dynamic quant (191 tensors at Q5_K, plus IQ4_XS/Q8_0).
+  # Q5_K_M is the closer bit-width; Q4_K_M is the closer file size. Expect the
+  # gap between them to be judge noise — it is well under the 0.05 threshold in
+  # every past quant comparison — and read the Qwopus-vs-qwen3.8 gap instead.
+  - name: "qwopus3.8-27b-q4km"
+    backend: "llama.cpp"
+
+  - name: "qwopus3.8-27b-q5km"
+    backend: "llama.cpp"
+
 evaluation:
   temperature: 0.0
   max_tokens: 4096
