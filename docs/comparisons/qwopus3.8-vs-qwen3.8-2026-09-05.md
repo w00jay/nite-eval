@@ -283,17 +283,61 @@ requires both `<arch>.nextn_predict_layers` and `blk.N.nextn.*` tensors:
 | `lfm2.5-8b-a1b` | `lfm2moe` | no |
 | `muse-glimmer-30b` | `muse-glimmer` | no |
 
-Two things follow. **It is not an architecture property**: `qwen3.6-35b-a3b`
-shares `qwen35moe` with ornith and has no head, so it cannot be inferred from
-the arch string — check the metadata per file. And **ornith-1.5-35b-a3b has
-one**, which was not expected; it is the VRAM-binding model and among the
-slower ones, so it is exactly where the time is.
+**It is not an architecture property**: `qwen3.6-35b-a3b` shares `qwen35moe`
+with ornith and has no head, so it cannot be inferred from the arch string —
+check the metadata per file.
 
 This narrows the recommendation. "Run the fleet with MTP" would speed up three
 models and do nothing for the other four, so it is not a fleet-wide switch. It
 is a per-model one — `llama_swap_config.yaml` already gives each model its own
 command line — and only the three that gain need re-baselining. The other four
 keep their history untouched.
+
+### The gain is not uniform: MoE has much less to win
+
+An earlier draft of this section claimed ornith was the most valuable of the
+three because it is "the VRAM-binding model and among the slower ones". Both
+halves were wrong, and measuring fixed them.
+
+| ornith-1.5-35b-a3b | no spec | MTP | gain |
+|---|---:|---:|---:|
+| prose, no context | 153.7 | 167.8 | +9% |
+| code, no context | 155.7 | 195.7 | +26% |
+| code, 8k context | 145.2 | 178.8 | +23% |
+| code, 32k context | 121.1 | 145.7 | +20% |
+
+**+20-26%, against +73% on the dense models.** The reason is visible in the
+absolute numbers: ornith already decodes at 121-156 tok/s where qwen3.8 manages
+35-42, because it activates ~3B of 35B parameters per token. Speculative
+decoding pays off when decode is bandwidth-bound on a large dense model; a
+sparse MoE has far less to recover. Draft acceptance was comparable (0.67-0.86),
+so this is not a drafting-quality difference.
+
+And ornith is not slow. Sweep totals from `run-20260903-002243` put it third
+*fastest* of seven:
+
+| model | total (s) |
+|---|---:|
+| `qwen3.8-27b` | **2305** |
+| `muse-glimmer-30b` | 1893 |
+| `ornith-1.5-35b-a3b` | 521 |
+| `qwen3.6-35b-a3b` | 381 |
+| `gemma4-26b-a4b` | 289 |
+| `lfm2.5-8b-a1b` | 199 |
+| `lfm2.5-2.6b` | 193 |
+
+"VRAM-binding" was confused with "slow". They are different models' problems.
+
+**MTP also costs VRAM, and ornith is where that hurts.** Measured at ctx 65536:
+21386 MiB without the draft head, **22650 MiB with it — +1.2 GB**, cutting
+ornith's headroom from 3.1 GB to 1.9 GB. It fits, but it is the one model where
+that margin is already the constraint.
+
+So the value ordering inverts. **`qwen3.8-27b` is where MTP is worth having**:
+the slowest model in the fleet by a factor of four, and the one with the largest
+relative gain. Ornith is the marginal case — a 20% gain on a model that
+contributes 521s of a 6.8-hour sweep, bought with 1.2 GB of the headroom that
+binds the whole configuration.
 
 **Rough wall-clock implication.** For qwen3.8-27b in `run-20260905-063950`,
 Gen tok/s was 38.4 against a measured decode rate of ~41 tok/s, so decode
@@ -383,13 +427,18 @@ and the tasks are short enough that non-termination rarely triggers.
   criteria on files it wrote. That 0.62 had been read here as a success.
 - **Settle the quant question properly** with `compare_quants.sh` (perplexity +
   determinism) if it ever matters. On this evidence it does not.
-- **Enable MTP for the three models that can use it** — `qwen3.8-27b`,
-  `ornith-1.5-35b-a3b` and `qwopus3.8-27b-*`. +73-75% decode, holding at 36k
-  context and largest on code (+80%), which is what the harness spends its time
-  on. Per-model in `llama_swap_config.yaml`, so only those three need
-  re-baselining and the other four keep their history. Ornith is the most
-  valuable of the three: it is the VRAM-binding model and among the slowest.
-  Measure a real sweep rather than trusting the ~40% wall-clock estimate above.
+- **Enable MTP for `qwen3.8-27b` first.** +75% decode, holding at 36k context
+  and largest on code, on the slowest model in the fleet — 2305s of a sweep
+  against the next model's 1893s. Per-model in `llama_swap_config.yaml`, so it
+  needs one re-baseline and nothing else changes. Measure the real sweep rather
+  than trusting the ~40% wall-clock estimate above.
+- **Ornith is optional and arguably not worth it.** Only +20-26% (MoE decodes
+  fast already), on a model contributing 521s to a sweep, and it costs 1.2 GB of
+  the 3.1 GB headroom that makes it the binding model. Skip unless the sweep is
+  being re-baselined anyway.
+- **`muse-glimmer-30b` is the missing opportunity.** Second-slowest at 1893s and
+  it has no draft head, so none of this applies. If a variant with one exists,
+  it would be worth more than ornith.
 - ~~**Does `--spec-draft-n-max 1` preserve output?**~~ Tested: no. It diverges
   from no-spec on exactly the same prompts as n-max 2 while being 14% slower.
   All MTP depths produce identical output to each other, so the only boundary
