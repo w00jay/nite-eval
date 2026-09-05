@@ -378,6 +378,8 @@ def run_task(
             # report say "unavailable" rather than print a fabricated 0 tok/s.
             completion_tokens=conv.total_completion_tokens or None,
             prompt_tokens=conv.total_prompt_tokens or None,
+            predicted_ms=conv.total_predicted_ms or None,
+            predicted_n=conv.total_predicted_n or None,
         )
         return 0.0
 
@@ -469,6 +471,8 @@ def run_task(
         # report say "unavailable" rather than print a fabricated 0 tok/s.
         completion_tokens=conv.total_completion_tokens or None,
         prompt_tokens=conv.total_prompt_tokens or None,
+        predicted_ms=conv.total_predicted_ms or None,
+        predicted_n=conv.total_predicted_n or None,
     )
 
     turns_str = f"{len(conv.turns)}t/{conv.total_tool_calls}tc"

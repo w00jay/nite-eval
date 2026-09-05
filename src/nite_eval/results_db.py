@@ -154,6 +154,15 @@ class ResultsDB:
         # claim the model generated nothing.
         ("task_results", "completion_tokens", "INTEGER"),
         ("task_results", "prompt_tokens", "INTEGER"),
+        # Decoder-only totals from the server's `timings` block. completion_tokens
+        # over wall clock measures end-to-end task throughput, which is confounded
+        # by turn count: a model that loops spends its time on prompt processing
+        # and reads slow even when it decodes fast. Qwopus3.8 read 37.4 tok/s
+        # against qwen3.8-27b's 38.4 while using 2.7x the prompt tokens, and that
+        # comparison said nothing about either decoder. predicted_n / predicted_ms
+        # is decode speed proper. NULL means the server reported no timings block.
+        ("task_results", "predicted_ms", "REAL"),
+        ("task_results", "predicted_n", "INTEGER"),
     )
 
     def _add_missing_columns(self, cursor: sqlite3.Cursor) -> None:
@@ -246,6 +255,8 @@ class ResultsDB:
         unmatched_mock_calls: int = 0,
         completion_tokens: int | None = None,
         prompt_tokens: int | None = None,
+        predicted_ms: float | None = None,
+        predicted_n: int | None = None,
         unmatched_mock_samples: str | None = None,
     ) -> None:
         """Save a completed task result (the checkpoint)."""
@@ -256,7 +267,7 @@ class ResultsDB:
             "total_turns = ?, total_tool_calls = ?, total_latency_ms = ?, "
             "reached_max_turns = ?, weighted_score = ?, error = ?, "
             "repaired_tool_calls = ?, unscored_weight = ?, unmatched_mock_calls = ?, "
-            "completion_tokens = ?, prompt_tokens = ?, unmatched_mock_samples = ? "
+            "completion_tokens = ?, prompt_tokens = ?, predicted_ms = ?, predicted_n = ?, unmatched_mock_samples = ? "
             "WHERE run_id = ? AND model_name = ? AND task_id = ?",
             (
                 status,
@@ -273,6 +284,8 @@ class ResultsDB:
                 unmatched_mock_calls,
                 completion_tokens,
                 prompt_tokens,
+                predicted_ms,
+                predicted_n,
                 unmatched_mock_samples,
                 run_id,
                 model_name,

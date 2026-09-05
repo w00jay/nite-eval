@@ -76,6 +76,16 @@ class ModelReply:
     # print a fabricated 0 tok/s.
     completion_tokens: int = 0
     prompt_tokens: int = 0
+    # From the server's `timings` block, which is separate from `usage` and
+    # reports what the decoder actually did. `predicted_ms` excludes prompt
+    # processing, so predicted_n / predicted_ms is decode speed proper, not the
+    # end-to-end throughput that completion_tokens over wall clock gives. The
+    # two come apart on any model that loops: more turns means more prompt
+    # processing, dragging end-to-end throughput down while decode speed is
+    # unchanged. 0 means the server reported no timings, not that nothing
+    # decoded.
+    predicted_ms: float = 0.0
+    predicted_n: int = 0
 
     @property
     def truncated(self) -> bool:
@@ -93,6 +103,8 @@ class TurnResult:
     truncated: bool = False
     completion_tokens: int = 0
     prompt_tokens: int = 0
+    predicted_ms: float = 0.0
+    predicted_n: int = 0
 
 
 # Per-HTTP-request read timeout — decoupled from the task wall-clock budget.
@@ -107,12 +119,21 @@ HTTP_READ_TIMEOUT = 1200.0
 # more would let a broken model burn the whole turn budget on retries.
 MAX_PARSE_RETRIES = 1
 
+# Marker opening the stand-in stored when a task ends without the model ever
+# answering — every turn closed with a tool call instead. The report matches on
+# this prefix to surface those tasks, so it must not be reworded casually; the
+# text after it is free prose and safe to change.
+NO_ANSWER_PREFIX = "[No final answer produced:"
+
 # How much of an unparsable payload to keep in the task's error field.
 UNPARSED_RAW_CHARS = 2000
 
 # Models whose server reported no `usage` block. Warned about once each, since
 # the alternative is one line per generation for the whole run.
 _USAGE_MISSING: set[str] = set()
+
+# Same, for servers that report no `timings` block.
+_TIMINGS_MISSING: set[str] = set()
 
 
 class NudgeCost(NamedTuple):
@@ -127,6 +148,8 @@ class NudgeCost(NamedTuple):
     latency_ms: float
     completion_tokens: int
     prompt_tokens: int
+    predicted_ms: float
+    predicted_n: int
 
 
 # Tool calls larger than this are summarised in conversation history rather than
@@ -163,6 +186,11 @@ class ConversationResult:
     # generated nothing.
     total_completion_tokens: int
     total_prompt_tokens: int
+    # Decoder-only totals from the server's `timings` block, summed the same
+    # way. These divide into each other, NOT into total_latency_ms — carrying
+    # them separately is the whole point.
+    total_predicted_ms: float
+    total_predicted_n: int
     reached_max_turns: bool
     error: str | None = None
     # Tool calls that parsed only after JSON repair — a model-quality signal
@@ -226,6 +254,8 @@ def run_conversation(
     total_latency = 0.0
     total_completion = 0
     total_prompt = 0
+    total_predicted_ms = 0.0
+    total_predicted_n = 0
     cap_nudged = False  # Set when the max_tool_calls nudge fires so the max_turns nudge doesn't double-nudge.
     parse_retries = 0  # Corrective retries spent on unparsable tool calls.
     repaired_total = 0  # Tool calls salvaged by JSON repair.
@@ -255,6 +285,8 @@ def run_conversation(
                     total_latency_ms=total_latency,
                     total_completion_tokens=total_completion,
                     total_prompt_tokens=total_prompt,
+                    total_predicted_ms=total_predicted_ms,
+                    total_predicted_n=total_predicted_n,
                     reached_max_turns=False,
                     repaired_tool_calls=repaired_total,
                     error=(
@@ -282,6 +314,8 @@ def run_conversation(
             total_latency += latency
             total_completion += reply.completion_tokens
             total_prompt += reply.prompt_tokens
+            total_predicted_ms += reply.predicted_ms
+            total_predicted_n += reply.predicted_n
 
             if reply.native_tool_calls is not None:
                 parsed = ParsedResponse(tool_calls=reply.native_tool_calls, text=response_text)
@@ -297,6 +331,8 @@ def run_conversation(
                 truncated=reply.truncated,
                 completion_tokens=reply.completion_tokens,
                 prompt_tokens=reply.prompt_tokens,
+                predicted_ms=reply.predicted_ms,
+                predicted_n=reply.predicted_n,
             )
 
             # A generation cut off at max_tokens is not an answer. Previously
@@ -316,6 +352,8 @@ def run_conversation(
                         total_latency_ms=total_latency,
                         total_completion_tokens=total_completion,
                         total_prompt_tokens=total_prompt,
+                        total_predicted_ms=total_predicted_ms,
+                        total_predicted_n=total_predicted_n,
                         reached_max_turns=False,
                         repaired_tool_calls=repaired_total,
                         error=(
@@ -331,6 +369,8 @@ def run_conversation(
                     total_latency_ms=total_latency,
                     total_completion_tokens=total_completion,
                     total_prompt_tokens=total_prompt,
+                    total_predicted_ms=total_predicted_ms,
+                    total_predicted_n=total_predicted_n,
                     reached_max_turns=False,
                     repaired_tool_calls=repaired_total,
                     error=(
@@ -386,6 +426,8 @@ def run_conversation(
                     total_latency_ms=total_latency,
                     total_completion_tokens=total_completion,
                     total_prompt_tokens=total_prompt,
+                    total_predicted_ms=total_predicted_ms,
+                    total_predicted_n=total_predicted_n,
                     reached_max_turns=False,
                     repaired_tool_calls=repaired_total,
                     error=(
@@ -421,6 +463,8 @@ def run_conversation(
                     total_latency += nudge_latency
                     total_completion += nudge_reply.completion_tokens
                     total_prompt += nudge_reply.prompt_tokens
+                    total_predicted_ms += nudge_reply.predicted_ms
+                    total_predicted_n += nudge_reply.predicted_n
                     nudge_parsed = extract_tool_calls(nudged_text, tools)
                     nudge_turn = TurnResult(
                         turn=turn_num + 1,
@@ -431,6 +475,8 @@ def run_conversation(
                         truncated=nudge_reply.truncated,
                         completion_tokens=nudge_reply.completion_tokens,
                         prompt_tokens=nudge_reply.prompt_tokens,
+                        predicted_ms=nudge_reply.predicted_ms,
+                        predicted_n=nudge_reply.predicted_n,
                     )
                     turns.append(nudge_turn)
                     final = nudged_text.strip() or (
@@ -446,6 +492,8 @@ def run_conversation(
                         total_latency_ms=total_latency,
                         total_completion_tokens=total_completion,
                         total_prompt_tokens=total_prompt,
+                        total_predicted_ms=total_predicted_ms,
+                        total_predicted_n=total_predicted_n,
                         reached_max_turns=False,
                     )
 
@@ -462,6 +510,8 @@ def run_conversation(
                     total_latency_ms=total_latency,
                     total_completion_tokens=total_completion,
                     total_prompt_tokens=total_prompt,
+                    total_predicted_ms=total_predicted_ms,
+                    total_predicted_n=total_predicted_n,
                     reached_max_turns=False,
                     repaired_tool_calls=repaired_total,
                 )
@@ -527,6 +577,8 @@ def run_conversation(
                 total_latency += nudge_cost.latency_ms
                 total_completion += nudge_cost.completion_tokens
                 total_prompt += nudge_cost.prompt_tokens
+                total_predicted_ms += nudge_cost.predicted_ms
+                total_predicted_n += nudge_cost.predicted_n
                 cap_nudged = True
                 break
 
@@ -557,6 +609,8 @@ def run_conversation(
             total_latency += nudge_cost.latency_ms
             total_completion += nudge_cost.completion_tokens
             total_prompt += nudge_cost.prompt_tokens
+            total_predicted_ms += nudge_cost.predicted_ms
+            total_predicted_n += nudge_cost.predicted_n
 
         # The synthesis nudge produces the final answer on this path, so a
         # truncated nudge is a truncated answer. The main loop checked for this
@@ -570,6 +624,8 @@ def run_conversation(
                 total_latency_ms=total_latency,
                 total_completion_tokens=total_completion,
                 total_prompt_tokens=total_prompt,
+                total_predicted_ms=total_predicted_ms,
+                total_predicted_n=total_predicted_n,
                 reached_max_turns=True,
                 repaired_tool_calls=repaired_total,
                 error=(
@@ -586,6 +642,8 @@ def run_conversation(
             total_latency_ms=total_latency,
             total_completion_tokens=total_completion,
             total_prompt_tokens=total_prompt,
+            total_predicted_ms=total_predicted_ms,
+            total_predicted_n=total_predicted_n,
             reached_max_turns=True,
             repaired_tool_calls=repaired_total,
         )
@@ -599,6 +657,8 @@ def run_conversation(
             total_latency_ms=total_latency,
             total_completion_tokens=total_completion,
             total_prompt_tokens=total_prompt,
+            total_predicted_ms=total_predicted_ms,
+            total_predicted_n=total_predicted_n,
             reached_max_turns=False,
             error=str(e),
         )
@@ -720,9 +780,17 @@ def _try_nudge(
             truncated=nudge_reply.truncated,
             completion_tokens=nudge_reply.completion_tokens,
             prompt_tokens=nudge_reply.prompt_tokens,
+            predicted_ms=nudge_reply.predicted_ms,
+            predicted_n=nudge_reply.predicted_n,
         )
     )
-    return NudgeCost(nudge_latency, nudge_reply.completion_tokens, nudge_reply.prompt_tokens)
+    return NudgeCost(
+        nudge_latency,
+        nudge_reply.completion_tokens,
+        nudge_reply.prompt_tokens,
+        nudge_reply.predicted_ms,
+        nudge_reply.predicted_n,
+    )
 
 
 def _extract_best_final_response(turns: list[TurnResult]) -> str:
@@ -752,7 +820,7 @@ def _extract_best_final_response(turns: list[TurnResult]) -> str:
 
     tc_count = sum(len(t.tool_responses) for t in turns)
     return (
-        f"[No final answer produced: every one of {len(turns)} turns ended in a tool call "
+        f"{NO_ANSWER_PREFIX} every one of {len(turns)} turns ended in a tool call "
         f"({tc_count} calls total), so the model never stopped to answer]"
     )
 
@@ -860,6 +928,17 @@ def _call_model(
         _USAGE_MISSING.add(model_name)
         logger.warning("No usage block from %s; tok/s will be unavailable for this model", model_name)
 
+    # `timings` sits alongside `usage` and is returned by default on this
+    # build's /v1/chat/completions (verified on llama-server build 10553).
+    # predicted_ms is decode time only; prompt_ms is reported separately and is
+    # deliberately not summed in.
+    timings = data.get("timings") or {}
+    predicted_ms = float(timings.get("predicted_ms") or 0.0)
+    predicted_n = int(timings.get("predicted_n") or 0)
+    if not timings and model_name not in _TIMINGS_MISSING:
+        _TIMINGS_MISSING.add(model_name)
+        logger.warning("No timings block from %s; decode tok/s will be unavailable for this model", model_name)
+
     if native_tools:
         native = _parse_native_tool_calls(msg, model_name)
         if native is not None:
@@ -872,6 +951,8 @@ def _call_model(
                 native_tool_calls=native,
                 completion_tokens=completion_tokens,
                 prompt_tokens=prompt_tokens,
+                predicted_ms=predicted_ms,
+                predicted_n=predicted_n,
             )
 
     if not content.strip():
@@ -889,6 +970,8 @@ def _call_model(
                 finish_reason=finish,
                 completion_tokens=completion_tokens,
                 prompt_tokens=prompt_tokens,
+                predicted_ms=predicted_ms,
+                predicted_n=predicted_n,
             )
     if finish == "length":
         logger.warning(
@@ -901,4 +984,6 @@ def _call_model(
         finish_reason=finish,
         completion_tokens=completion_tokens,
         prompt_tokens=prompt_tokens,
+        predicted_ms=predicted_ms,
+        predicted_n=predicted_n,
     )
