@@ -135,7 +135,7 @@ def test_report_computes_tokens_per_second():
     with _db([("fast-moe", 2000, 8000, 10_000.0)]) as db:
         report = generate_report(db, "run-001")
     assert "Latency and throughput" in report
-    assert "| fast-moe | 10000 | 10 | 200.0 | 2000 | 8000 |" in report
+    assert "| fast-moe | 10000 | 10 | — | 200.0 | 2000 | 8000 |" in report
 
 
 def test_unmeasured_run_shows_a_dash_not_a_zero():
@@ -175,4 +175,113 @@ def test_unmeasured_tasks_do_not_dilute_a_measured_model():
     with db:
         report = generate_report(db, "run-001")
     # 2000 / 10s, not 2000 / 20s.
-    assert "| m | 10000 | 20 | 200.0 | 2000 | — |" in report
+    # Decode column is "—": these rows carry usage but no timings, and an
+    # unmeasured decode must not borrow the end-to-end number.
+    assert "| m | 10000 | 20 | — | 200.0 | 2000 | — |" in report
+
+
+# --- decode timings: the column that can actually compare models ---
+
+
+def test_timings_block_is_read_from_the_completion():
+    reply = _call(
+        {
+            "choices": [{"message": {"content": "hello"}, "finish_reason": "stop"}],
+            "usage": {"completion_tokens": 56, "prompt_tokens": 14},
+            "timings": {
+                "prompt_n": 14,
+                "prompt_ms": 37.1,
+                "predicted_n": 56,
+                "predicted_ms": 207.803,
+                "predicted_per_second": 264.67,
+            },
+        }
+    )
+    assert reply.predicted_n == 56
+    assert reply.predicted_ms == 207.803
+
+
+def test_prompt_ms_is_not_folded_into_decode_time():
+    """The whole point of the column is that prompt processing is excluded."""
+    reply = _call(
+        {
+            "choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}],
+            "usage": {"completion_tokens": 10, "prompt_tokens": 9000},
+            "timings": {"prompt_ms": 90_000.0, "prompt_n": 9000, "predicted_ms": 100.0, "predicted_n": 10},
+        }
+    )
+    assert reply.predicted_ms == 100.0
+
+
+def test_missing_timings_block_is_zero_not_an_error():
+    reply = _call(
+        {
+            "choices": [{"message": {"content": "hello"}, "finish_reason": "stop"}],
+            "usage": {"completion_tokens": 5, "prompt_tokens": 5},
+        }
+    )
+    assert reply.predicted_n == 0
+    assert reply.predicted_ms == 0.0
+
+
+def test_report_decode_tok_s_is_independent_of_turn_count():
+    """The regression this column exists to prevent.
+
+    Two models decode at exactly 200 tok/s. One takes a single turn; the other
+    loops and burns most of its wall clock on prompt processing. Gen tok/s
+    ranks the looper far slower; Decode tok/s must rank them identically.
+    """
+    db = ResultsDB(tempfile.mktemp(suffix=".db"))
+    db.create_run("run-001", ["direct", "looper"])
+    tasks = [("research_a_easy_01", "research", "easy")]
+    db.register_tasks("run-001", ["direct", "looper"], tasks)
+    for model, latency_ms in (("direct", 10_000.0), ("looper", 100_000.0)):
+        db.mark_task_running("run-001", model, "research_a_easy_01")
+        db.save_task_result(
+            run_id="run-001",
+            model_name=model,
+            task_id="research_a_easy_01",
+            final_response="done",
+            total_turns=1,
+            total_tool_calls=0,
+            total_latency_ms=latency_ms,
+            reached_max_turns=False,
+            weighted_score=0.5,
+            completion_tokens=2000,
+            prompt_tokens=1000,
+            # Same decoder: 2000 tokens in 10s. The looper's extra 90s went to
+            # prompt processing across its turns, which predicted_ms excludes.
+            predicted_ms=10_000.0,
+            predicted_n=2000,
+        )
+    with db:
+        report = generate_report(db, "run-001")
+    # Gen tok/s separates them 200.0 vs 20.0 — that is the confounding.
+    assert "| direct | 10000 | 10 | 200.0 | 200.0 |" in report
+    assert "| looper | 100000 | 100 | 200.0 | 20.0 |" in report
+    assert "Decode tok/s is the column to compare models on" in report
+
+
+def test_decode_unavailable_when_no_row_carries_timings():
+    """A run predating the column must say so, not print a fabricated rate."""
+    db = ResultsDB(tempfile.mktemp(suffix=".db"))
+    db.create_run("run-001", ["m"])
+    db.register_tasks("run-001", ["m"], [("research_a_easy_01", "research", "easy")])
+    db.mark_task_running("run-001", "m", "research_a_easy_01")
+    db.save_task_result(
+        run_id="run-001",
+        model_name="m",
+        task_id="research_a_easy_01",
+        final_response="done",
+        total_turns=1,
+        total_tool_calls=0,
+        total_latency_ms=10_000.0,
+        reached_max_turns=False,
+        weighted_score=0.5,
+        completion_tokens=2000,
+        prompt_tokens=1000,
+    )
+    with db:
+        report = generate_report(db, "run-001")
+    assert "Decode tok/s unavailable" in report
+    assert "Decode tok/s is the column to compare models on" not in report

@@ -166,9 +166,10 @@ def generate_report(
     # this table exists to separate.
     lines.append("## Latency and throughput")
     lines.append("")
-    lines.append("| Model | Avg (ms) | Total (s) | Gen tok/s | Avg gen tok | Avg prompt tok |")
-    lines.append("|-------|----------|-----------|-----------|-------------|----------------|")
+    lines.append("| Model | Avg (ms) | Total (s) | Decode tok/s | Gen tok/s | Avg gen tok | Avg prompt tok |")
+    lines.append("|-------|----------|-----------|--------------|-----------|-------------|----------------|")
     measured_any = False
+    decode_any = False
     for model in models:
         scores = db.get_model_scores(run_id, model)
         latencies = [s["latency_ms"] for s in scores if s["latency_ms"]]
@@ -189,6 +190,22 @@ def generate_report(
             (run_id, model),
         )
         gen_tok, prompt_tok, tok_latency_ms, measured = cur.fetchone()
+
+        # Decode speed is a separate query on purpose: predicted_* divides into
+        # itself, never into total_latency_ms, and a run may carry usage without
+        # timings (or the reverse) depending on when it ran.
+        dcur = db._conn.execute(
+            "SELECT COALESCE(SUM(predicted_n), 0), COALESCE(SUM(predicted_ms), 0) "
+            "FROM task_results "
+            "WHERE run_id = ? AND model_name = ? AND predicted_n IS NOT NULL",
+            (run_id, model),
+        )
+        dec_n, dec_ms = dcur.fetchone()
+        if dec_n and dec_ms > 0:
+            decode_any = True
+            decode_s = f"{dec_n / (dec_ms / 1000):.1f}"
+        else:
+            decode_s = "—"
         if measured and gen_tok and tok_latency_ms > 0:
             measured_any = True
             tok_s = f"{gen_tok / (tok_latency_ms / 1000):.1f}"
@@ -196,7 +213,7 @@ def generate_report(
             avg_prompt = f"{prompt_tok / measured:.0f}" if prompt_tok else "—"
         else:
             tok_s = avg_gen = avg_prompt = "—"
-        lines.append(f"| {model} | {avg_ms:.0f} | {total_s:.0f} | {tok_s} | {avg_gen} | {avg_prompt} |")
+        lines.append(f"| {model} | {avg_ms:.0f} | {total_s:.0f} | {decode_s} | {tok_s} | {avg_gen} | {avg_prompt} |")
     lines.append("")
     if measured_any:
         lines.append(
@@ -204,6 +221,22 @@ def generate_report(
             "prompt processing and tool-result round trips — it is end-to-end throughput "
             "for the task, not decode speed. Avg prompt tok is per task across all its "
             "turns, so it grows with conversation length and is what history compaction acts on."
+        )
+    if decode_any:
+        lines.append("")
+        lines.append(
+            "**Decode tok/s is the column to compare models on.** It comes from the "
+            "server's `timings` block (`predicted_n` / `predicted_ms`) and excludes "
+            "prompt processing entirely, so it is unaffected by how many turns a task "
+            "took. Gen tok/s is confounded by exactly that: a model that loops spends "
+            "its wall clock on prompt processing and reads slow even when its decoder "
+            "is fast. Where the two disagree, the gap is turn count, not speed."
+        )
+    elif measured_any:
+        lines.append("")
+        lines.append(
+            "Decode tok/s unavailable — this run predates the `predicted_ms` column, "
+            "or the server reported no `timings` block."
         )
     else:
         lines.append(
