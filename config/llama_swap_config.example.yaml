@@ -132,6 +132,57 @@ models:
       -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
     group: "target-gpu"
 
+  # Qwopus3.8-27B-Flash (Jackrong/Qwopus3.8-27B-Flash-GGUF) — a fine-tune of
+  # Qwen3.8-27B, so it shares arch `qwen35` and the 27B geometry with the
+  # qwen3.8-27b entry above. It is here to be compared against it directly.
+  #
+  # Every quant in that repo ships a NextN/MTP head: block_count is 65 but
+  # `qwen35.nextn_predict_layers: 1`, so block 64 is a draft head rather than
+  # a transformer layer. Without `--spec-type draft-mtp` llama.cpp logs
+  # `unused tensor blk.64.nextn.* -- ignoring` and skips it entirely, so the
+  # head costs no VRAM and the model runs as a plain 64-block decoder.
+  #
+  # The head is NOT a Qwopus addition — Qwen3.8-27B carries an identical one
+  # (same nextn_predict_layers, same blk.64.nextn.* tensors, same 0.42B), and
+  # llama.cpp skips it there too. Both models are 866 tensors and 27.32B
+  # total, 26.90B loaded. MTP is therefore not a difference between them; it
+  # is an option both could use.
+  #
+  # MTP is deliberately OFF for now. The first run exists to compare scores
+  # against qwen3.8-27b, and self-speculative decoding is another variable;
+  # enable it later to test the author's throughput claim once the quality
+  # numbers are settled.
+  #
+  # Measured on the 3090 at ctx 65536 with the flags below (driver, not config):
+  #   Q4_K_M  18574 MiB  (5.9 GB headroom)
+  #   Q5_K_M  20982 MiB  (3.5 GB headroom)
+  # Q5_K_M sits just under ornith-1.5-35b-a3b (21412 MiB), the binding model,
+  # so it fits. Both quants: 5/5 clean native tool calls, and the prompt-text
+  # path emits well-formed Hermes <tool_call> JSON, so neither needs
+  # native_tools.
+  #
+  # Both quants are carried because the qwen3.8-27b baseline is unsloth's
+  # UD-Q4_K_XL, a mixed dynamic quant (191 tensors at Q5_K) that is richer
+  # than a plain Q4_K_M. Q5_K_M is the closer bit-width match; Q4_K_M is the
+  # closer file size. Neither is exact, hence both.
+  "qwopus3.8-27b-q4km":
+    cmd: >
+      env CUDA_VISIBLE_DEVICES=GPU-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+      /ABS/PATH/TO/llama.cpp/build/bin/llama-server
+      -m /ABS/PATH/TO/gguf/Qwopus3.8-27B-Flash-Q4_K_M.gguf
+      --port ${PORT} -ngl 999 --ctx-size 65536
+      -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
+    group: "target-gpu"
+
+  "qwopus3.8-27b-q5km":
+    cmd: >
+      env CUDA_VISIBLE_DEVICES=GPU-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+      /ABS/PATH/TO/llama.cpp/build/bin/llama-server
+      -m /ABS/PATH/TO/gguf/Qwopus3.8-27B-Flash-Q5_K_M.gguf
+      --port ${PORT} -ngl 999 --ctx-size 65536
+      -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
+    group: "target-gpu"
+
 groups:
   "target-gpu":
     exclusive: true
