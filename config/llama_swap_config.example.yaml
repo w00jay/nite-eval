@@ -142,6 +142,12 @@ models:
   # `unused tensor blk.64.nextn.* -- ignoring` and skips it entirely, so the
   # head costs no VRAM and the model runs as a plain 64-block decoder.
   #
+  # The head is NOT a Qwopus addition — Qwen3.8-27B carries an identical one
+  # (same nextn_predict_layers, same blk.64.nextn.* tensors, same 0.42B), and
+  # llama.cpp skips it there too. Both models are 866 tensors and 27.32B
+  # total, 26.90B loaded. MTP is therefore not a difference between them; it
+  # is an option both could use.
+  #
   # MTP is deliberately OFF for now. The first run exists to compare scores
   # against qwen3.8-27b, and self-speculative decoding is another variable;
   # enable it later to test the author's throughput claim once the quality

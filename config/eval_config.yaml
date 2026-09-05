@@ -247,9 +247,43 @@ models:
   # every past quant comparison — and read the Qwopus-vs-qwen3.8 gap instead.
   - name: "qwopus3.8-27b-q4km"
     backend: "llama.cpp"
+    # enable_thinking: false — added after run-20260905-052814, where thinking
+    # ON produced exactly the runaway reasoning this fine-tune claims to avoid:
+    # coding_artemis_medium_01 emitted 63528 chars of reasoning_content, then an
+    # EMPTY answer with 0 tool calls (finish=stop, not length) and scored 0.07
+    # against the base model's 0.92; coding_mcp_hard_01 truncated on turn 4 at
+    # 109526 chars after 1062s and failed outright, against the base's 1.00.
+    # coding_mcp_easy_01 was fine at 0.93, so this is a budget problem on the
+    # harder tasks, not incapability.
+    #
+    # Unlike qwen3.8-27b there is no middle setting to reach for: the template
+    # dropped reasoning_effort entirely, so thinking is on or off and nothing
+    # else. Leaving it on compares a base model that HAS reasoning control
+    # against a fine-tune that has none, which measures the config rather than
+    # the model. Off is also the configuration the author used for their own
+    # agentic battery.
+    chat_template_kwargs:
+      enable_thinking: false
 
   - name: "qwopus3.8-27b-q5km"
     backend: "llama.cpp"
+    # enable_thinking: false — added after run-20260905-052814, where thinking
+    # ON produced exactly the runaway reasoning this fine-tune claims to avoid:
+    # coding_artemis_medium_01 emitted 63528 chars of reasoning_content, then an
+    # EMPTY answer with 0 tool calls (finish=stop, not length) and scored 0.07
+    # against the base model's 0.92; coding_mcp_hard_01 truncated on turn 4 at
+    # 109526 chars after 1062s and failed outright, against the base's 1.00.
+    # coding_mcp_easy_01 was fine at 0.93, so this is a budget problem on the
+    # harder tasks, not incapability.
+    #
+    # Unlike qwen3.8-27b there is no middle setting to reach for: the template
+    # dropped reasoning_effort entirely, so thinking is on or off and nothing
+    # else. Leaving it on compares a base model that HAS reasoning control
+    # against a fine-tune that has none, which measures the config rather than
+    # the model. Off is also the configuration the author used for their own
+    # agentic battery.
+    chat_template_kwargs:
+      enable_thinking: false
 
 evaluation:
   temperature: 0.0

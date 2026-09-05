@@ -407,6 +407,8 @@ that retired them.
 | `qwen3.6-35b-a3b` | `qwen35moe` MoE | 34.66B | 40 | 256 (8) | UD-Q4_K_S | 19.5 GiB | not measured |
 | `qwen3.8-27b` | `qwen35` hybrid | 27.32B | 65 | — | UD-Q4_K_XL | 16.4 GiB | 19211 MiB |
 | `ornith-1.5-35b-a3b` | `qwen35moe` MoE | 35.51B | 41 | 256 (8) | Q4_K_M | 20.2 GiB | 21412 MiB |
+| `qwopus3.8-27b-q4km` | `qwen35` hybrid | 27.32B | 65 | — | Q4_K_M | 15.7 GiB | 18574 MiB |
+| `qwopus3.8-27b-q5km` | `qwen35` hybrid | 27.32B | 65 | — | Q5_K_M | 18.2 GiB | 20982 MiB |
 
 Attention geometry, which is what determines how fast KV cache grows with context:
 
@@ -416,6 +418,16 @@ Attention geometry, which is what determines how fast KV cache grows with contex
 | `qwen3.6-35b-a3b` | 16 | 2 | 256 | 2048 | 248320 | 262144 | 733 |
 | `qwen3.8-27b` | 24 | 4 | 256 | 5120 | 248320 | 262144 | 866 |
 | `ornith-1.5-35b-a3b` | 16 | 2 | 256 | 2048 | 248320 | 262144 | 753 |
+| `qwopus3.8-27b-q4km` | 24 | 4 | 256 | 5120 | 248320 | 262144 | 866 |
+| `qwopus3.8-27b-q5km` | 24 | 4 | 256 | 5120 | 248320 | 262144 | 866 |
+
+`qwopus3.8-27b-*` is a fine-tune of `qwen3.8-27b` and is architecturally
+identical to it — same 866 tensors, same 27.32B, same geometry. Both declare
+`block_count` 65 with `nextn_predict_layers` 1, so block 64 is a NextN/MTP
+draft head (0.42B) that llama.cpp reports as `unused tensor blk.64.nextn.* --
+ignoring` and skips unless `--spec-type draft-mtp` is passed. 26.90B is what
+actually loads. The MTP head comes from Qwen3.8 itself, not from the
+fine-tune. See the [Qwopus vs Qwen3.8 comparison](docs/comparisons/qwopus3.8-vs-qwen3.8-2026-09-05.md).
 
 Every Qwen-derived model here shares the same 248320 vocabulary, including
 ornith; only gemma4 differs at 262144. So a parameter-count difference between
@@ -581,6 +593,15 @@ the timings.
 The tok/s figure is generated tokens over wall-clock request time, so it
 includes prompt processing and tool-result round trips. It is end-to-end
 throughput for the task, not decode speed.
+
+**This makes tok/s unusable for comparing decode speed between models**, and
+the confounder is turn count. A model that loops — many turns, growing prompt —
+spends most of its wall clock on prompt processing and scores badly here even
+if it decodes faster per token. `qwopus3.8-27b-q4km` measured 37.4 tok/s
+against `qwen3.8-27b`'s 38.4 while using 2.7x the prompt tokens, which says
+nothing about which one decodes faster. llama.cpp reports per-request decode
+timings; `conversation_runner` does not capture them. Until it does, treat this
+column as task throughput only.
 
 Both columns are nullable. A run recorded before they existed, or against a
 server that reports no `usage`, shows `—` rather than 0 — a zero would read as a
