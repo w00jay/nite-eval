@@ -55,8 +55,14 @@ design) and `run-20260905-063950` (thinking OFF, all three models, complete).
   measurable elsewhere, but non-termination still occurred three times.
 - **Do not read the Q4-vs-Q5 gap as a quant finding.** The entire difference is
   one task where q5km hit non-termination and q4km did not.
-- **The vendor's speed claim is untested here**, and our metric cannot test it.
-  See "Speed" below.
+- **The vendor's speed claim does not reproduce.** Measured with decode-only
+  timings, Qwopus is **+3.4%** over the base without speculative decoding and
+  **+1.8%** with it — not +12.8%. Their draft-acceptance gap does not reproduce
+  either.
+- **MTP is worth far more than the fine-tune: +73-75% decode speed on both
+  models**, from a draft head that ships in the base Qwen3.8 and is skipped
+  today. But it is **not output-preserving**, so enabling it invalidates
+  comparison against every existing run.
 
 ---
 
@@ -197,7 +203,12 @@ nondeterminism, not quant quality. Settling the quant question needs
 
 ---
 
-## Speed: claimed +12.8%, measured -2.6%, and neither number is trustworthy
+## Speed: measured properly, the +12.8% claim does not reproduce
+
+The original run measured throughput with a metric that could not compare
+models. `Gen tok/s` divides generated tokens by wall clock *including prompt
+processing and tool round trips*, so it is confounded by turn count — and
+Qwopus used 2.7x the prompt tokens because it loops:
 
 | Model | Gen tok/s | Avg ms/task | Avg prompt tok |
 |---|---|---|---|
@@ -205,31 +216,84 @@ nondeterminism, not quant quality. Settling the quant question needs
 | qwopus3.8-27b-q5km | 34.2 | 219093 | 30925 |
 | qwen3.8-27b | 38.4 | 149551 | 19591 |
 
-Qwopus is marginally slower in tok/s and ~8% faster in wall-clock per task —
-both inside what n=15 can resolve.
+That table says nothing about either decoder. `predicted_n` / `predicted_ms`
+from the server's `timings` block is now captured (see the run TODO below), and
+a direct probe settles the question — 5 fixed prompts, temp 0, max_tokens 512,
+same GPU, Q4_K_M against the baseline's UD-Q4_K_XL:
 
-**Two reasons this does not refute the vendor's claim:**
+| | no spec decoding | `--spec-type draft-mtp --spec-draft-n-max 2` | MTP gain |
+|---|---|---|---|
+| `qwen3.8-27b` (base) | 41.2 tok/s | 72.3 tok/s | **+75%** |
+| `qwopus3.8-27b-q4km` | 42.6 tok/s | 73.6 tok/s | **+73%** |
+| **Qwopus over base** | **+3.4%** | **+1.8%** | — |
 
-1. **MTP was disabled — for both models equally.** Every Qwopus quant ships a
-   NextN/MTP head (`block_count` 65, `nextn_predict_layers` 1, so block 64 is a
-   draft head, 0.42B). **So does the base `Qwen3.8-27B`** — identical
-   `nextn_predict_layers`, identical `blk.64.nextn.*` tensors, identical
-   0.42B. The head is inherited from Qwen3.8, not added by the fine-tune, and
-   the author's claim is that theirs is better *trained* (80.7% draft
-   acceptance vs the base's 66.1%), not that theirs is new.
+**The author's +12.8% decode-throughput claim does not reproduce.** Qwopus is
+2-3% faster, which on 5 prompts is not distinguishable from nothing. Their
+draft-acceptance claim does not reproduce either: they report the base at 66.1%
+against Qwopus's 80.7%, but the base measured 0.73-0.93 here.
 
-   Without `--spec-type draft-mtp` llama.cpp logs `unused tensor
-   blk.64.nextn.* -- ignoring` and skips it on both. We left it off
-   deliberately to keep the quality comparison to one variable — which means
-   the +12.8% is simply untested, not refuted.
-2. **Our metric measures the wrong thing.** `Gen tok/s` is generated tokens
-   over wall-clock *including prompt processing and tool round trips*, so it is
-   confounded by turn count — and Qwopus used 2.7x the prompt tokens because it
-   loops. A model that decodes faster but loops more scores *worse* on this
-   metric while genuinely being faster. `timings.predicted_per_second` is not
-   captured anywhere in `conversation_runner.py`.
+Both are measured in a different regime from theirs (they used `-np 10` at
+327680 context on MMLU-Pro, Q5_K_M for both), so this is a disagreement between
+setups rather than proof of an error. What it does establish is that **on this
+harness, at this context, there is no meaningful decode-speed advantage.**
 
----
+**MTP itself is worth far more than the fine-tune.** +73-75% decode speed on
+both models, from a draft head that ships in the base Qwen3.8 and is being
+skipped today. That is the finding with practical value here.
+
+### MTP is not output-preserving, so MTP runs are not score-comparable
+
+The earlier assumption in this document — that speculative decoding is exact at
+temperature 0, so scores stay comparable — is **wrong in practice**:
+
+| model | prompts identical with MTP on |
+|---|---|
+| `qwopus3.8-27b-q4km` | **3 / 5** |
+| `qwen3.8-27b` | **4 / 5** |
+
+Greedy speculative decoding is exact in theory. It is not exact here because
+verifying several draft tokens in one forward pass changes batch composition,
+and therefore the floating-point results, by enough to flip a near-tie between
+candidate tokens. One divergence rewrote a whole answer (438 vs 485 chars).
+
+Both models diverge, so this is a property of llama.cpp's speculative decoding
+rather than of either model.
+
+**But the divergence is deterministic, and there are exactly two output
+regimes.** Measured on qwopus q4km, same 5 prompts, temp 0:
+
+| comparison | identical |
+|---|---|
+| MTP n-max 2 vs MTP n-max 2 (rerun) | **5 / 5** |
+| MTP n-max 1 vs MTP n-max 2 | **5 / 5** |
+| no-spec vs MTP n-max 1 | 3 / 5 |
+| no-spec vs MTP n-max 2 | 3 / 5 |
+
+Two theories were tested here. The first — that the divergence is deterministic
+batch composition rather than randomness — **holds**: the same configuration run
+twice is byte-identical, and every MTP run produced exactly 784 predicted tokens
+against no-spec's 765.
+
+The second — that speculating fewer tokens would reduce or remove the
+divergence — **fails**. `--spec-draft-n-max 1` diverges from no-spec on exactly
+the same 2 of 5 prompts as n-max 2, and is 14% slower (63.5 vs 73.9 tok/s).
+Verifying even one drafted token alongside the real one is enough to change the
+batch shape; after that, depth costs nothing further in fidelity.
+
+So the rule is simple, and better than expected:
+
+- **Output depends on one bit — speculative decoding on or off** — not on
+  depth. Any `--spec-draft-n-max` gives the same tokens.
+- **MTP output is reproducible**, so an MTP baseline is as stable as the
+  current one.
+- **There is no setting that is both faster and comparable to existing runs.**
+  The choice is binary.
+- If MTP is adopted, **use a depth of at least 2**: n-max 1 is strictly worse,
+  slower for identical output.
+
+**Consequence: enabling MTP for an eval run would invalidate comparison against
+every existing run** — but it would need re-baselining exactly once, after
+which depth can be tuned freely for speed.
 
 ## Recommendation
 
@@ -242,14 +306,26 @@ and the tasks are short enough that non-termination rarely triggers.
 
 ## TODO / open questions
 
-- **Capture decode speed.** Add `timings.predicted_per_second` from the server
-  response so throughput claims can be tested without turn-count confounding.
-  Verify first that this build's `/v1/chat/completions` returns a `timings`
-  block; unverified as of this writing.
-- **Re-run with `--spec-type draft-mtp`** to test the +12.8% claim honestly.
-  Output should be identical at temperature 0, so scores stay comparable — but
-  that property is assumed, not verified.
+- ~~**Capture decode speed.**~~ Done. `predicted_ms` / `predicted_n` from the
+  server's `timings` block are recorded per task and reported as "Decode
+  tok/s". Verified returned by default on llama-server build 10553; no request
+  flag needed.
+- ~~**Re-run with `--spec-type draft-mtp` to test the +12.8% claim.**~~ Done as
+  a direct probe rather than a full eval, because MTP turned out not to be
+  output-preserving — a scored MTP run would not have been comparable to
+  anything. See "Speed" above.
+- ~~**A no-answer diagnostic in the report.**~~ Done. Tasks where every turn
+  ended in a tool call now get their own section. It immediately corrected a
+  reading of this very run: q5km scored **0.62** on `coding_artemis_medium_01`
+  *while never producing an answer*, earning partial credit from automated
+  criteria on files it wrote. That 0.62 had been read here as a success.
 - **Settle the quant question properly** with `compare_quants.sh` (perplexity +
   determinism) if it ever matters. On this evidence it does not.
-- **Consider a `max_turns` / no-answer diagnostic in the report.** Three tasks
-  scored ~0 for never answering, and that is invisible in a dimension mean.
+- **Consider running the whole fleet with MTP.** +73-75% decode speed on both
+  models tested, from a head that ships in the base model and is skipped today.
+  It would require re-baselining every model, since MTP changes output — but
+  the run-time saving across a 7-model sweep is large.
+- ~~**Does `--spec-draft-n-max 1` preserve output?**~~ Tested: no. It diverges
+  from no-spec on exactly the same prompts as n-max 2 while being 14% slower.
+  All MTP depths produce identical output to each other, so the only boundary
+  is spec on/off — one re-baseline buys any depth.

@@ -14,6 +14,7 @@ import logging
 from datetime import UTC, datetime
 from pathlib import Path  # noqa: TC003
 
+from nite_eval.conversation_runner import NO_ANSWER_PREFIX
 from nite_eval.results_db import ResultsDB  # noqa: TC001
 from nite_eval.scoring import compute_composite
 
@@ -327,6 +328,39 @@ def generate_report(
             lines.append("`unmatched_mock_samples` column, so the cause cannot be read off the")
             lines.append("report and must be dug out of the run log.")
             lines.append("")
+
+    # Tasks where the model never answered at all. These score near zero for a
+    # termination failure rather than a wrong answer, and a dimension mean
+    # cannot tell those apart: Qwopus3.8-27B-Flash lost most of a research
+    # dimension to one such task (0.00 on research_finance_hard_01, dragging
+    # 0.77 to 0.56) while looking merely mediocre in the summary table.
+    no_answer = db._conn.execute(
+        "SELECT model_name, task_id, dimension, total_turns, total_tool_calls, weighted_score "
+        "FROM task_results "
+        "WHERE run_id = ? AND final_response LIKE ? "
+        "ORDER BY model_name, task_id",
+        (run_id, NO_ANSWER_PREFIX + "%"),
+    ).fetchall()
+    if no_answer:
+        lines.append("## Tasks That Produced No Answer")
+        lines.append("")
+        lines.append("Every turn ended in a tool call and no final answer was ever emitted.")
+        lines.append("")
+        lines.append(
+            "These score near zero for **failing to terminate**, not for answering "
+            "badly, and a dimension average cannot tell those apart. A model that "
+            "loops here is not necessarily weak at the dimension — read this table "
+            "before attributing a low score to capability."
+        )
+        lines.append("")
+        lines.append("| Model | Task | Dimension | Turns | Tool calls | Score |")
+        lines.append("|-------|------|-----------|-------|------------|-------|")
+        for model, task_id, dim, turns, tcs, score in no_answer:
+            lines.append(
+                f"| {model} | {task_id} | {dim} | {turns or 0} | {tcs or 0} | "
+                f"{(score if score is not None else 0):.2f} |"
+            )
+        lines.append("")
 
     # Partial measurement warning. A dimension carrying excluded weight is not
     # comparable to one that is fully scored, and is not comparable to its own

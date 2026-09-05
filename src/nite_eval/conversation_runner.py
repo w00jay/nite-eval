@@ -119,6 +119,12 @@ HTTP_READ_TIMEOUT = 1200.0
 # more would let a broken model burn the whole turn budget on retries.
 MAX_PARSE_RETRIES = 1
 
+# Marker opening the stand-in stored when a task ends without the model ever
+# answering — every turn closed with a tool call instead. The report matches on
+# this prefix to surface those tasks, so it must not be reworded casually; the
+# text after it is free prose and safe to change.
+NO_ANSWER_PREFIX = "[No final answer produced:"
+
 # How much of an unparsable payload to keep in the task's error field.
 UNPARSED_RAW_CHARS = 2000
 
@@ -814,7 +820,7 @@ def _extract_best_final_response(turns: list[TurnResult]) -> str:
 
     tc_count = sum(len(t.tool_responses) for t in turns)
     return (
-        f"[No final answer produced: every one of {len(turns)} turns ended in a tool call "
+        f"{NO_ANSWER_PREFIX} every one of {len(turns)} turns ended in a tool call "
         f"({tc_count} calls total), so the model never stopped to answer]"
     )
 
