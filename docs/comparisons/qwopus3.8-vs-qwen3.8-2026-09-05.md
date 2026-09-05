@@ -61,8 +61,9 @@ design) and `run-20260905-063950` (thinking OFF, all three models, complete).
   either.
 - **MTP is worth far more than the fine-tune: +73-75% decode speed on both
   models**, from a draft head that ships in the base Qwen3.8 and is skipped
-  today. But it is **not output-preserving**, so enabling it invalidates
-  comparison against every existing run.
+  today. The gain **holds at 36k context and is largest on code** (+80%). But
+  it is **not output-preserving**, so enabling it invalidates comparison against
+  every existing run — one re-baseline, after which depth is free.
 
 ---
 
@@ -241,6 +242,39 @@ harness, at this context, there is no meaningful decode-speed advantage.**
 both models, from a draft head that ships in the base Qwen3.8 and is being
 skipped today. That is the finding with practical value here.
 
+### The MTP gain holds at eval-realistic context
+
+The numbers above come from 5 short prompts asking for prose. Eval tasks run at
+20k-50k prompt tokens and mostly ask for code, and draft acceptance normally
+falls as content gets less predictable — so the gain was tested again under
+those conditions (qwopus q4km, ctx 65536, max_tokens 600):
+
+| case | prompt tokens | no spec | MTP | gain |
+|---|---:|---:|---:|---:|
+| prose, no context | 21 | 42.2 | 64.2 | +52% |
+| code, no context | 23 | 42.4 | **76.3** | **+80%** |
+| code, 8k context | 9055 | 40.3 | 68.2 | +69% |
+| code, 32k context | 36055 | 35.4 | 60.3 | **+70%** |
+
+**The gain survives.** Draft acceptance stayed at 0.82-0.88 on the long-context
+cases (0.85 at 32k), and absolute decode speed degrades with context on both
+paths — 42.2 -> 35.4 without MTP, 64.2 -> 60.3 with it — so the *ratio* is what
+holds, not the raw number.
+
+The expectation going in was that code and long context would erode acceptance.
+The opposite happened for code: it drafts **better** than prose (+80% vs +52%),
+which makes sense once stated — code is more locally predictable than natural
+language, so a small draft head guesses it more reliably. That is the workload
+this harness spends most of its time on.
+
+**Rough wall-clock implication.** For qwen3.8-27b in `run-20260905-063950`,
+Gen tok/s was 38.4 against a measured decode rate of ~41 tok/s, so decode
+accounts for roughly 90% of task wall clock and prompt processing plus tool
+round trips for the rest. Cutting decode time by ~42% (the inverse of +73%)
+would put a 7-model sweep somewhere near 4 hours instead of 6.8. That is an
+estimate from aggregate figures, not a measurement — but it is large enough to
+be worth measuring properly.
+
 ### MTP is not output-preserving, so MTP runs are not score-comparable
 
 The earlier assumption in this document — that speculative decoding is exact at
@@ -321,10 +355,13 @@ and the tasks are short enough that non-termination rarely triggers.
   criteria on files it wrote. That 0.62 had been read here as a success.
 - **Settle the quant question properly** with `compare_quants.sh` (perplexity +
   determinism) if it ever matters. On this evidence it does not.
-- **Consider running the whole fleet with MTP.** +73-75% decode speed on both
-  models tested, from a head that ships in the base model and is skipped today.
-  It would require re-baselining every model, since MTP changes output — but
-  the run-time saving across a 7-model sweep is large.
+- **Run the whole fleet with MTP.** This is now the highest-value item here.
+  +73-75% decode on both models tested, and the gain **holds at 36k context and
+  is largest on code** (+80%), which is what the harness spends its time on. It
+  needs re-baselining every model once, since MTP changes output — but nothing
+  else on this list buys hours per sweep. Verify first that every model in the
+  fleet actually carries a draft head; this was checked for the Qwen3.8 family
+  only, and gemma4 / lfm2.5 / muse-glimmer have not been looked at.
 - ~~**Does `--spec-draft-n-max 1` preserve output?**~~ Tested: no. It diverges
   from no-spec on exactly the same prompts as n-max 2 while being 14% slower.
   All MTP depths produce identical output to each other, so the only boundary
