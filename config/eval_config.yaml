@@ -18,10 +18,108 @@ models:
     backend: "llama.cpp"
   - name: "qwen3.6-35b-a3b"
     backend: "llama.cpp"
-    # Qwen3-family chat-template trigger that disables <think> output.
-    # Without this, qwen3.6 burns the entire max_tokens budget on
-    # reasoning and never emits a final answer on coding tasks.
-    system_suffix: "/no_think"
+    # NO system_suffix, and deliberately so. This entry carried
+    # `system_suffix: "/no_think"` until 2026-09-05, annotated as a
+    # "Qwen3-family chat-template trigger that disables <think> output".
+    # That annotation was false. `no_think` appears 0 times in this model's
+    # embedded template (Qwen3.6-35B-A3B-UD-Q4_K_S.gguf, the file
+    # llama_swap_config.yaml actually loads) and 0 times in every other
+    # template in this fleet — gemma4, qwen3.8, ornith, muse-glimmer and
+    # qwopus alike. It was inert filler appended to the system prompt from the
+    # day it was added: no template branch ever read it, on any task, in any
+    # run. Removing it is score-neutral for exactly that reason.
+    #
+    # This template's only reasoning switch is enable_thinking, and it is
+    # binary — there is no reasoning_effort to turn down the way qwen3.8 was
+    # settled at "medium":
+    #
+    #   {%- if enable_thinking is defined and enable_thinking is false %}
+    #       {{- '<think>\n\n</think>\n\n' }}
+    #   {%- else %}
+    #       {{- '<think>\n' }}
+    #
+    # The symptom the deleted comment described is real and still unfixed:
+    # on long coding briefs qwen3.6 spends the whole max_tokens budget in
+    # reasoning_content and emits no answer (run-20260903-002243,
+    # coding_artemis_medium_01 reasoning_len 91293 / content_len 0,
+    # coding_mcp_hard_01 114849 / 0, both finish_reason=length), while all 5
+    # agentic tasks in the same run completed cleanly. The suffix was never
+    # what held that in check.
+    #
+    # Thinking OFF, decided 2026-09-05 on a live probe of this exact GGUF at
+    # temperature 0, eval-identical server flags. Three measurements:
+    #
+    # 1. Which knobs do anything ("What is 17*23?", max_tokens 2048):
+    #
+    #      variant                   completion  reasoning_len  content_len
+    #      baseline                     380          872           17
+    #      system_suffix "/no_think"    381          865           17
+    #      reasoning_effort: "low"      380          872           17
+    #      enable_thinking: false       105            0          211
+    #
+    #    "/no_think" lands one token off baseline and reasoning_effort is
+    #    byte-identical to it — both inert, exactly as their 0 occurrences in
+    #    the template predict. enable_thinking is the only switch that acts.
+    #
+    # 2. The failure that actually costs score — coding_artemis_medium_01's
+    #    real brief, turn 1, max_tokens 32768:
+    #
+    #      thinking ON   completion 32768, reasoning_len 120110, content_len 0,
+    #                    finish=length, ZERO tool calls parsed
+    #      thinking OFF  completion    27, reasoning_len      0, content_len 96,
+    #                    finish=stop, 1 clean run_code call
+    #
+    #    Thinking ON cannot emit a single tool call before the budget is gone.
+    #    That reproduces run-20260903-002243 (reasoning_len 91293 there).
+    #
+    # 3. Tool-call parseability through hermes_parser, 6 prompts. This model has
+    #    no native_tools, so it hand-writes JSON in prose — the failure mode that
+    #    blocked thinking-off on muse-glimmer. It does not appear here:
+    #
+    #      thinking ON   6 clean, 0 repaired, 0 errors, 1/6 turns emitted no call
+    #      thinking OFF  7 clean, 0 repaired, 0 errors, 0/6 turns emitted no call
+    #
+    #    Thinking off is marginally better on the tool path, not worse.
+    #
+    # Confirmed on a full 15-task sweep, run-20260905-235130, against
+    # run-20260902-045418 on the same fixtures:
+    #
+    #   dimension   prev    new     delta
+    #   research    0.747   0.783   +0.036
+    #   planning    0.769   0.706   -0.063
+    #   coding      0.278   0.313   +0.035
+    #   agentic     0.722   0.778   +0.056
+    #   composite   0.63    0.64    +0.016      tasks 13/15 -> 14/15
+    #
+    # THE COMPOSITE DID NOT MEANINGFULLY MOVE. +0.016 is inside the 0.05 noise
+    # floor and every dimension delta is inside its own threshold. Do not quote
+    # this as an improvement. What changed is which tasks finish, in both
+    # directions:
+    #
+    #   coding_artemis_medium_01  0.00 (1t/0tc, failed)  -> 0.50 (19t/18tc)
+    #       First completion ever. Had failed 6 of 6 runs since 2026-08-30.
+    #   coding_wine_medium_01     0.86 (5t/4tc)          -> 0.45 (1t/0tc)
+    #       REGRESSION, and a real one — 0.41 against a 0.15 threshold. The
+    #       whole response is 22 chars: "/app/scanlabel/scan_label.ts". It
+    #       stops using tools and answers instantly with a non-answer.
+    #   coding_mcp_hard_01        still fails, new failure mode: the overrun
+    #       moved from reasoning_content to content (103437 chars), 7 tool
+    #       calls in. That is a max_tokens question, not a reasoning one.
+    #
+    # The qwen3.8 risk did not materialise: research went UP (0.747 -> 0.783),
+    # not down. Planning fell 0.063, almost all of it planning_wine_easy_01
+    # (0.78 -> 0.59).
+    #
+    # Also worth knowing, and not caused by this switch: research_finance_hard_01
+    # went 14 tool calls -> 0 and research_wine_medium_01 10 -> 0 with IDENTICAL
+    # scores. Those two research numbers are not measuring tool use.
+    #
+    # This opens a new comparison boundary for qwen3.6. Its earlier numbers were
+    # produced with inert filler in the system prompt and full reasoning on, and
+    # are not comparable. n=1 on this config.
+    # Full writeup: docs/comparisons/qwen3.6-thinking-2026-09-05.md
+    chat_template_kwargs:
+      enable_thinking: false
   - name: "qwen3.8-27b"
     backend: "llama.cpp"
     chat_template_kwargs:
