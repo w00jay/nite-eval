@@ -244,17 +244,25 @@ def score_with_judge(
     model_response: str,
     use_averaging: bool = True,
     evidence: str = "",
+    code_evidence: str = "",
 ) -> ScoreResult:
     """Score using the judge model with optional 3x averaging.
 
     `evidence` carries the tool results so criteria that ask whether the
     response's facts match reality (no_hallucination, data_accuracy) can
     actually be checked instead of guessed at.
+
+    `code_evidence` carries the files the model wrote. Without it a coding
+    criterion sees only the closing prose, which is a description of the work
+    rather than the work — and when the description was absent too, the judge
+    scored the task specification instead.
     """
     if use_averaging:
-        result = judge.evaluate_with_averaging(dimension, rubric, task_description, model_response, evidence=evidence)
+        result = judge.evaluate_with_averaging(
+            dimension, rubric, task_description, model_response, evidence=evidence, code_evidence=code_evidence
+        )
     else:
-        result = judge.evaluate(dimension, rubric, task_description, model_response, evidence)
+        result = judge.evaluate(dimension, rubric, task_description, model_response, evidence, code_evidence)
 
     if isinstance(result, JudgeError):
         logger.error("Judge scoring failed for %s: %s", dimension, result.error)

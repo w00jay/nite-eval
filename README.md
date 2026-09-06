@@ -37,6 +37,14 @@ fixture gaps were closed and landed on the same composite as before (0.58) — t
 gaps were 6 unanswered calls across 45 tasks, and closing them moved nothing
 beyond judge variance. Worth having measured rather than assumed.
 
+> **The Coding column predates a scoring fix and is stale.** Until 2026-09-06 the
+> coding judge criteria were scored from the model's closing prose, never from
+> the code it wrote — 30-60% of each coding task's weight. A response describing
+> an implementation that did not exist scored 4/5. The harness now shows the
+> judge the files written, and states the absence when none were. Nothing in
+> this table has been re-run against it. See
+> [docs/comparisons/judges-never-saw-code-2026-09-06.md](docs/comparisons/judges-never-saw-code-2026-09-06.md).
+
 **qwen3.6's row is on a changed config and is n=1.** As of 2026-09-05 it carries
 `enable_thinking: false` instead of an inert `system_suffix: "/no_think"`, which
 was never a trigger in its template — or in any template in this fleet. The

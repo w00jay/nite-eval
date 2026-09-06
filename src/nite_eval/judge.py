@@ -14,6 +14,16 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+# The judges run at --ctx-size 4096 and cannot be raised: both share the 3060,
+# which has under 1GB of headroom (CLAUDE.md, "Current known risk"). Reserving
+# max_tokens for the verdict leaves roughly 3000 tokens for the prompt. Code is
+# denser than prose, so budget at a conservative 3.2 characters per token.
+MAX_PROMPT_CHARS = 9600
+# The fixed scaffolding — scale, the absent-work anchor, section headers and the
+# JSON instruction — measured at about 1600 characters. The rubric is added on
+# top of this because it varies per dimension.
+PROMPT_BOILERPLATE_CHARS = 1900
+
 # Match JSON blocks, including nested braces (greedy from first { to last })
 JSON_BLOCK_RE = re.compile(r"\{[^{}]*\}", re.DOTALL)
 # Fallback: extract score from patterns like "score": 4 or **Score: 4**
@@ -161,9 +171,10 @@ class JudgeClient:
         task_description: str,
         model_response: str,
         evidence: str = "",
+        code_evidence: str = "",
     ) -> JudgeResult | JudgeError:
         """Send a single evaluation request to the judge."""
-        prompt = self._build_prompt(dimension, rubric, task_description, model_response, evidence)
+        prompt = self._build_prompt(dimension, rubric, task_description, model_response, evidence, code_evidence)
         return self._call(prompt)
 
     def evaluate_with_averaging(
@@ -174,13 +185,14 @@ class JudgeClient:
         model_response: str,
         n_runs: int = 3,
         evidence: str = "",
+        code_evidence: str = "",
     ) -> JudgeResult | JudgeError:
         """Run evaluation n times and average scores for variance reduction."""
         results: list[JudgeResult] = []
         errors: list[JudgeError] = []
 
         for i in range(n_runs):
-            result = self.evaluate(dimension, rubric, task_description, model_response, evidence)
+            result = self.evaluate(dimension, rubric, task_description, model_response, evidence, code_evidence)
             if isinstance(result, JudgeError):
                 errors.append(result)
                 logger.warning("Judge run %d/%d failed: %s", i + 1, n_runs, result.error)
@@ -208,6 +220,42 @@ class JudgeClient:
     # judge output (max_tokens) within the judge's 4096 context window.
     MAX_RESPONSE_CHARS = 6000
 
+    def _fit_budget(
+        self, rubric: str, task_description: str, model_response: str, evidence: str, code_evidence: str
+    ) -> tuple[str, str, str, str]:
+        """Trim the variable blocks so the assembled prompt fits the judge context.
+
+        The per-block caps above are independent, so three full blocks assemble
+        to roughly 18000 characters — past the judge's 4096-token window, which
+        cannot be raised because both judges share the 3060 and it has under 1GB
+        of headroom left. `coding_mcp_hard_01` wrote 67181 characters of file
+        content in one run, so this is reachable, not theoretical.
+
+        Trim order is deliberate: the closing prose goes first. It is the
+        model's description of its own work, and scoring that description
+        instead of the work is the defect this whole path exists to fix. The
+        artifacts — the tool results and the code — are the evidence, and they
+        are given up last. The task description is trimmed only if sacrificing
+        everything else still is not enough, because without it the judge does
+        not know what was asked.
+        """
+        budget = MAX_PROMPT_CHARS - PROMPT_BOILERPLATE_CHARS - len(rubric)
+        blocks = {
+            "response": model_response,
+            "evidence": evidence,
+            "code": code_evidence,
+            "task": task_description,
+        }
+        for name in ("response", "evidence", "code", "task"):
+            over = sum(len(v) for v in blocks.values()) - budget
+            if over <= 0:
+                break
+            if not blocks[name]:
+                continue
+            keep = max(0, len(blocks[name]) - over)
+            blocks[name] = blocks[name][:keep] + "\n\n[... truncated to fit judge context ...]" if keep else ""
+        return blocks["response"], blocks["evidence"], blocks["code"], blocks["task"]
+
     def _build_prompt(
         self,
         dimension: str,
@@ -215,7 +263,12 @@ class JudgeClient:
         task_description: str,
         model_response: str,
         evidence: str = "",
+        code_evidence: str = "",
     ) -> str:
+        model_response, evidence, code_evidence, task_description = self._fit_budget(
+            rubric, task_description, model_response, evidence, code_evidence
+        )
+
         # Truncate long responses to fit judge context window
         if len(model_response) > self.MAX_RESPONSE_CHARS:
             model_response = (
@@ -238,6 +291,26 @@ class JudgeClient:
                 f"{evidence}\n"
             )
 
+        # The files the model actually wrote. Coding criteria were previously
+        # scored from the closing prose alone — code is written through
+        # write_file calls, which appear nowhere in `model_response` — so the
+        # judge was scoring a self-description. Empty when the model wrote
+        # nothing, and that emptiness has to reach the prompt as an absence
+        # rather than as a missing section, or the judge fills it from the task
+        # description: on coding_wine_medium_01 a 22-character response scored
+        # 4/5 three times, the reasoning describing an implementation that did
+        # not exist.
+        code_block = ""
+        if code_evidence:
+            if len(code_evidence) > self.MAX_RESPONSE_CHARS:
+                code_evidence = code_evidence[: self.MAX_RESPONSE_CHARS] + "\n\n[... code truncated ...]"
+            code_block = (
+                "\n## Code the Model Wrote\n"
+                "These are the files the model actually created, and they are the\n"
+                "work you are scoring. Judge these, not the summary below.\n\n"
+                f"{code_evidence}\n"
+            )
+
         return f"""You are a strict evaluator scoring "{dimension}" on a 5-point scale.
 
 Be critical. Reserve 5 for work with no meaningful gaps, and 1 for clear
@@ -254,12 +327,21 @@ the anchors, which most do.
 Pick the single integer from 1 to 5 that best fits. Do not default to 3;
 if a response is better than "adequate" but short of "strong", score 4.
 
+## Absent Work Scores 1
+The task description below states what was asked for. It is NOT evidence that
+any of it was done. Score only what the model actually produced.
+
+If the work being scored is missing — no code, no answer, or a response that
+merely names a file or restates the request — score 1. Do not reconstruct what
+the model "must have meant" from the task description or specification, and do
+not credit requirements just because the task listed them.
+
 ## Rubric for {dimension}
 {rubric}
 
 ## Task
 {task_description}
-{evidence_block}
+{evidence_block}{code_block}
 ## Response to Evaluate
 {model_response}
 
@@ -466,11 +548,12 @@ class RoutedJudgeClient:
         task_description: str,
         model_response: str,
         evidence: str = "",
+        code_evidence: str = "",
     ) -> JudgeResult | JudgeError:
         """Route to the best judge for this dimension."""
         judge = self._select(dimension)
         logger.debug("Routing %s → %s", dimension, judge.model)
-        return judge.evaluate(dimension, rubric, task_description, model_response, evidence)
+        return judge.evaluate(dimension, rubric, task_description, model_response, evidence, code_evidence)
 
     def evaluate_checklist(
         self,
@@ -491,11 +574,14 @@ class RoutedJudgeClient:
         model_response: str,
         n_runs: int = 3,
         evidence: str = "",
+        code_evidence: str = "",
     ) -> JudgeResult | JudgeError:
         """Route to the best judge for this dimension, with variance reduction."""
         judge = self._select(dimension)
         logger.debug("Routing %s → %s (n=%d)", dimension, judge.model, n_runs)
-        return judge.evaluate_with_averaging(dimension, rubric, task_description, model_response, n_runs, evidence)
+        return judge.evaluate_with_averaging(
+            dimension, rubric, task_description, model_response, n_runs, evidence, code_evidence
+        )
 
     def close(self) -> None:
         self._flow.close()

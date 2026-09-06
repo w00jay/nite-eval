@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import json
 import logging
 import sys
 from datetime import UTC, datetime
@@ -26,6 +25,7 @@ from rich.table import Table
 
 from nite_eval.automated_scoring import run_automated_checks
 from nite_eval.conversation_runner import ConversationResult, run_conversation
+from nite_eval.evidence import build_code_evidence, build_tool_evidence
 from nite_eval.gpu_check import GpuPlacementError, resolve_expected_uuids, verify_runtime_placement
 from nite_eval.gpu_check import preflight as gpu_preflight
 from nite_eval.judge import FLOW_JUDGE_DIMENSIONS, RoutedJudgeClient
@@ -95,13 +95,15 @@ def score_task(
     # Ground truth for fact-checking criteria. The judge otherwise sees only the
     # prompt and the final answer, so "do the cited numbers match the data" was
     # unanswerable and the criterion fell through to a free 1.0.
-    evidence_lines = []
-    for turn in conv.turns:
-        for tr in turn.tool_responses:
-            args = json.dumps(tr.get("arguments", {}))
-            result = json.dumps(tr.get("result", {}))
-            evidence_lines.append(f"{tr['name']}({args}) -> {result}")
-    evidence = "\n".join(evidence_lines)
+    evidence = build_tool_evidence(conv)
+
+    # The files the model wrote. Given to every judge_rubric criterion rather
+    # than to a named subset: it is empty for a task that wrote nothing, so it
+    # is self-limiting, and a hardcoded name list is what caused the defect this
+    # fixes — EVIDENCE_DIMENSIONS silently excluded every coding criterion, so
+    # code_quality and friends were scored from the closing prose alone. A new
+    # criterion added to a task YAML would have been excluded the same way.
+    code_evidence = build_code_evidence(conv, tools=task.tools)
 
     for dim_name, dim_cfg in task.scoring.items():
         method = dim_cfg.get("method", "")
@@ -118,6 +120,7 @@ def score_task(
                 model_response=conv.final_response,
                 use_averaging=judge_averaging,
                 evidence=evidence if dim_name in EVIDENCE_DIMENSIONS else "",
+                code_evidence=code_evidence,
             )
             # score_with_judge sets weight=0.0 on JudgeError as an escape hatch.
             # Unconditionally assigning the task weight here overwrote it, so a
@@ -328,6 +331,7 @@ def run_task(
                 reached_max_turns=False,
                 weighted_score=0.0,
                 error=f"sandbox_unavailable: {e}",
+                tools_declared=len(task.tools or []),
             )
             return 0.0
 
@@ -380,6 +384,7 @@ def run_task(
             prompt_tokens=conv.total_prompt_tokens or None,
             predicted_ms=conv.total_predicted_ms or None,
             predicted_n=conv.total_predicted_n or None,
+            tools_declared=len(task.tools or []),
         )
         return 0.0
 
@@ -473,6 +478,9 @@ def run_task(
         prompt_tokens=conv.total_prompt_tokens or None,
         predicted_ms=conv.total_predicted_ms or None,
         predicted_n=conv.total_predicted_n or None,
+        # Zero tool calls only means something if tools were on offer; the
+        # report cannot tell "chose not to" from "had none" without this.
+        tools_declared=len(task.tools or []),
     )
 
     turns_str = f"{len(conv.turns)}t/{conv.total_tool_calls}tc"
@@ -708,6 +716,7 @@ def main() -> None:
                         reached_max_turns=False,
                         weighted_score=0.0,
                         error="unhandled exception",
+                        tools_declared=len(task.tools or []),
                     )
 
         db.finish_run(run_id)
