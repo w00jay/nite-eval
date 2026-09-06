@@ -163,6 +163,12 @@ class ResultsDB:
         # is decode speed proper. NULL means the server reported no timings block.
         ("task_results", "predicted_ms", "REAL"),
         ("task_results", "predicted_n", "INTEGER"),
+        # How many tools the task offered. A task completing with zero tool
+        # calls only means something if there were tools to call, and the
+        # report cannot tell the two apart from the DB alone. NULL for runs
+        # before 2026-09-06, which is why the report skips those rather than
+        # reading a missing count as "no tools offered".
+        ("task_results", "tools_declared", "INTEGER"),
     )
 
     def _add_missing_columns(self, cursor: sqlite3.Cursor) -> None:
@@ -258,6 +264,7 @@ class ResultsDB:
         predicted_ms: float | None = None,
         predicted_n: int | None = None,
         unmatched_mock_samples: str | None = None,
+        tools_declared: int | None = None,
     ) -> None:
         """Save a completed task result (the checkpoint)."""
         status = "failed" if error else "completed"
@@ -267,7 +274,8 @@ class ResultsDB:
             "total_turns = ?, total_tool_calls = ?, total_latency_ms = ?, "
             "reached_max_turns = ?, weighted_score = ?, error = ?, "
             "repaired_tool_calls = ?, unscored_weight = ?, unmatched_mock_calls = ?, "
-            "completion_tokens = ?, prompt_tokens = ?, predicted_ms = ?, predicted_n = ?, unmatched_mock_samples = ? "
+            "completion_tokens = ?, prompt_tokens = ?, predicted_ms = ?, predicted_n = ?, unmatched_mock_samples = ?, "
+            "tools_declared = ? "
             "WHERE run_id = ? AND model_name = ? AND task_id = ?",
             (
                 status,
@@ -287,6 +295,7 @@ class ResultsDB:
                 predicted_ms,
                 predicted_n,
                 unmatched_mock_samples,
+                tools_declared,
                 run_id,
                 model_name,
                 task_id,

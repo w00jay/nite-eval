@@ -362,6 +362,45 @@ def generate_report(
             )
         lines.append("")
 
+    # Tasks that were offered tools and called none. This is not automatically a
+    # failure — it is a limit on what the score can mean. Since the 2026-08-30
+    # boundary, planning tasks completed with zero tool calls 22.9% of the time
+    # and scored 0.75 against 0.76 for those that used them, so those numbers
+    # cannot separate grounded work from recalled work. It is also where an
+    # instant non-answer shows up: coding_wine_medium_01 scored 0.45 on a
+    # 28-character response with 0 tool calls, which the "Produced No Answer"
+    # section above cannot see because that detects the opposite shape.
+    # tools_declared is NULL before 2026-09-06, and a NULL is skipped rather
+    # than read as "no tools offered".
+    unused_tools = db._conn.execute(
+        "SELECT model_name, task_id, dimension, total_turns, LENGTH(final_response), weighted_score "
+        "FROM task_results "
+        "WHERE run_id = ? AND status = 'completed' "
+        "AND COALESCE(total_tool_calls, 0) = 0 AND COALESCE(tools_declared, 0) > 0 "
+        "ORDER BY weighted_score DESC, model_name, task_id",
+        (run_id,),
+    ).fetchall()
+    if unused_tools:
+        lines.append("## Tasks That Declared Tools, Used None")
+        lines.append("")
+        lines.append(
+            "The task offered tools and the model called none, answering from what "
+            "it already knew. Read these scores as a narrower claim than the rest: "
+            "they measure the answer, not the work behind it, and a rubric that "
+            "does not ask for grounding cannot tell a researched answer from a "
+            "recalled one. A very short response here is a different problem — an "
+            "instant non-answer rather than an ungrounded one."
+        )
+        lines.append("")
+        lines.append("| Model | Task | Dimension | Turns | Response chars | Score |")
+        lines.append("|-------|------|-----------|-------|----------------|-------|")
+        for model, task_id, dim, turns, resp_len, score in unused_tools:
+            lines.append(
+                f"| {model} | {task_id} | {dim} | {turns or 0} | {resp_len or 0} | "
+                f"{(score if score is not None else 0):.2f} |"
+            )
+        lines.append("")
+
     # Partial measurement warning. A dimension carrying excluded weight is not
     # comparable to one that is fully scored, and is not comparable to its own
     # historical values from before the criteria were excluded.
