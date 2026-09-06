@@ -27,16 +27,25 @@ fixes (see below).
 | **qwen3.8-27b** | 0.88 | 0.80 | **0.92** | 0.84 | **0.86** | 15/15 | 147.8 | `…175407` |
 | **muse-glimmer-30b** | 0.83 | 0.78 | 0.89 | **0.86** | **0.84** | 15/15 | 122.1 | `…045418` |
 | ornith-1.5-35b-a3b | 0.78 | 0.76 | 0.49 | 0.76 | **0.70** | 15/15 | 34.2 | `…175407` |
-| qwen3.6-35b-a3b | 0.75 | 0.77 | 0.28 | 0.72 | **0.63** | 13/15 | 60.3 | `…045418` |
+| qwen3.6-35b-a3b | 0.78 | 0.71 | 0.31 | 0.78 | **0.64** | 14/15 | 40.9 | `…235130` |
 | lfm2.5-2.6b | 0.80 | 0.71 | 0.22 | 0.72 | **0.61** | 14/15 | 28.5 | `…175407` |
 | gemma4-26b-a4b | 0.66 | 0.70 | 0.17 | 0.81 | **0.58** | 13/15 | 42.4 | `…045418` |
 | lfm2.5-8b-a1b | 0.74 | 0.73 | 0.14 | 0.58 | **0.55** | 15/15 | 13.4 | `…175407` |
 
-Every row is now measured on current fixtures. qwen3.6 and gemma4 were re-run
-after the fixture gaps were closed and both landed on the same composite as
-before (0.63 and 0.58) — the gaps were 6 unanswered calls across 45 tasks, and
-closing them moved nothing beyond judge variance. Worth having measured rather
-than assumed.
+Every row is now measured on current fixtures. gemma4 was re-run after the
+fixture gaps were closed and landed on the same composite as before (0.58) — the
+gaps were 6 unanswered calls across 45 tasks, and closing them moved nothing
+beyond judge variance. Worth having measured rather than assumed.
+
+**qwen3.6's row is on a changed config and is n=1.** As of 2026-09-05 it carries
+`enable_thinking: false` instead of an inert `system_suffix: "/no_think"`, which
+was never a trigger in its template — or in any template in this fleet. The
+composite barely moved (0.63 -> 0.64, inside the noise floor), but *which* tasks
+finish changed in both directions: `coding_artemis_medium_01` completed for the
+first time in 7 attempts (0.00 -> 0.50) while `coding_wine_medium_01` regressed
+0.86 -> 0.45, answering in one turn with 22 characters and no tool calls.
+Earlier qwen3.6 runs are not comparable to this one. See
+[docs/comparisons/qwen3.6-thinking-2026-09-05.md](docs/comparisons/qwen3.6-thinking-2026-09-05.md).
 
 ### Reading this
 
