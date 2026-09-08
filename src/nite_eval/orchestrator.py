@@ -293,6 +293,21 @@ def score_task(
     return scores, weighted, unscored_fraction
 
 
+def collect_tool_records(conv: ConversationResult) -> list[dict]:
+    """Flatten a conversation's executed tool calls into tool_calls rows."""
+    return [
+        {
+            "turn": turn.turn,
+            "call_index": i,
+            "tool_name": tr.get("name"),
+            "arguments": tr.get("arguments"),
+            "result": tr.get("result"),
+        }
+        for turn in conv.turns
+        for i, tr in enumerate(turn.tool_responses)
+    ]
+
+
 def run_task(
     task: TaskDefinition,
     model_name: str,
@@ -355,6 +370,14 @@ def run_task(
         native_tools=native_tools,
     )
 
+    # Record tool calls before branching on the outcome. This used to sit after
+    # the failure return, so a failed task's calls were counted in
+    # total_tool_calls and never stored — and a task that fails in one run and
+    # completes in the next is exactly the trace a determinism check needs.
+    tool_records = collect_tool_records(conv)
+    if tool_records:
+        db.save_tool_calls(run_id, model_name, task.id, tool_records)
+
     if conv.error:
         if sandbox is not None:
             sandbox.stop()
@@ -387,22 +410,6 @@ def run_task(
             tools_declared=len(task.tools or []),
         )
         return 0.0
-
-    # Record tool calls
-    tool_records = []
-    for turn in conv.turns:
-        for i, tr in enumerate(turn.tool_responses):
-            tool_records.append(
-                {
-                    "turn": turn.turn,
-                    "call_index": i,
-                    "tool_name": tr["name"],
-                    "arguments": tr.get("arguments", {}),
-                    "result": tr.get("result", {}),
-                }
-            )
-    if tool_records:
-        db.save_tool_calls(run_id, model_name, task.id, tool_records)
 
     # Score
     # Automated criteria are decided by running the code, after the conversation
