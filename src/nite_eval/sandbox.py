@@ -126,21 +126,107 @@ _LS_ISO_RE = re.compile(
 _LS_DATE_PLACEHOLDER = "Jan  1 00:00"
 _LS_ISO_PLACEHOLDER = "1970-01-01 00:00:00.000000000 +0000"
 
+# CPython's default repr carries the object's heap address, which ASLR moves on
+# every container start: `<horizons_client.HorizonsClient object at 0x7038...>`.
+# It reaches the model through pytest failure output. Anchored on both sides —
+# ` at ` before, the closing `>` after — so a hex literal in source or in a test
+# assertion is never touched.
+_PY_ADDR_RE = re.compile(r"( at )0x[0-9a-fA-F]{4,}(?=>)")
+_PY_ADDR_PLACEHOLDER = "0x0000000000"
+
+# `go test` prints wall-clock elapsed per package and per test, and two runs of
+# identical code differ in the last millisecond (`0.005s` vs `0.006s`). Anchored
+# to the status line's own shape — a leading `ok`/`FAIL` plus the package, or a
+# `--- PASS:` header — so a duration a program prints itself survives. Neither
+# is anchored to end-of-line, so `coverage:` trailers are preserved.
+_GO_PKG_TIME_RE = re.compile(r"^(ok|FAIL)([ \t]+\S+[ \t]+)\d+\.\d+s", re.MULTILINE)
+_GO_TEST_TIME_RE = re.compile(r"^([ \t]*--- (?:PASS|FAIL|SKIP): \S+ \()\d+\.\d+s\)", re.MULTILINE)
+_GO_PKG_TIME_PLACEHOLDER = "0.000s"
+_GO_TEST_TIME_PLACEHOLDER = "0.00s)"
+
+# pytest's summary line, the third runtime's version of the same leak:
+# `1 failed, 3 passed, 1 skipped, 1 warning in 0.02s`, optionally padded with
+# `=` when the task does not pass -q. Anchored at BOTH ends of the line — it
+# must be nothing but pytest's own `<n> <word>` run followed by the duration —
+# so `cache warmed: 2 passed in 0.5s` and `2 failed in 0.34s window` survive.
+# A line that is exactly `2 passed in 0.5s` and came from the model's own code
+# is indistinguishable from pytest's and is rewritten; nothing can separate them.
+# The `in 125.34s (0:02:05)` form pytest uses past a minute is deliberately not
+# matched — unobserved here, and failing to match only leaves it alone.
+_PYTEST_SUMMARY_RE = re.compile(
+    r"^(=*[ ]*\d+ [a-z]+(?:, \d+ [a-z]+)* in )\d+\.\d+s(?=[ ]*=*$)",
+    re.MULTILINE,
+)
+_PYTEST_SUMMARY_PLACEHOLDER = "0.00s"
+
+# `deno test` does the same at millisecond resolution: `... ok (5ms)` per case
+# and `ok | 3 passed | 0 failed (12ms)` in the summary. Anchored on deno's own
+# `... ok` marker and on the summary's `N failed` field.
+_DENO_CASE_TIME_RE = re.compile(r"(\.{3} (?:ok|FAILED|ignored|cancelled)) \(\d+(?:\.\d+)?m?s\)")
+_DENO_SUMMARY_TIME_RE = re.compile(r"^((?:ok|FAILED) \|.*\d+ failed[^(\n]*)\(\d+(?:\.\d+)?m?s\)", re.MULTILINE)
+_DENO_TIME_PLACEHOLDER = "(0ms)"
+
+# Wall clock printed by code the MODEL wrote. Only two shapes are covered: Go's
+# `log` default prefix (`Ldate|Ltime`, optionally `Lmicroseconds`) at the start
+# of a line, and `log/slog`'s text handler, anchored on its literal `time=` key.
+# Line-start plus a full date-and-time is the tightest anchor available here.
+_GO_LOG_TIME_RE = re.compile(r"^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?", re.MULTILINE)
+_SLOG_TIME_RE = re.compile(r"\btime=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?")
+_GO_LOG_TIME_PLACEHOLDER = "1970/01/01 00:00:00"
+_SLOG_TIME_PLACEHOLDER = "time=1970-01-01T00:00:00Z"
+
+# Docker names a container after the first 12 hex of its id, and the model sees
+# that whenever it runs `env`. Anchored on the variable name and a whole line,
+# because a bare `hostname` call emits the same 12 characters with no context to
+# separate them from a digest — that call stays unhandled rather than guessed at.
+_HOSTNAME_RE = re.compile(r"^(HOSTNAME=)[0-9a-f]{12}$", re.MULTILINE)
+_HOSTNAME_PLACEHOLDER = "sandbox"
+
 
 def _normalize_volatile(text: str) -> str:
-    """Blank out timestamps that vary between container instances.
+    """Blank out per-container variation, so two runs see byte-identical output.
 
     A directory's mtime is the container's creation time, so `ls -la` on turn 1
     differs between two runs of the same model and the conversation diverges
     from turn 2 onward — at temperature 0, producing different code and
-    different automated scores. See "Known limitations" in the README.
+    different automated scores. Measuring repeat runs found the first differing
+    tool-call argument always landed immediately after the first differing tool
+    result, on one of seven surfaces: `ls` mtimes, ASLR heap addresses in Python
+    reprs, elapsed times from all three test runners the sandbox images provide
+    (`pytest`, `go test`, `deno test`), a wall clock printed by the model's own
+    generated code, and the container hostname.
 
-    This covers the surface actually observed. Other per-container variation —
-    hostnames, `find` ordering, mtimes on files copied in by setup_cmd — is not
-    handled, so coding is less non-deterministic rather than reproducible.
+    Every pattern is anchored to the context that identifies it, never to the
+    bare volatile token, because every shell result passes through here —
+    including `cat` behind read_file. Rewriting source the model is about to
+    copy would be worse than the non-determinism being fixed.
+
+    **Model-authored output is only partly controllable.** The harness does not
+    choose the log format of code it did not write, so only Go's `log` default
+    prefix and `log/slog`'s `time=` key are handled. A model that formats its own
+    timestamp, prints a duration, or seeds from the clock still diverges.
+
+    **An eighth surface is out of reach of substitution entirely: Go randomizes
+    map iteration order per process**, so a table-driven test backed by a map
+    emits its subtest blocks in a different order each run (measured on
+    coding_mcp_easy_01, ornith-1.5-35b-a3b, two runs of TestLoadInvalidURL).
+    That is the order of lines, not a token within one, and normalising it would
+    mean sorting output — which mangles interleaved writers and is not this
+    function's job. See test_sandbox_normalization.py.
+
+    So this makes coding markedly less non-deterministic, not reproducible.
     """
     text = _LS_ISO_RE.sub(lambda m: m.group(1) + _LS_ISO_PLACEHOLDER, text)
-    return _LS_DATE_RE.sub(lambda m: m.group(1) + _LS_DATE_PLACEHOLDER, text)
+    text = _LS_DATE_RE.sub(lambda m: m.group(1) + _LS_DATE_PLACEHOLDER, text)
+    text = _PY_ADDR_RE.sub(lambda m: m.group(1) + _PY_ADDR_PLACEHOLDER, text)
+    text = _PYTEST_SUMMARY_RE.sub(lambda m: m.group(1) + _PYTEST_SUMMARY_PLACEHOLDER, text)
+    text = _GO_PKG_TIME_RE.sub(lambda m: m.group(1) + m.group(2) + _GO_PKG_TIME_PLACEHOLDER, text)
+    text = _GO_TEST_TIME_RE.sub(lambda m: m.group(1) + _GO_TEST_TIME_PLACEHOLDER, text)
+    text = _DENO_CASE_TIME_RE.sub(lambda m: m.group(1) + " " + _DENO_TIME_PLACEHOLDER, text)
+    text = _DENO_SUMMARY_TIME_RE.sub(lambda m: m.group(1) + _DENO_TIME_PLACEHOLDER, text)
+    text = _GO_LOG_TIME_RE.sub(_GO_LOG_TIME_PLACEHOLDER, text)
+    text = _SLOG_TIME_RE.sub(_SLOG_TIME_PLACEHOLDER, text)
+    return _HOSTNAME_RE.sub(lambda m: m.group(1) + _HOSTNAME_PLACEHOLDER, text)
 
 
 def _truncate(text: str) -> str:

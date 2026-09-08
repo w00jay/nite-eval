@@ -96,6 +96,14 @@ CREATE INDEX IF NOT EXISTS idx_task_results_dimension
 """
 
 
+def _json_or_none(value: object) -> str | None:
+    """NULL for an absent field, so a call whose result never came back reads
+    back as {} instead of as the JSON string "null". `default=str` keeps an
+    unserialisable sandbox payload from failing the write for the whole task.
+    """
+    return None if value is None else json.dumps(value, default=str)
+
+
 @dataclass
 class PendingTask:
     """A task that still needs to be run for a model."""
@@ -357,19 +365,35 @@ class ResultsDB:
         Args:
             calls: list of {turn, call_index, tool_name, arguments, result}
         """
-        rows = [
-            (
+        rows = []
+        skipped = 0
+        for c in calls:
+            # turn, call_index and tool_name are NOT NULL, and executemany
+            # aborts the whole batch on one bad row — so a single unusable
+            # record would cost the entire task's trace. Drop it instead.
+            if c.get("turn") is None or c.get("call_index") is None or not c.get("tool_name"):
+                skipped += 1
+                continue
+            rows.append(
+                (
+                    run_id,
+                    model_name,
+                    task_id,
+                    c["turn"],
+                    c["call_index"],
+                    c["tool_name"],
+                    _json_or_none(c.get("arguments")),
+                    _json_or_none(c.get("result")),
+                )
+            )
+        if skipped:
+            logger.warning(
+                "Skipped %d unidentifiable tool call record(s) for %s/%s/%s",
+                skipped,
                 run_id,
                 model_name,
                 task_id,
-                c["turn"],
-                c["call_index"],
-                c["tool_name"],
-                json.dumps(c.get("arguments")),
-                json.dumps(c.get("result")),
             )
-            for c in calls
-        ]
         self._conn.executemany(
             "INSERT OR REPLACE INTO tool_calls "
             "(run_id, model_name, task_id, turn, call_index, tool_name, arguments, result) "
