@@ -37,12 +37,25 @@ fixture gaps were closed and landed on the same composite as before (0.58) — t
 gaps were 6 unanswered calls across 45 tasks, and closing them moved nothing
 beyond judge variance. Worth having measured rather than assumed.
 
-> **The Coding column predates a scoring fix and is stale.** Until 2026-09-06 the
-> coding judge criteria were scored from the model's closing prose, never from
-> the code it wrote — 30-60% of each coding task's weight. A response describing
-> an implementation that did not exist scored 4/5. The harness now shows the
-> judge the files written, and states the absence when none were. Nothing in
-> this table has been re-run against it. See
+> **The Coding column above is superseded.** Until 2026-09-06 the coding judge
+> criteria were scored from the model's closing prose, never from the code it
+> wrote — 30-60% of each coding task's weight. The harness now shows the judge
+> the files written and states the absence when none were, and the dimension was
+> re-run on that basis in `run-20260906-181136`. Every model scored lower.
+> Read the table below instead of the Coding column above.
+>
+> | Model | Coding (old) | **Coding (re-baselined)** | Tasks |
+> |---|---:|---:|---:|
+> | qwen3.8-27b | 0.90 | **0.78** | 4/4 |
+> | muse-glimmer-30b | 0.70 | **0.61** | 3/4 |
+> | ornith-1.5-35b-a3b | 0.48 | **0.42** | 4/4 |
+> | gemma4-26b-a4b | 0.17 | **0.16** | 2/4 |
+> | qwen3.6-35b-a3b | 0.31 | **0.15** | 3/4 |
+> | lfm2.5-2.6b | 0.23 | **0.12** | 3/4 |
+> | lfm2.5-8b-a1b | 0.11 | **0.06** | 4/4 |
+>
+> The ordering at the top survives; the drops range from 0.01 to 0.17 and the
+> two largest belong to the models that leaned hardest on prose. Full writeup:
 > [docs/comparisons/judges-never-saw-code-2026-09-06.md](docs/comparisons/judges-never-saw-code-2026-09-06.md).
 
 **qwen3.6's row is on a changed config and is n=1.** As of 2026-09-05 it carries

@@ -63,18 +63,55 @@ def generate_report(
     lines.append(sep)
 
     model_composites: dict[str, float] = {}
+    covered: dict[str, set[str]] = {}
     for model in models:
         dim_avgs = db.get_dimension_averages(run_id, model)
         composite = compute_composite(dim_avgs, weights) if dim_avgs else 0.0
         model_composites[model] = composite
+        covered[model] = set(dim_avgs)
         s = summary.get(model, {})
-        cells = [f"{dim_avgs.get(d, 0):.2f}" for d in dimensions]
+        # A dimension with nothing terminal in it is absent from dim_avgs — a
+        # --dimension filtered run, or one interrupted before that dimension.
+        # Printing 0.00 for it made "did not run" identical to "ran and scored
+        # zero", and run-20260906-181136 showed three dimensions of 0.00 beside
+        # a Composite that was really just the coding score.
+        cells = [f"{dim_avgs[d]:.2f}" if d in dim_avgs else "—" for d in dimensions]
         lines.append(
             f"| {model} | "
             + " | ".join(cells)
             + f" | **{composite:.2f}** | {s.get('completed', 0)}/{s.get('total', 0)} |"
         )
     lines.append("")
+
+    # compute_composite renormalises over the dimensions present, so a composite
+    # over a subset is arithmetically right and semantically narrower. Say so,
+    # rather than letting the column header imply all four.
+    all_covered = set().union(*covered.values()) if covered else set()
+    if all_covered and len(all_covered) < len(dimensions):
+        names = ", ".join(d for d in dimensions if d in all_covered)
+        lines.append(
+            f"**Composite covers {len(all_covered)} of {len(dimensions)} dimensions "
+            f"({names}).** The others were not run, so they are shown as — rather than 0.00, "
+            "and the composite is renormalised over what ran. It is not comparable to a "
+            "composite from a full sweep."
+        )
+        lines.append("")
+    elif len({frozenset(c) for c in covered.values()}) > 1:
+        # Different models measured over different dimension sets cannot be
+        # ranked against each other: renormalising over fewer dimensions can lift
+        # a model above one measured on more. Same shape as the task-level bug
+        # where failing a task raised the average of what remained.
+        lines.append(
+            "**Models were not measured over the same dimensions**, so the composites "
+            "below are not comparable to each other — each is renormalised over the "
+            "dimensions that produced a terminal result for that model:"
+        )
+        lines.append("")
+        for model in models:
+            missing = [d for d in dimensions if d not in covered[model]]
+            if missing:
+                lines.append(f"- **{model}** is missing {', '.join(missing)}")
+        lines.append("")
 
     # Rank models, and say which places in that ranking are not real.
     ranked = sorted(model_composites.items(), key=lambda x: x[1], reverse=True)

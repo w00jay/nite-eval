@@ -9,6 +9,7 @@ import json
 import logging
 import re
 import time
+import zlib
 from dataclasses import dataclass, field
 from typing import NamedTuple, Protocol
 
@@ -171,6 +172,35 @@ MIN_FINAL_ANSWER_CHARS = 20
 DEGENERATE_MIN_REPEATS = 200
 DEGENERATE_UNIT_MAX = 8
 DEGENERATE_SHARE = 0.5
+
+# The suffix detector above only catches an exact, contiguous, short unit. Most
+# real loops are not that shape: a Go table row repeated with only the name
+# changing, a prose line repeated with other lines interleaved, one runaway
+# tool-call token filling a single 85k-character line. Compression catches all
+# of them, because self-similar text compresses far harder than real work.
+#
+# Measured over every truncation failure in the results DB against every
+# distinct file the models actually wrote:
+#
+#   truncation failures (n=63)   min 0.0031   median 0.0402
+#   distinct real files (n=287)  min 0.1468   median 0.3205
+#
+# The populations do not overlap. Threshold sensitivity:
+#
+#   thresh   loops caught   real code flagged
+#    0.10       53/63            0/287
+#    0.13       57/63            0/287
+#    0.15       57/63            3/287
+#
+# 0.13 is chosen over 0.15 because it catches the same 57 loops while flagging
+# no real code at all, leaving 0.0168 of margin to the most repetitive genuine
+# file (a Go table-driven test at 0.1468). It is only ever consulted for output
+# that already hit finish_reason=length, so legitimate long answers that
+# completed never reach it.
+DEGENERATE_COMPRESSION_RATIO = 0.13
+# Below this, zlib's own header dominates the ratio and everything looks
+# compressible. Real loops are orders of magnitude longer than this.
+COMPRESSION_MIN_CHARS = 1000
 
 
 @dataclass
@@ -342,26 +372,11 @@ def run_conversation(
             # malformed model output. Fail the task instead of scoring noise.
             if reply.truncated:
                 turns.append(turn)
-                degenerate = detect_degenerate_repetition(response_text)
-                if degenerate:
-                    repeats, unit = degenerate
-                    return ConversationResult(
-                        turns=turns,
-                        final_response="",
-                        total_tool_calls=total_tool_calls,
-                        total_latency_ms=total_latency,
-                        total_completion_tokens=total_completion,
-                        total_prompt_tokens=total_prompt,
-                        total_predicted_ms=total_predicted_ms,
-                        total_predicted_n=total_predicted_n,
-                        reached_max_turns=False,
-                        repaired_tool_calls=repaired_total,
-                        error=(
-                            f"degenerate_repetition: {unit!r} repeated {repeats} times on turn "
-                            f"{turn_num}, {repeats * len(unit) / len(response_text):.0%} of "
-                            f"{len(response_text)} chars — model looped, not a budget shortfall"
-                        ),
-                    )
+                # 57 of 64 historical truncations were the model looping, not
+                # the budget being short. Say which one this is, so the error
+                # does not send the reader to raise a budget that will only buy
+                # a longer loop.
+                diagnosis = diagnose_truncation(response_text, max_tokens)
                 return ConversationResult(
                     turns=turns,
                     final_response="",
@@ -373,10 +388,7 @@ def run_conversation(
                     total_predicted_n=total_predicted_n,
                     reached_max_turns=False,
                     repaired_tool_calls=repaired_total,
-                    error=(
-                        f"truncated: finish_reason=length on turn {turn_num} "
-                        f"({len(response_text)} chars, max_tokens={max_tokens})"
-                    ),
+                    error=f"{diagnosis} (turn {turn_num})",
                 )
 
             # Tool calls that were emitted but did not parse used to be invisible:
@@ -628,10 +640,7 @@ def run_conversation(
                 total_predicted_n=total_predicted_n,
                 reached_max_turns=True,
                 repaired_tool_calls=repaired_total,
-                error=(
-                    f"truncated: finish_reason=length on synthesis nudge "
-                    f"({len(turns[-1].response)} chars, max_tokens={max_tokens})"
-                ),
+                error=f"{diagnose_truncation(turns[-1].response, max_tokens)} (synthesis nudge)",
             )
 
         final = _extract_best_final_response(turns)
@@ -691,6 +700,56 @@ def detect_degenerate_repetition(text: str) -> tuple[int, str] | None:
         if repeats >= DEGENERATE_MIN_REPEATS and (repeats * unit_len) / len(text) >= DEGENERATE_SHARE:
             return repeats, unit
     return None
+
+
+def compression_ratio(text: str) -> float:
+    """Compressed size over raw size. Lower means more self-similar."""
+    raw = text.encode("utf-8", "replace")
+    if not raw:
+        return 1.0
+    return len(zlib.compress(raw, 6)) / len(raw)
+
+
+def diagnose_truncation(text: str, max_tokens: int) -> str:
+    """Say why a generation hit finish_reason=length.
+
+    Three outcomes, because they point at three different knobs:
+
+    - `reasoning_overrun` — the model emitted no content at all and spent the
+      budget thinking. The fix is the model's reasoning switch, not max_tokens,
+      and saying "max_tokens" here sends the reader to the wrong place.
+    - `degenerate_repetition` — the model looped. A bigger budget buys a bigger
+      loop; CLAUDE.md records 24576 -> 32768 doing exactly that.
+    - `truncated` — genuinely more to say than the budget allowed. Only here is
+      raising max_tokens the right response, and it is 6 of 64 historical cases.
+    """
+    if not text:
+        return (
+            "reasoning_overrun: finish_reason=length with empty content — the budget "
+            "went to reasoning, not output. Check this model's reasoning switch "
+            "(enable_thinking / reasoning_effort) before touching the token budget."
+        )
+
+    exact = detect_degenerate_repetition(text)
+    if exact:
+        repeats, unit = exact
+        return (
+            f"degenerate_repetition: {unit!r} repeated {repeats} times, "
+            f"{repeats * len(unit) / len(text):.0%} of {len(text)} chars — "
+            f"model looped, not a budget shortfall"
+        )
+
+    if len(text) >= COMPRESSION_MIN_CHARS:
+        ratio = compression_ratio(text)
+        if ratio < DEGENERATE_COMPRESSION_RATIO:
+            return (
+                f"degenerate_repetition: {len(text)} chars compress to "
+                f"{ratio:.1%} of their size (threshold {DEGENERATE_COMPRESSION_RATIO:.0%}; "
+                f"real code never measures below 0.147) — model looped, not a budget "
+                f"shortfall. Raising max_tokens buys a longer loop."
+            )
+
+    return f"truncated: finish_reason=length ({len(text)} chars, max_tokens={max_tokens})"
 
 
 def compact_tool_call_payloads(response_text: str, parsed: ParsedResponse, threshold: int) -> str:
@@ -975,7 +1034,8 @@ def _call_model(
             )
     if finish == "length":
         logger.warning(
-            "Truncated generation from %s (finish=length, content_len=%d) — raise max_tokens for this task",
+            "Truncated generation from %s (finish=length, content_len=%d) — see the task error for "
+            "whether this is a loop or a real budget shortfall; it is a loop 89%% of the time",
             model_name,
             len(content),
         )

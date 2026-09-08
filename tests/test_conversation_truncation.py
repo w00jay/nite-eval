@@ -5,6 +5,7 @@ was indistinguishable from a completed one: the fragment became final_response
 and was scored by the judge.
 """
 
+import pathlib
 from unittest.mock import patch
 
 from nite_eval.conversation_runner import ModelReply, run_conversation
@@ -323,10 +324,23 @@ def test_degeneration_is_reported_as_such_not_as_truncation():
 
 
 def test_healthy_long_response_is_not_called_degenerate():
-    """A genuinely long answer must still be reported as truncated."""
+    """A genuinely long answer must still be reported as truncated.
+
+    The fixture was one sentence repeated 200 times until 2026-09-08. That is a
+    loop, not a healthy response — the old suffix detector only passed it
+    because the repeated unit was 61 characters and it looks at 8. Compression
+    catches it correctly, so the fixture is now varied prose, which is what the
+    test claims to be checking.
+    """
+    import nite_eval.report
     from nite_eval.conversation_runner import detect_degenerate_repetition
 
-    prose = "The gateway aggregates tools from every configured upstream. " * 200
+    # Real varied text, because anything generated from a template compresses
+    # like a loop: one sentence skeleton with only the numbers changing measures
+    # 0.073, well under the 0.13 threshold, and would make this test assert the
+    # opposite of what it claims. Real prose and real code measure 0.30-0.45.
+    prose = pathlib.Path(nite_eval.report.__file__).read_text()
+    assert len(prose) > 10_000
     assert detect_degenerate_repetition(prose) is None
 
     result = _run([ModelReply(text=prose, finish_reason="length")])

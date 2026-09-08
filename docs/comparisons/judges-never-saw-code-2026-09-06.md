@@ -115,3 +115,71 @@ last resort. A real coding prompt with code included measures 9200 chars
 than the qwen3.6 reasoning-switch one, because it changes what 30-60% of each
 coding task measures. Nothing has been re-run. The README's Coding column, and
 every coding figure in `docs/comparisons/`, predates it.
+
+---
+
+## Re-baseline: `run-20260906-181136`
+
+7 models × 4 coding tasks, run on the fixed harness. 23 completed, 5 failed,
+2h09m.
+
+| Model | prev | prev run | **new** | delta | tasks |
+|---|---:|---|---:|---:|---:|
+| qwen3.8-27b | 0.90 | `…063950` | **0.78** | −0.13 | 4/4 |
+| muse-glimmer-30b | 0.70 | `…002243` | **0.61** | −0.09 | 3/4 |
+| ornith-1.5-35b-a3b | 0.48 | `…002243` | **0.42** | −0.06 | 4/4 |
+| gemma4-26b-a4b | 0.17 | `…002243` | **0.16** | −0.01 | 2/4 |
+| qwen3.6-35b-a3b | 0.31 | `…235130` | **0.15** | −0.17 | 3/4 |
+| lfm2.5-2.6b | 0.23 | `…002243` | **0.12** | −0.11 | 3/4 |
+| lfm2.5-8b-a1b | 0.11 | `…002243` | **0.06** | −0.05 | 4/4 |
+
+**Every model dropped**, which is the expected direction: the old numbers
+included credit for describing work. The ordering at the top is unchanged —
+qwen3.8 > muse-glimmer > ornith — so the fix did not reshuffle the fleet, it
+lowered it. gemma4's −0.01 is not resilience; it was already near the floor.
+
+`coding_wine_medium_01` for qwen3.6 landed at **0.00**, matching the offline
+validation exactly.
+
+### What the new report section immediately exposed
+
+`lfm2.5-8b-a1b` has **never made a single tool call on any coding task**, in any
+run. Four tasks, one turn each, 2505-10607 characters of prose, byte-identical
+across `run-20260903-002243` and this one:
+
+| task | turns | tool calls | response chars | old | new |
+|---|---:|---:|---:|---:|---:|
+| `coding_artemis_medium_01` | 1 | 0 | 8604 | 0.09 | 0.00 |
+| `coding_mcp_easy_01` | 1 | 0 | 5621 | 0.20 | 0.20 |
+| `coding_mcp_hard_01` | 1 | 0 | 10607 | 0.02 | 0.00 |
+| `coding_wine_medium_01` | 1 | 0 | 2505 | 0.14 | 0.04 |
+
+Its entire coding score was credit for prose. This was invisible before the
+"Declared Tools, Used None" section existed.
+
+### One residual case, and it is not the same bug
+
+`coding_mcp_easy_01` still scores 0.20 for `lfm2.5-8b-a1b` with zero tool calls.
+That is **not** the judge hallucinating from the spec. The model wrote real Go
+inline in the chat — six fenced blocks, `package config`, imports, structs — and
+the judge scored the code it was actually shown:
+
+> "The code implements the required structs and validation logic, with proper
+> error handling and YAML parsing. Tests cover key validation scenarios, though
+> they use a non-standard 'tmpfile' package..."
+
+That is a correct reading of real code. The model produced code but never
+delivered it through the tool, so nothing reached disk and both automated
+criteria scored 0 — 70% of the task's weight. `0.67 × 0.30 = 0.20` is the
+defensible remainder.
+
+Worth knowing for future prompt work: the absence sentinel says "every criterion
+about the code scores 1", and the judge overrode it because it could see code.
+Judges weigh what is in front of them over an instruction about what is not.
+
+### A reporting wart this run exposed
+
+The summary table prints Research, Planning and Agentic as 0.00 for a
+dimension-filtered run and then computes a Composite from them, so qwen3.8's
+"Composite 0.78" is just its coding score wearing the wrong label. The composite
+should exclude dimensions that were not run. Not fixed here.
