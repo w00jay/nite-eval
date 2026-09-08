@@ -117,7 +117,12 @@ class SandboxSpec:
 # date inside file contents cannot match — every shell result passes through
 # here, including `cat` behind read_file, and rewriting source the model is
 # about to copy would be far worse than the non-determinism being fixed.
-_LS_ENTRY = r"^([bcdlps-][rwxsStT-]{9}[.+]?\s+\d+\s+\S+\s+\S+\s+\d+\s+)"
+# `find -ls`, `ls -li` and `ls -ls` prefix each entry with an inode and/or a
+# block count, so the mode bits are not at the line start and the date was
+# leaking through. The prefix is optional and purely numeric; the whole
+# mode/links/owner/group/size run is still required, so the safety property
+# above is unchanged.
+_LS_ENTRY = r"^(\s*(?:\d+\s+){0,2}[bcdlps-][rwxsStT-]{9}[.+]?\s+\d+\s+\S+\s+\S+\s+\d+\s+)"
 _LS_DATE_RE = re.compile(_LS_ENTRY + r"(\w{3}\s+\d{1,2}\s+(?:\d{2}:\d{2}|\d{4}))", re.MULTILINE)
 _LS_ISO_RE = re.compile(
     _LS_ENTRY + r"(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:\s+[+-]\d{4})?)",

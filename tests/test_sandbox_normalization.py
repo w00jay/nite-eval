@@ -409,3 +409,38 @@ def test_two_full_runs_of_the_same_task_normalize_identically():
 def test_empty_and_plain_output():
     assert _normalize_volatile("") == ""
     assert _normalize_volatile("hello\n") == "hello\n"
+
+
+def test_find_ls_entries_have_their_dates_replaced():
+    """`find -ls` puts inode and block counts before the mode bits.
+
+    The original anchor required the mode bits at line start, so this format
+    leaked mtimes. Measured live: muse-glimmer's coding_mcp_hard_01 diverged at
+    turn 7 on `Sep  8 20:44` in exactly this listing.
+    """
+    a = "       33      4 -rw-r--r--   1 root     root           95 Sep  8 20:44 /app/mcpgateway/go.mod"
+    b = "       33      4 -rw-r--r--   1 root     root           95 Sep  9 03:12 /app/mcpgateway/go.mod"
+    assert a != b
+    assert _normalize_volatile(a) == _normalize_volatile(b)
+
+
+def test_ls_inode_and_block_prefixes_are_handled():
+    """`ls -li` carries an inode, `ls -ls` a block count, `find -ls` both."""
+    for pre in ("  1234 ", "     4 ", "   33      4 "):
+        a = f"{pre}-rw-r--r--   1 root root  95 Sep  8 20:44 go.mod"
+        b = f"{pre}-rw-r--r--   1 root root  95 Sep  9 03:01 go.mod"
+        assert _normalize_volatile(a) == _normalize_volatile(b), pre
+
+
+def test_a_numeric_prefix_alone_does_not_make_a_listing():
+    """The mode/links/owner/group/size run is still required.
+
+    Without it a leading number would turn any prose containing an ls-shaped
+    date into a rewrite target.
+    """
+    for line in (
+        "Release date: Sep  8 20:44 per the changelog",
+        "42 records written Sep  8 20:44",
+        "   33      4 files matched Sep  8 20:44",
+    ):
+        assert _normalize_volatile(line) == line, line
