@@ -128,6 +128,14 @@ _LS_ISO_RE = re.compile(
     _LS_ENTRY + r"(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:\s+[+-]\d{4})?)",
     re.MULTILINE,
 )
+# Terminal escape sequences, stripped before anything else so every anchor
+# below sees clean text. deno colourizes its test output even with no TTY —
+# `docker exec` runs without -t and colour was assumed off, which cost a gate
+# run: `... ok (4ms)` arrives as `... \x1b[0m\x1b[32mok\x1b[0m \x1b[38;5;245m(4ms)\x1b[0m`
+# and the deno anchor never matched. Canonical CSI form, so only real escape
+# sequences match — a literal "[0m" in file contents is untouched.
+_ANSI_CSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
 _LS_DATE_PLACEHOLDER = "Jan  1 00:00"
 _LS_ISO_PLACEHOLDER = "1970-01-01 00:00:00.000000000 +0000"
 
@@ -221,6 +229,7 @@ def _normalize_volatile(text: str) -> str:
 
     So this makes coding markedly less non-deterministic, not reproducible.
     """
+    text = _ANSI_CSI_RE.sub("", text)
     text = _LS_ISO_RE.sub(lambda m: m.group(1) + _LS_ISO_PLACEHOLDER, text)
     text = _LS_DATE_RE.sub(lambda m: m.group(1) + _LS_DATE_PLACEHOLDER, text)
     text = _PY_ADDR_RE.sub(lambda m: m.group(1) + _PY_ADDR_PLACEHOLDER, text)

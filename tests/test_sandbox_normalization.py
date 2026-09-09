@@ -444,3 +444,31 @@ def test_a_numeric_prefix_alone_does_not_make_a_listing():
         "   33      4 files matched Sep  8 20:44",
     ):
         assert _normalize_volatile(line) == line, line
+
+
+def test_ansi_wrapped_deno_timings_normalize():
+    """deno colourizes even with no TTY, which broke the `... ok (` anchor.
+
+    Measured: ornith / coding_wine_medium_01 diverged at turn 17 on (4ms) vs
+    (3ms) wrapped in SGR codes, after the plain form was already handled.
+    """
+    a = "label scan ... \x1b[0m\x1b[32mok\x1b[0m \x1b[0m\x1b[38;5;245m(4ms)\x1b[0m"
+    b = "label scan ... \x1b[0m\x1b[32mok\x1b[0m \x1b[0m\x1b[38;5;245m(3ms)\x1b[0m"
+    assert a != b
+    assert _normalize_volatile(a) == _normalize_volatile(b)
+
+
+def test_ansi_wrapped_go_timings_normalize():
+    a = "\x1b[0mok\x1b[0m  \x1b[32mmcpconfig/config\x1b[0m  0.008s"
+    b = "\x1b[0mok\x1b[0m  \x1b[32mmcpconfig/config\x1b[0m  0.007s"
+    assert _normalize_volatile(a) == _normalize_volatile(b)
+
+
+def test_bracket_sequences_without_an_escape_byte_survive():
+    """Only real CSI sequences are stripped, never text that looks like one."""
+    for line in (
+        'const RESET = "[0m"; // literal, no escape byte',
+        "matrix[0m] = value",
+        "see ANSI [38;5;245m for grey",
+    ):
+        assert _normalize_volatile(line) == line, line
