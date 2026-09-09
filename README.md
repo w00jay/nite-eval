@@ -37,6 +37,24 @@ fixture gaps were closed and landed on the same composite as before (0.58) — t
 gaps were 6 unanswered calls across 45 tasks, and closing them moved nothing
 beyond judge variance. Worth having measured rather than assumed.
 
+> **This whole table is superseded by `run-20260908-012542`** — the first
+> 9-model x 15-task sweep on one harness (7h32m, 129 completed / 6 failed, 0%
+> unscored weight). The table above splices runs from different harness
+> versions; that one does not. Its research, planning and agentic columns are
+> the numbers to quote. Its ordering also differs: muse-glimmer 0.82 and
+> qwen3.8 0.81 are a statistical tie at the top, and six of the eight adjacent
+> pairs are inside the 0.05 noise floor.
+>
+> **Coding moved again on 2026-09-09** and is on the wrong side of a second
+> boundary. Eight sources of container nondeterminism were closed; measured
+> before/after on muse-glimmer, `coding_mcp_hard_01` went from a 0.369
+> run-to-run score swing with deterministic criteria flipping, to 0.042 with
+> everything stable. Coding therefore needs one more re-baseline, and the
+> tables below understate how much its numbers can move between runs.
+>
+> Regenerating this section is deliberately deferred until the confirming
+> determinism gate run settles — see TODO.
+
 > **The Coding column above is superseded.** Until 2026-09-06 the coding judge
 > criteria were scored from the model's closing prose, never from the code it
 > wrote — 30-60% of each coding task's weight. The harness now shows the judge
