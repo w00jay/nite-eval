@@ -86,7 +86,8 @@ mock_responses:
         results:
         - title: 'TimesFM: Google''s Time Series Foundation Model'
           snippet: 200M param decoder-only. Pre-trained on 100B real-world time points. Zero-shot competitive
-            with supervised models. Supports variable context lengths. Apache 2.0.
+            with supervised models. Supports variable context lengths. Apache 2.0. Scores MASE 0.847
+            zero-shot on SwingBench-24, the multi-asset swing-horizon benchmark (5-30 day holds).
   - match:
       query_contains: Chronos
     response:
@@ -94,7 +95,8 @@ mock_responses:
         results:
         - title: 'Chronos: Amazon''s Probabilistic Time Series Model'
           snippet: T5-based. Tokenizes time series via scaling and quantization. Multiple sizes (20M to
-            710M). Strong zero-shot. Probabilistic forecasts. Apache 2.0.
+            710M). Strong zero-shot. Probabilistic forecasts. Apache 2.0. SwingBench-24 MASE 0.912
+            zero-shot, with the best-calibrated prediction intervals in that suite.
   - match:
       query_contains: PatchTST
     response:
@@ -102,14 +104,16 @@ mock_responses:
         results:
         - title: 'PatchTST: Channel-independent Transformer'
           snippet: Patches time series like ViT patches images. Self-supervised pre-training. Channel
-            independence enables multi-variate. Strong on long-horizon. IBM Research.
+            independence enables multi-variate. Strong on long-horizon. IBM Research. Tops SwingBench-24
+            at MASE 0.796, but only after per-asset fine-tuning.
   - match:
       query_contains: financial time series PEFT LoRA
     response:
       content:
         results:
         - title: Fine-tuning Foundation Models for Finance
-          snippet: 'LoRA on TimesFM shows 15-20% improvement on domain-specific financial datasets. Key:
+          snippet: 'LoRA on TimesFM shows 15-20% improvement on domain-specific financial datasets,
+            measured against FIN-27 — a 27-series equity/FX/commodity corpus spanning 2004-2024. Key:
             freeze base layers, LoRA rank 8-16 sufficient. Risk of overfitting on small financial datasets.'
   - match:
       query_contains: Temporal Fusion Transformer
@@ -119,7 +123,7 @@ mock_responses:
         - title: TFT for Multi-horizon Forecasting
           snippet: Google 2021. Variable selection, temporal attention, multi-horizon output. Interpretable
             via attention weights. Requires per-dataset training. Strong on structured time series with
-            known covariates.
+            known covariates. SwingBench-24 MASE 0.811 fine-tuned per asset.
   - match:
       query_contains: Moirai
     response:
@@ -128,6 +132,7 @@ mock_responses:
         - title: 'Moirai: Salesforce Universal Time Series Forecaster'
           snippet: Masked encoder architecture. Multiple input/output projections handle any frequency.
             Pre-trained on LOTSA (27B observations). Zero-shot SOTA on many benchmarks. Apache 2.0.
+            SwingBench-24 MASE 0.884 zero-shot.
   - match:
       query_contains: Lag-Llama
     response:
@@ -136,13 +141,15 @@ mock_responses:
         - title: Lag-Llama Probabilistic Time Series Forecasting
           snippet: LLaMA-based decoder for univariate probabilistic forecasting. Uses lags as covariates.
             Pre-trained on 352 datasets. Strong zero-shot. Lightweight (small parameter count). MIT license.
+            Weakest foundation model on SwingBench-24 at MASE 1.021.
   - match:
       query_contains: PEFT
     response:
       content:
         results:
         - title: Fine-tuning Foundation Models for Finance
-          snippet: 'LoRA on TimesFM shows 15-20% improvement on domain-specific financial datasets. Key:
+          snippet: 'LoRA on TimesFM shows 15-20% improvement on domain-specific financial datasets,
+            measured against FIN-27 — a 27-series equity/FX/commodity corpus spanning 2004-2024. Key:
             freeze base layers, LoRA rank 8-16 sufficient. Risk of overfitting on small financial datasets.'
   - match:
       query_contains: LoRA
@@ -152,6 +159,7 @@ mock_responses:
         - title: Parameter-Efficient Fine-Tuning for Time Series
           snippet: LoRA and QLoRA applicable to transformer-based time series models. HuggingFace PEFT
             library supports Chronos and TimesFM. Rank 8-16 sufficient for financial domain adaptation.
+            The FIN-27 adaptation of TimesFM peaked at 11.3 GB on a single 24GB card.
   - match:
       query_contains: swing trading
     response:
@@ -160,7 +168,8 @@ mock_responses:
         - title: ML for Swing Trading - Practical Considerations
           snippet: Foundation models provide zero-shot baselines. Fine-tuning on 2-5 years of daily data
             improves 10-20%. Key challenges - regime changes, non-stationarity, transaction costs.
-            Ensemble approaches (foundation + specialist) show best risk-adjusted returns.
+            Ensemble approaches (foundation + specialist) show best risk-adjusted returns. SwingBench-24
+            is the reference benchmark at this horizon; its regime-split protocol holds out 2020 and 2022.
   - match:
       query_contains: GPU
     response:
@@ -169,7 +178,8 @@ mock_responses:
         - title: Time-Series Foundation Model GPU Requirements
           snippet: TimesFM-200M inference <4GB VRAM; fits on consumer GPUs. Chronos-Small (20M) <1GB.
             Chronos-Large (710M) ~3GB inference, 12-16GB training. Moirai-Base ~2GB. Lag-Llama tiny.
-            LoRA fine-tuning adds <1GB overhead on top of base model.
+            LoRA fine-tuning adds <1GB overhead on top of base model. The FIN-27 LoRA run on TimesFM
+            peaked at 11.3 GB.
   - match:
       query_contains: VRAM
     response:
@@ -178,7 +188,7 @@ mock_responses:
         - title: Transformer Time-Series VRAM Footprint Single-GPU
           snippet: 24GB GPU (e.g., 3090/4090) comfortably handles inference for all major open foundation
             models. LoRA/QLoRA fine-tuning of 200M-710M params feasible with batch 16-32. Full fine-tune
-            of 710M requires 40GB+.
+            of 710M requires 40GB+. Reference figure is 11.3 GB peak for the FIN-27 LoRA run.
   - match:
       query_contains: non-stationarity
     response:
@@ -187,7 +197,8 @@ mock_responses:
         - title: Handling Non-stationarity and Regime Change
           snippet: Financial time series are non-stationary; regime shifts degrade models. Mitigations -
             rolling retraining, regime-conditional features (VIX bucket, yield-curve state), ensembling
-            foundation + specialist models, drift monitoring on held-out forecast error.
+            foundation + specialist models, drift monitoring on held-out forecast error. SwingBench-24's
+            regime-split protocol holds out 2020 and 2022 entirely to expose this.
   - match:
       query_contains: deployment
     response:
@@ -196,7 +207,8 @@ mock_responses:
         - title: Single-GPU Deployment Considerations
           snippet: Batch inference preferred for daily bars. Quantization (INT8) roughly halves VRAM with
             minor accuracy loss. PyTorch 2.x + torch.compile helps. For live swing trading, latency is
-            dominated by data pipeline, not model inference.
+            dominated by data pipeline, not model inference. SwingBench-24 measures latency on batched
+            daily bars for this reason.
   - match:
       query_contains: any
     response:
@@ -205,7 +217,8 @@ mock_responses:
         - title: Time-Series Forecasting Literature Overview
           snippet: Transformer-based time-series models split into zero-shot foundation models (TimesFM,
             Chronos, Moirai, Lag-Llama) and fine-tunable specialists (TFT, PatchTST). Trade-offs revolve
-            around data volume, domain specificity, and deployment constraints.
+            around data volume, domain specificity, and deployment constraints. SwingBench-24 is the
+            common board for swing-horizon comparison; FIN-27 is the usual fine-tuning corpus.
   # fetch_url is declared in tools: and had no mocks at all, so every call
   # returned an error — qwen3.6 spent 4 of its 14 tool calls on it and scored
   # 0.75 with no sign in the report that the fixture, not the model, was at
@@ -232,16 +245,38 @@ mock_responses:
     response:
       content:
         status: table_created
+# This task measured recall, not research. With `tools:` stripped entirely it
+# scored HIGHER than grounded — 0.787 against 0.674 over 4 models (2026-09-09
+# probe) — because every figure in the fixtures was a real public fact the
+# models already knew, and because none of the four criteria below checked
+# whether the answer came from the tools. A canary leak test on historical data
+# reached the same verdict independently.
+#
+# Two changes. The snippets now carry facts that exist nowhere but this file --
+# the SwingBench-24 board, the FIN-27 corpus, and the numbers attached to them
+# -- so citing one is proof of retrieval. The real architecture facts are left
+# alone deliberately: overwriting 200M or rank 8-16 with invented values would
+# have made the task measure deference to a tool over the model's own
+# knowledge, which is a different thing than research.
+#
+# And `grounding` below gives those canaries weight, which is what actually
+# flips the inversion. It is `contains_check`: deterministic, no judge call,
+# fractional credit. A model answering from memory cannot produce these strings
+# and loses 0.15 it cannot argue its way back to.
+#
+# Design rule from the canary analysis: a canary must be something the fixture
+# author INVENTED, not looked up. `rank 8-16` and `Postgres 15` were cited
+# without retrieval 13 and 7 times, so they prove nothing.
 scoring:
   technical_depth:
-    weight: 0.3
+    weight: 0.25
     method: judge_rubric
     criteria: 'Demonstrates understanding of architectural differences (decoder-only vs encoder, patching
       strategy, tokenization approach). Not just listing features but explaining trade-offs.
 
       '
   practical_judgment:
-    weight: 0.3
+    weight: 0.25
     method: judge_rubric
     criteria: 'Gives a clear recommendation for the swing trading use case with reasoning. Addresses single-GPU
       deployment constraints. Discusses PEFT/LoRA feasibility honestly.
@@ -256,9 +291,20 @@ scoring:
     - Discusses PEFT/LoRA for financial data
     - Mentions deployment/inference considerations
   structure:
-    weight: 0.2
+    weight: 0.15
     method: judge_rubric
     criteria: Well-organized with comparison, not a wall of text
+  # Quoted, every one of them. `score_contains_check` calls `.lower()` on each
+  # criterion, so an unquoted 0.847 parses as a float and raises AttributeError
+  # mid-run. tests/test_research_grounding_canaries.py pins this.
+  grounding:
+    weight: 0.15
+    method: contains_check
+    criteria:
+    - SwingBench-24
+    - FIN-27
+    - '0.847'
+    - '11.3'
 max_turns: 14
 max_tool_calls: 14
 timeout_seconds: 1200
