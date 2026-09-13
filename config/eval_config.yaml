@@ -401,24 +401,36 @@ scoring:
   min_detectable_difference: 0.05
   # Some dimensions are noisier than the composite and must not be read against
   # its threshold. Coding tasks run in a real container and the container's
-  # output enters the conversation: an `ls -la` on turn 1 returns the directory
-  # mtime, which is the container's creation time, so two runs of the same model
-  # at temperature 0 diverge from turn 2 and go on to write different code.
-  # ornith-1.5 emitted 65986 / 66666 / 65604 bytes of tool-call arguments across
-  # three runs of coding_artemis_medium_01, and in one of them the code it
-  # happened to write hit a real bug: both automated criteria scored 0 rather
-  # than 1.00 and 0.93, moving the task 0.62 -> 0.00.
+  # output enters the conversation, so any per-container variation makes two
+  # runs at temperature 0 diverge from the next turn and write different code.
   #
-  # Observed per-task swings on identical configuration were 0.1-0.6, and the
-  # coding dimension moved 0.49 -> 0.39 between two such runs. 0.15 is set from
-  # that dimension-level spread, not from the per-task extremes.
+  # 0.15 was measured, not chosen: ornith-1.5 emitted 65986 / 66666 / 65604
+  # bytes of tool-call arguments across three runs of coding_artemis_medium_01,
+  # one of which hit a real bug in the code it happened to write (both automated
+  # criteria 0 rather than 1.00 and 0.93, moving the task 0.62 -> 0.00), and the
+  # coding dimension moved 0.49 -> 0.39 between two such runs.
   #
-  # Accepted rather than fixed. Making the container reproducible means pinning
-  # its clock and every other varying surface; normalising timestamps in sandbox
-  # output is on the TODO as the cheaper partial fix. Until then the honest
-  # response is to stop over-reading coding gaps.
+  # Lowered to 0.10 on 2026-09-11, after the sandbox determinism work closed
+  # eight volatile surfaces and the acceptance gate confirmed it. Evidence is
+  # run-20260909-030053 / -034638 / -043217 — 2 models x 4 coding tasks, three
+  # back-to-back repeats:
+  #
+  #   G1  byte-identical call traces        7/8 pairs
+  #   G2  no completed/failed flips         8/8
+  #   G3  no deterministic criterion moved  8/8
+  #   G4  worst weighted_score spread       0.042   (gate bound 0.09)
+  #
+  # The one G1 failure is ornith / coding_mcp_easy_01, where Go permuted a
+  # table-driven test's subtest blocks — the documented map-iteration exception,
+  # which no substitution reaches. Its score spread was 0.000: the trace moved
+  # and the number did not.
+  #
+  # Not 0.05. The composite's threshold is out of reach here because the judge
+  # floor alone is 0.0875 — the worst spread across 37 groups / 99 runs whose
+  # model output was byte-identical. 0.10 clears that floor and the 0.042
+  # measured above; 0.05 would sit underneath the judge's own variance.
   dimension_min_detectable_difference:
-    coding: 0.15
+    coding: 0.10
   dimension_weights:
     research: 0.25
     planning: 0.25

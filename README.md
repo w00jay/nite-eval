@@ -52,8 +52,13 @@ beyond judge variance. Worth having measured rather than assumed.
 > everything stable. Coding therefore needs one more re-baseline, and the
 > tables below understate how much its numbers can move between runs.
 >
-> Regenerating this section is deliberately deferred until the confirming
-> determinism gate run settles — see TODO.
+> **The confirming gate run has since settled** (`run-20260909-030053` and two
+> repeats, checked 2026-09-11): 7 of 8 model/task pairs byte-identical, no
+> completed/failed flips, no deterministic criterion moved, worst score spread
+> 0.042 against a 0.09 bound. The one exception is Go permuting a table-driven
+> test's subtests, which no substitution reaches. Coding's threshold has moved
+> to 0.10 accordingly. Regenerating this section still needs a re-baselined
+> coding run — see TODO.
 
 > **The Coding column above is superseded.** Until 2026-09-06 the coding judge
 > criteria were scored from the model's closing prose, never from the code it
@@ -97,9 +102,9 @@ two decimal places. muse-glimmer wins agentic outright (0.86 vs 0.84) and runs
 faster.
 
 **Coding is the discriminator.** 0.92 and 0.88 at the top, then a cliff to 0.49
-and below. It also carries its own noise floor of 0.15 rather than the
-composite's 0.05, because container output is not reproducible; see "Known
-limitations".
+and below. It also carries its own noise floor of 0.10 rather than the
+composite's 0.05, because container output is only mostly reproducible; see
+"Known limitations". These figures were recorded when that floor was 0.15.
 
 **Nothing here separates places 3 through 7 cleanly.** ornith at 0.70 is clear
 of the rest, but 0.63 / 0.61 / 0.58 / 0.55 spans less than judge variance plus
@@ -142,7 +147,9 @@ both ways over 15 tasks on the native tool-call path:
 Coding has since read 0.33, 0.39 and 0.47 across further runs of that same
 thinking-off configuration, against the 0.49 above. Four samples spanning 0.16
 is the reproducibility problem described under "Known limitations", and it is
-why coding carries a 0.15 threshold rather than the composite's 0.05. The
+why coding carried a 0.15 threshold rather than the composite's 0.05. That
+spread was the container leaking into the conversation; with the leaks closed
+the threshold is now 0.10, but these four samples predate the fix. The
 thinking-on and thinking-off coding figures differ by more than that spread,
 which is what makes the comparison usable; the individual numbers are not.
 
@@ -214,7 +221,7 @@ Running the full suite at `medium` settled it:
 A second run at `medium` reproduced it: 0.83 / 0.78 / **0.89** / 0.86 for a
 composite of 0.84 again, with three dimensions identical to two decimal places
 and coding within 0.01. Coding reproducing that tightly is worth noting on its
-own, given the dimension carries a 0.15 noise floor — this model appears far
+own, given the dimension carried a 0.15 noise floor then — this model appears far
 less sensitive to the container non-determinism than ornith, whose coding spans
 0.33 to 0.49 across four runs of one configuration.
 
@@ -749,27 +756,39 @@ to `0.0`, `deterministic` criteria returning a free `1.0`, checklists matching o
 single keywords, a judge prompt capped at 1/3/5. Old runs remain in the database
 for provenance. They are not a baseline.
 
-**Coding is not reproducible, by construction.** Coding tasks run in a real
-container and the container's output enters the conversation. An `ls -la` on
-turn 1 returns the working directory's mtime, which is the container's creation
-time, so two runs of the same model at `temperature: 0` see different history
-from turn 2 and go on to write different code — ornith-1.5 emitted 65986, 66666
-and 65604 bytes of tool-call arguments across three runs of one task. Where the
-code it happened to write hit a real bug, both automated criteria scored 0
-instead of 1.00 and 0.93, moving that task 0.62 to 0.00. Per-task swings of
-0.1-0.6 and a dimension-level swing of 0.49 to 0.39 have been observed on
-identical configuration, so `scoring.dimension_min_detectable_difference` sets
-coding's threshold to 0.15 and reports print it. Timestamps are the cause found;
-anything else varying per container — `find` ordering, hostnames, mtimes on
-copied files — behaves the same way.
+**Coding is reproducible now, with two documented exceptions.** Coding tasks
+run in a real container and the container's output enters the conversation, so
+any per-container variation makes two runs at `temperature: 0` diverge from the
+next turn and write different code. That used to be the norm: ornith-1.5 emitted
+65986, 66666 and 65604 bytes of tool-call arguments across three runs of one
+task, and where the code it happened to write hit a real bug both automated
+criteria scored 0 instead of 1.00 and 0.93, moving that task 0.62 to 0.00.
+
+Eight volatile surfaces have since been closed — `ls` and `find` dates, ASLR
+heap addresses, `go test` and `deno test` elapsed times, pytest summaries, Go
+`log` wall clocks and the container hostname, with ANSI escapes stripped first
+because deno colourizes even with no TTY. `scripts/check_determinism_gate.py`
+measures whether that held. On the confirming run (`run-20260909-030053` and two
+repeats) 7 of 8 model/task pairs produced byte-identical call traces, no task
+flipped completed/failed, no deterministic criterion moved, and the worst
+weighted-score spread was 0.042 against a 0.09 bound. So
+`scoring.dimension_min_detectable_difference` now sets coding's threshold to
+0.10 rather than 0.15, and reports print it.
+
+Two surfaces remain and no substitution reaches either. Go randomizes map
+iteration per process, so a table-driven test backed by a map permutes whole
+blocks of output; the gate labels that `[line-permutation only]` rather than
+calling it a leak. And a timestamp the model's own generated code prints is
+outside the harness's control. Coding stays above the composite's 0.05 for a
+separate reason regardless: the judge floor alone is 0.0875.
 
 **One sample per task.** 15 tasks, each run once, judge scores averaged over
 three. Composite gaps under 0.05 are inside judge variance; reports say so per
 run. On mock-backed tasks the target is essentially deterministic at
-`temperature: 0`, so repeat runs of the model buy nothing there — but see the
-entry above, which makes that false for coding. More tasks or more judge samples
-are what would
-sharpen this.
+`temperature: 0`, so repeat runs of the model buy nothing there. That was false
+for coding until 2026-09-09, when the container leaks were closed; it now holds
+there too, bar the two exceptions noted above. More tasks or more judge samples
+are what would sharpen this.
 
 **Per-task token budgets bound the coding scores.** Coding tasks cap generation
 at `max_tokens: 32768` as of 2026-08-31, raised from 24576 (planning is at

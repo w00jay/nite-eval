@@ -27,6 +27,7 @@ waived by showing that byte carries no clock, address, hostname or temp path.
 from __future__ import annotations
 
 import argparse
+import re
 import sqlite3
 import sys
 from collections import defaultdict
@@ -48,6 +49,43 @@ VOLATILE_HINTS = (
     "ms)",
     "s)",
 )
+
+# Results are stored as JSON, so a newline inside one arrives as the two
+# characters \ and n. Splitting on real newlines alone would see a single line
+# and call every result a permutation of itself.
+_LINE_SPLIT_RE = re.compile(r"\\n|\n")
+
+
+def _split_lines(text: str) -> list[str]:
+    return _LINE_SPLIT_RE.split(text)
+
+
+def line_permutation(a: str, b: str) -> bool:
+    """True when two results hold exactly the same lines in a different order.
+
+    Go randomizes map iteration per process, so a table-driven test backed by a
+    map emits its subtest blocks permuted between runs. That is the order of
+    lines, not a token inside one, so no substitution reaches it and
+    _normalize_volatile deliberately does not try — see its docstring and
+    test_sandbox_normalization.test_go_map_iteration_order_remains_a_known_gap.
+
+    Distinguishing it matters because the window-limited VOLATILE_HINTS scan
+    reports NONE here, which reads as "this may be real" and points an operator
+    at the one surface already measured, documented and declined.
+
+    Multiset, not set: a line emitted three times and twice is a real
+    divergence. Identical results are not a permutation — nothing was reordered.
+    """
+    if a == b:
+        return False
+    return sorted(_split_lines(a)) == sorted(_split_lines(b))
+
+
+def permutation_shape(a: str, b: str) -> tuple[int, int]:
+    """(total lines, positions whose line changed). Positions, not lines moved."""
+    la, lb = _split_lines(a), _split_lines(b)
+    moved = sum(1 for x, y in zip(la, lb, strict=False) if x != y)
+    return len(la), moved
 
 
 def fetch_pairs(conn: sqlite3.Connection, runs: list[str], dimension: str | None) -> list[tuple[str, str]]:
@@ -177,8 +215,8 @@ def main() -> int:
         rows.append((label, g1, g2, g3, spread, g4, statuses))
 
         if not g1:
-            failures["G1"].append(label)
             base = traces[0]
+            perm_only = False
             for other_i, other in enumerate(traces[1:], start=1):
                 for i in range(max(len(base), len(other))):
                     a = base[i] if i < len(base) else None
@@ -194,6 +232,14 @@ def main() -> int:
                             note = "no preceding result stored — trace unavailable, not evidence"
                         elif kind == "identical":
                             note = "preceding result identical — the leak is further upstream"
+                        elif line_permutation(ra, rb):
+                            total, moved = permutation_shape(ra, rb)
+                            perm_only = True
+                            note = (
+                                f"line-permutation only: {total} lines, {moved} positions reordered, "
+                                "none added or removed — the known Go map-iteration exception, "
+                                "not a leak"
+                            )
                         else:
                             note = f"volatile markers present: {hint or 'NONE — investigate, this may be real'}"
                         failures["G1_detail"].append(
@@ -205,6 +251,8 @@ def main() -> int:
                         )
                         break
                 break
+            # Annotated, never excused: a permutation is still a G1 failure.
+            failures["G1"].append(label + (" [line-permutation only]" if perm_only else ""))
         if not g2:
             failures["G2"].append(f"{label}: {' -> '.join(statuses)}")
         if not g3:
