@@ -88,6 +88,16 @@ judge weight exceeds ~30% will rank models by verbosity.
 (`judge.py:414`). Naming a criterion one of those two changes which model grades
 it — do not rename for style.
 
+**`contains_check` is the cheap way to test grounding.** It is deterministic,
+costs no judge call, and scores the fraction of required strings present in
+`final_response`. Seed facts that exist only in the task's fixtures — an
+invented benchmark, corpus or measurement — and a model answering from training
+knowledge deterministically loses that weight. `research_finance_hard_01` is the
+worked example. Two rules: the canary must be something you **invented**, not
+looked up (`rank 8-16` and `Postgres 15` were cited without retrieval 13 and 7
+times), and **quote every criterion** — `score_contains_check` calls `.lower()`,
+so an unquoted `0.847` is a YAML float that raises AttributeError mid-run.
+
 **`automated` criteria need a hidden suite that compiles.** They score from the
 exit code of `environment.hidden_test_cmd`, so the task prompt must state the
 exact API contract — module, package, types, signatures. A criterion with no
@@ -124,12 +134,15 @@ tools run against a real container.
   `run_tests`. Keep them different, and `isolate_globs` moves the model's own
   test files aside so its helpers cannot collide with the hidden suite at
   compile time.
-- **Container output is not reproducible.** `ls -la` returns the container's
-  creation time; timestamps are normalised out (`sandbox._normalize_volatile`)
-  but hostnames, `find` ordering and `setup_cmd` mtimes are not. Two runs of one
-  model at `temperature: 0` can write different code, so coding carries its own
-  0.15 threshold in `scoring.dimension_min_detectable_difference`. Do not read a
-  single coding run as a measurement.
+- **Container output is mostly reproducible now.** Eight volatile surfaces are
+  normalised out (`sandbox._normalize_volatile`): `ls` and `find` dates, ASLR
+  addresses, `go`/`deno`/pytest elapsed times, Go log clocks and the hostname,
+  with ANSI escapes stripped first. Coding's threshold is **0.10** in
+  `scoring.dimension_min_detectable_difference`, lowered from 0.15 once
+  `scripts/check_determinism_gate.py` confirmed it. Two surfaces remain and no
+  substitution reaches either: Go randomises map iteration, so a table-driven
+  test backed by a map permutes whole blocks of output, and a timestamp the
+  model's own generated code prints is outside the harness's control.
 
 ## Before committing
 
