@@ -31,6 +31,9 @@ does not carry 0.20 and the redesign needs a different lever.
 Requires the judges running:
     uv run python scripts/validate_constraint_rubric.py
     uv run python scripts/validate_constraint_rubric.py --samples 5 --margin 1.5
+
+Judge URLs and model names come from config/eval_config.yaml's `judge:` block,
+the same source the orchestrator uses, so this cannot drift from a real run.
 """
 
 from __future__ import annotations
@@ -38,6 +41,8 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -47,7 +52,7 @@ from nite_eval.model_manager import check_health  # noqa: E402
 from nite_eval.rubrics import get_rubric  # noqa: E402
 from nite_eval.task_loader import load_tasks  # noqa: E402
 
-JUDGE_PORT = 9091
+DEFAULT_CONFIG = "config/eval_config.yaml"
 DIMENSION = "constraint_handling"
 TASK_ID = "planning_wine_easy_01"
 
@@ -130,13 +135,20 @@ def _evidence(called: bool, tools) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--port", type=int, default=JUDGE_PORT)
+    ap.add_argument("--config", default=DEFAULT_CONFIG, help="Read the judge block from here")
     ap.add_argument("--samples", type=int, default=3, help="Judge samples per response (default 3)")
     ap.add_argument("--margin", type=float, default=1.0, help="Required A-over-D gap on the 1-5 scale")
     args = ap.parse_args()
 
-    if not check_health(f"http://127.0.0.1:{args.port}"):
-        print(f"No judge server on :{args.port}. Start the judges first.", file=sys.stderr)
+    # Build the client exactly the way the orchestrator does. The judges run as
+    # two separate llama-servers on different ports — reward-anything on 9091,
+    # flow-judge on 9092 — so a single hardcoded port points both at one model.
+    judge_cfg = (yaml.safe_load(Path(args.config).read_text()) or {}).get("judge", {})
+    reward_url = judge_cfg.get("reward_anything_url") or judge_cfg.get("base_url", "")
+    health_url = reward_url.removesuffix("/v1")
+    if not check_health(health_url):
+        print(f"No judge server at {health_url} (constraint_handling routes to reward-anything).", file=sys.stderr)
+        print("Start the judges, then re-run.", file=sys.stderr)
         return 2
 
     tasks = [t for t in load_tasks() if t.id == TASK_ID]
@@ -154,12 +166,21 @@ def main() -> int:
 
     rubric = get_rubric(DIMENSION)
     print(f"\nRubric for {DIMENSION}:\n  {rubric}\n")
-    print(f"Task: {task.id}   samples: {args.samples}   margin: {args.margin}\n")
+    print(f"Task: {task.id}   judge: {reward_url}   samples: {args.samples}   margin: {args.margin}\n")
     print(f"{'scenario':26s} {'score':>6s}  reasoning")
     print("-" * 100)
 
     scores: dict[str, float] = {}
-    with RoutedJudgeClient(base_url=f"http://127.0.0.1:{args.port}/v1", timeout=120.0) as judge:
+    with RoutedJudgeClient(
+        base_url=judge_cfg.get("base_url", reward_url),
+        flow_judge_model=judge_cfg.get("flow_judge_model", "flow-judge"),
+        reward_anything_model=judge_cfg.get("reward_anything_model", "reward-anything"),
+        flow_judge_url=judge_cfg.get("flow_judge_url"),
+        reward_anything_url=judge_cfg.get("reward_anything_url"),
+        temperature=judge_cfg.get("temperature", 0.1),
+        max_tokens=judge_cfg.get("max_tokens", 2048),
+        timeout=120.0,
+    ) as judge:
         for label, response, called_tools in scenarios:
             result = judge.evaluate_with_averaging(
                 dimension=DIMENSION,
