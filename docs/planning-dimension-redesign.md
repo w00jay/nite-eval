@@ -83,12 +83,62 @@ separation.
 
 ## Phase 2 — roll out to the existing three
 
+**Phase 1 result (2026-09-13, `run-20260913-182729`): passed.** ornith 0.86
+(8 calls, cited `9.5`, queued the scan around the limit) against lfm2.5 0.47
+(0 calls) = +0.39 on a 0.15 bar. qwen3.6 scored 0.45 ungrounded, but that
+number is contaminated: the judge sees only the last turn, and a turn dump
+showed its full plan in turn 1 with an 852-char coda last. The plan itself was
+ungrounded (written before any tool call, never revised), so the direction
+holds. Fixed separately after this phase — see TODO.md — never in the same PR.
+
 | task | planted constraint | default plan gets it wrong by | canaries |
 |---|---|---|---|
-| mcp_medium | Gmail OAuth2 refresh token bound to client redirect URI — not proxyable without a broker | proxying all 5 servers symmetrically | broker name, `wooj-brain` |
-| finance_hard | Storage needs **112GB** against a **100GB** plan; earnings audio unavailable from every listed source | ingesting all 4 sources as-is | `112`, `74` |
+| mcp_medium | Gmail refresh tokens were issued to the desktop clients' own OAuth client (loopback redirect `http://127.0.0.1:47219/callback`); refresh from any other client fails `invalid_grant`, and the gateway measured 0 of 12 | proxying all 5 servers symmetrically | `wooj-brain`, `47219` |
+| finance_hard | 24-month storage projection is **112GB** against a **100GB** plan, embeddings + HNSW index **74GB** of it | ingesting and embedding everything as-is | `112`, `74` |
 
-Measure planning spread across the three rewritten tasks before going further.
+**One constraint per task.** v2 also planted "earnings audio unavailable from
+every listed source" on finance_hard. Dropped 2026-09-13: with two constraints
+a `constraint_handling` score cannot say which one the plan missed. Storage
+stays because it is the one with arithmetic a plan must act on.
+
+**No broker is planted on mcp_medium.** v2 listed "broker name" as a canary,
+which would mean naming a component that solves the problem — a verdict, the
+thing this redesign removes. The tools state the binding; routing around it is
+the model's job.
+
+Design rules carried over from the pilot:
+
+- **Measurements, not verdicts.** Remove "OAuth2 refresh flow is the hard part"
+  (mcp estimate), "recommend text-only" and "consider Qdrant or Pinecone"
+  (finance). Each told the model what to conclude.
+- **The constraint rides on the catch-alls.** Any plausible call surfaces it —
+  every `estimate_storage` response carries the full projection, and the gmail
+  entry in `get_current_infrastructure` carries the binding. Finding it is easy;
+  acting on it is the discriminator.
+- **Canaries are invented and checked.** 0/154 historical planning responses
+  contain `112`, `74` or `47219`. `wooj-brain` is already a fixture-only name:
+  30/39 tool-using mcp_medium runs cite it, 0/12 no-tool runs do. `47219` is the
+  weak one — a grounded plan need not repeat a port. Integers on purpose: ornith
+  wrote "~31s" for `31.4` and got 1 of 3 canaries on a plainly grounded answer.
+- **Rubrics must not double-count the constraint.** Drop "OAuth2 token refresh
+  through proxy" from mcp's `risk_mitigation`; it is `constraint_handling` now.
+  Reword mcp's "auth injection for all 3 auth types (bearer, OAuth2, API key)" —
+  the fixture has five, and a correct plan does not inject OAuth2 from config.
+
+Weights, same shape as the pilot:
+
+| mcp_medium | finance_hard | weight |
+|---|---|---|
+| phased_approach | architecture_quality | 0.20 |
+| completeness | completeness | 0.20 |
+| dependency_correctness | feasibility | 0.10 |
+| risk_mitigation | scalability_awareness | 0.15 |
+| grounding | grounding | 0.15 |
+| constraint_handling | constraint_handling | 0.20 |
+
+Then the same cheap run as the pilot — lfm2.5-8b-a1b, qwen3.6-35b-a3b,
+ornith-1.5-35b-a3b, planning only — and measure planning spread across the
+three rewritten tasks before going further.
 This is the last point where the change is still attributable to the rubric
 rather than to the task set.
 
