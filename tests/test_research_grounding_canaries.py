@@ -61,29 +61,8 @@ def test_grounding_is_deterministic():
     assert TASK["scoring"]["grounding"]["method"] == "contains_check"
 
 
-@pytest.mark.parametrize("canary", CANARIES)
-def test_canary_is_reachable_from_the_fixtures(canary: str):
-    """A canary nobody can retrieve is weight the best model still cannot score."""
-    fixtures = yaml.dump(TASK["mock_responses"])
-    assert canary in fixtures, f"{canary!r} is scored but appears in no mock response"
-
-
-@pytest.mark.parametrize("canary", CANARIES)
-def test_canary_is_absent_from_everything_the_model_is_handed(canary: str):
-    """The whole claim is that these cannot be produced without a tool call.
-
-    If one leaks into the prompt, the task goes back to measuring recall and the
-    report gives no sign of it.
-    """
-    handed = " ".join(
-        [
-            TASK["user_message"],
-            TASK["system_prompt"],
-            TASK["description"],
-            yaml.dump(TASK["tools"]),
-        ]
-    )
-    assert canary not in handed, f"{canary!r} is in the prompt, so citing it proves nothing"
+# Reachability and prompt-absence are checked for every grounding task in
+# test_grounding_criteria.py, parameterised over the task files.
 
 
 def test_a_single_generic_search_grounds_partially():
