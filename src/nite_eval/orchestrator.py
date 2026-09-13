@@ -58,7 +58,7 @@ DEFAULT_CONFIG = "config/eval_config.yaml"
 # Criteria that ask whether the response's facts match what the tools returned.
 # These get the tool results appended to the judge prompt; every other criterion
 # is about the response itself and does not need them.
-EVIDENCE_DIMENSIONS = frozenset({"no_hallucination", "data_accuracy", "data_threading"})
+EVIDENCE_DIMENSIONS = frozenset({"no_hallucination", "data_accuracy", "data_threading", "constraint_handling"})
 
 
 def load_config(path: str) -> dict:
@@ -95,7 +95,7 @@ def score_task(
     # Ground truth for fact-checking criteria. The judge otherwise sees only the
     # prompt and the final answer, so "do the cited numbers match the data" was
     # unanswerable and the criterion fell through to a free 1.0.
-    evidence = build_tool_evidence(conv)
+    evidence = build_tool_evidence(conv, tools=task.tools)
 
     # The files the model wrote. Given to every judge_rubric criterion rather
     # than to a named subset: it is empty for a task that wrote nothing, so it
