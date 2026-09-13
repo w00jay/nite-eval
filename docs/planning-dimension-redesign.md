@@ -27,9 +27,9 @@
 | # | item | state |
 |---|---|---|
 | P1 | `build_tool_evidence` states the absence when no tools were called | **DONE** — 6 tests, `NO_TOOLS_CALLED` |
-| P2 | Add a `constraint_handling` rubric to `rubrics.py` | todo |
-| P3 | Add `constraint_handling` to `EVIDENCE_DIMENSIONS` | todo |
-| P4 | Validate the rubric on a live judge before it carries weight | todo |
+| P2 | Add a `constraint_handling` rubric to `rubrics.py` | **DONE** — PR #14 |
+| P3 | Add `constraint_handling` to `EVIDENCE_DIMENSIONS` | **DONE** — PR #14, `orchestrator.py` |
+| P4 | Validate the rubric on a live judge before it carries weight | **PASSED** 2026-09-13 — A 4.67 / B 3.00 / C 1.67 / D 1.00, A−D +3.67 against a 1.0 margin (3 samples) |
 
 P2 exists because `get_rubric()` falls back to `"Rate constraint_handling from 1
 (poor) to 5 (excellent)"` — the task YAML's `criteria:` text never reaches the
@@ -41,9 +41,10 @@ The rubric is shared across all five tasks, so it must be constraint-agnostic:
 it, or does it assume the default path works?"* — with the tool evidence
 supplying what the limit was.
 
-**P4 is the gate.** Extend `scripts/validate_judge_pipeline.py` with three fixed
-responses for one task: handles-the-constraint, ignores-it, and
-confidently-ignores-it-with-no-tool-calls. If the confident ignorer does not
+**P4 is the gate.** `scripts/validate_constraint_rubric.py` sends four fixed
+responses for one task: handles-the-constraint (A), mentions-it-then-ignores-it
+(B), ignores-it (C), and confidently-ignores-it-with-no-tool-calls (D). If the
+confident ignorer does not
 score clearly below the handler, the criterion does not work and no weight goes
 on it. This is the method that proved the code-evidence anchor.
 
@@ -55,12 +56,30 @@ Rewrite `planning_wine_easy_01` only. Smallest task, clearest constraint.
   31.4s p95**. Measurements, no recommendation.
 - Default plan puts the scan inline in the edge function and is wrong; a
   grounded plan downscales client-side or goes async.
-- Canaries `9.5`, `31.4` (`contains_check`, quoted).
+- Canaries `9.5`, `14.2`, `31.4` (`contains_check`, quoted).
 
 Then a **cheap** run: 3 models x planning only, not the fleet.
+`run-20260913-182729`: lfm2.5-8b-a1b, qwen3.6-35b-a3b, ornith-1.5-35b-a3b.
 
 **Kill point.** If ungrounded runs do not lose on wine_easy, stop. The other
 four rewrites are wasted work and the approach needs rethinking.
+
+**Pass bar, fixed 2026-09-13 before ornith's result was in.** Ungrounded means
+the `grounding` criterion scored 0. Failing either condition is a kill:
+
+1. ornith's wine_easy score beats the best ungrounded wine_easy score in the
+   run by **>= 0.15**.
+2. qwen3.6 moves the right way against its 0.53 on the old task
+   (`run-20260908-012542`): higher if it grounds, lower if it does not.
+
+If ornith does not ground, condition 1 cannot be tested and the pilot is
+inconclusive, not a pass.
+
+Why a numeric bar: a no-tools plan can still reach ~0.65 here, because
+`completeness` (checklist, 0.20), `dependency_correctness`, `risk_awareness` and
+`specificity` do not depend on retrieval. lfm2.5 with zero tool calls scored
+0.47, down from 0.59-0.63 on the old task — a loss, but not proof of
+separation.
 
 ## Phase 2 — roll out to the existing three
 
@@ -90,7 +109,8 @@ by spread.
 | **grounding** | **0.15** | **contains_check** |
 | **constraint_handling** | **0.20** | **judge_rubric** |
 
-The 0.20 on `constraint_handling` is provisional until P4 passes.
+The 0.20 on `constraint_handling` was provisional until P4; P4 passed, so it
+stands.
 
 ## Expected effect, and how it can be wrong
 
@@ -100,8 +120,9 @@ average toward 0.49.
 
 That projection assumed the judge penalises an ungrounded plan. **P1 is what
 makes the assumption true**; before it, the judge received an empty section and
-backfilled from the task spec. It is still an assumption about judge behaviour
-until P4 measures it.
+backfilled from the task spec. P4 measured it on fixed responses (the no-tools
+plan scored 1.00), and the pilot's first live case agrees: lfm2.5, zero tool
+calls, got `constraint_handling` 1.00 and `grounding` 0, and scored 0.47 overall.
 
 Second failure mode: if the constraint is too obvious, every model handles it
 and the dimension re-saturates at a higher number. The pilot is what detects

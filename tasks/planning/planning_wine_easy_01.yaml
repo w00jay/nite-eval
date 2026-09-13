@@ -54,27 +54,39 @@ mock_responses:
     response:
       content:
         compatible: true
-        notes: Use @supabase/supabase-js. Direct client SDK for reads, functions.invoke for server logic.
+        client_library: '@supabase/supabase-js'
+        note: direct client SDK for reads, functions.invoke for server logic
   - match:
       tech_a_contains: claude vision
       tech_b_contains: edge function
     response:
       content:
-        compatible: true
-        notes: 150s timeout on Supabase edge functions. Claude Vision call typically 3-8s. Fits within
-          limit.
+        edge_function_wall_clock_limit_s: 9.5
+        observed_vision_latency_s:
+          p50: 14.2
+          p95: 31.4
+        measured_on: 4032x3024 label photographs straight from the camera roll
+        note: figures are from this project's own instrumentation, not vendor documentation
   - match:
       tech_a_contains: edge function
     response:
       content:
-        compatible: true
-        notes: Supabase Edge Functions support external API calls. 150s timeout. Deno runtime.
+        runtime: Deno
+        external_api_calls: permitted
+        wall_clock_limit_s: 9.5
+        note: the limit is wall clock per invocation and is not configurable on this plan
   - match:
       tech_a_contains: any
     response:
       content:
         compatible: true
-        notes: Generally compatible. Check specific version and platform requirements.
+        note: no version or platform incompatibility recorded for this pairing
+        # The wall clock limit rides on the catch-all deliberately. Any plausible
+        # compatibility question about this stack should surface the one number
+        # that constrains the design; requiring the model to guess the exact
+        # "claude vision" + "edge function" phrasing would measure luck. Finding
+        # the fact is meant to be easy -- acting on it is the discriminator.
+        edge_function_wall_clock_limit_s: 9.5
   estimate_effort:
   - match:
       task_contains: schema
@@ -89,15 +101,14 @@ mock_responses:
       content:
         estimate_hours: 8
         complexity: high
-        notes: Image upload, Claude Vision call, wine matching/creation, error handling. Most complex
-          edge function.
+        covers: image upload, vision call, wine matching and creation, error handling
   - match:
       task_contains: rack grid
     response:
       content:
         estimate_hours: 6
         complexity: medium
-        notes: Interactive grid component, drag-to-place, position state management.
+        covers: interactive grid component, drag-to-place, position state management
   - match:
       task_contains: navigation
     response:
@@ -126,30 +137,68 @@ mock_responses:
         estimate_hours: 4
         complexity: medium
         notes: Default estimate for unspecified tasks; refine once scope is pinned.
+# Rewritten 2026-09-13. This task could not tell two models apart: planning
+# scored 8/8 adjacent pairs as ties, and 22.8% of planning runs called no tools
+# at all and lost 0.007 for it.
+#
+# Two causes. Every check_dependency mock returned `compatible: true` and every
+# estimate fit the budget, so nothing the tools returned would change a plan
+# written without them. And the mocks handed over conclusions rather than facts
+# -- "Fits within limit" did the thinking for the model -- so even a grounded
+# answer was transcribing a verdict.
+#
+# Now the tools report measurements and the arithmetic contradicts the obvious
+# plan: a 9.5s wall clock against 14.2s at p50 means a synchronous scan inside
+# the edge function times out for the median request, never mind the tail. A
+# plan written from training knowledge puts the scan inline and is wrong.
+#
+# `grounding` is deterministic and cheap; `constraint_handling` asks whether the
+# plan changed shape, and gets the tool results because it is in
+# EVIDENCE_DIMENSIONS. Canaries are quoted -- score_contains_check calls
+# .lower(), so a bare 9.5 is a YAML float that raises mid-run.
 scoring:
   dependency_correctness:
-    weight: 0.3
+    weight: 0.2
     method: judge_rubric
     criteria: 'Schema must come before edge functions. Auth must come before any user-scoped features.
       Scan-label must come before consume flow.
 
       '
   completeness:
-    weight: 0.3
+    weight: 0.2
     method: checklist
+    # "Week 2 includes recommendation or intelligence features" was here and is
+    # gone: the prompt asks for scan -> identify -> add -> rack -> consume and
+    # never mentions recommendations, so the item required the model to invent
+    # scope it was not asked for.
     criteria:
     - Week 1 includes database schema and auth
-    - Week 1 includes scan-label edge function
-    - Week 2 includes recommendation or intelligence features
-    - Identifies critical path
+    - Week 1 includes the label-scan path
+    - Week 2 includes rack grid placement and the consume-bottle flow
+    - Identifies the critical path
   specificity:
-    weight: 0.2
+    weight: 0.1
     method: judge_rubric
     criteria: Tasks are concrete and actionable, not vague like 'set up backend'
   risk_awareness:
-    weight: 0.2
+    weight: 0.15
     method: judge_rubric
     criteria: Identifies at least one risk (e.g., Claude Vision accuracy, edge function timeout)
+  grounding:
+    weight: 0.15
+    method: contains_check
+    criteria:
+    - '9.5'
+    - '14.2'
+    - '31.4'
+  constraint_handling:
+    weight: 0.2
+    method: judge_rubric
+    criteria: 'The scan cannot run synchronously inside the edge function: the wall clock limit is
+      below the median vision latency. A correct plan downscales client-side, moves the call off the
+      edge function, or makes it asynchronous.
+
+      '
 max_turns: 8
 timeout_seconds: 600
 
