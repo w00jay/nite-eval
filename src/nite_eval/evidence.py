@@ -5,7 +5,8 @@ Two separate things, deliberately kept apart:
 - `build_tool_evidence` — every tool call and its result, as ground truth for
   criteria that ask whether the response's facts match what the tools actually
   returned (no_hallucination, data_accuracy, data_threading). Without it those
-  criteria were unanswerable and fell through to a free 1.0.
+  criteria were unanswerable and fell through to a free 1.0. When the model
+  called nothing it says so out loud rather than sending an empty section.
 
 - `build_code_evidence` — the files the model actually wrote. Coding criteria
   were scored from `conv.final_response` alone, and code is written through
@@ -39,6 +40,22 @@ NO_FILES_WRITTEN = (
     "score, so every criterion about the code scores 1."
 )
 
+# The same thing for tool calls, and for the same measured reason. A judge
+# handed no evidence section does not conclude "no evidence"; it fills the gap
+# from the task specification and scores as though the work was done.
+#
+# Latent rather than active as of 2026-09-13: only the two agentic tasks carry
+# EVIDENCE_DIMENSIONS criteria and no agentic run has ever completed with zero
+# tool calls (0 of 255). It becomes live the moment a criterion on a research or
+# planning task takes tool evidence — planning completes with no tool calls
+# 22.8% of the time.
+NO_TOOLS_CALLED = (
+    "NONE. The model called no tools, so nothing in the response is grounded in "
+    "retrieved data. Any specific figure, name or status it states came from the "
+    "model rather than from a source, so criteria about whether the response "
+    "matches what the tools returned score 1."
+)
+
 
 def _iter_tool_responses(conv):
     for turn in conv.turns:
@@ -53,13 +70,24 @@ def _first_present(args: dict, keys: tuple[str, ...]) -> str | None:
     return None
 
 
-def build_tool_evidence(conv) -> str:
-    """Every tool call and result, one per line, for fact-checking criteria."""
+def build_tool_evidence(conv, tools=None) -> str:
+    """Every tool call and result, one per line, for fact-checking criteria.
+
+    When the model called nothing, returns an explicit statement of that fact if
+    the task offered tools, and "" if it did not — the same distinction
+    `build_code_evidence` draws, for the same measured reason. See
+    NO_TOOLS_CALLED.
+
+    `tools` is optional so existing one-argument callers keep working; they get
+    the old silent behaviour.
+    """
     lines = []
     for tr in _iter_tool_responses(conv):
         args = json.dumps(tr.get("arguments", {}))
         result = json.dumps(tr.get("result", {}))
         lines.append(f"{tr['name']}({args}) -> {result}")
+    if not lines:
+        return NO_TOOLS_CALLED if tools else ""
     return "\n".join(lines)
 
 

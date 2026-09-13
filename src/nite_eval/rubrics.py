@@ -21,6 +21,17 @@ JUDGE_RUBRICS: dict[str, str] = {
         "Score 5 if every figure is correct, correctly attributed, and correctly "
         "interpreted."
     ),
+    "constraint_handling": (
+        "The tool results are authoritative: the constraint is whatever they "
+        "actually report, not what is conventionally true of the technology. "
+        "Did the plan find the specific limit, incompatibility, or budget the "
+        "tools reported, and change shape because of it? Score 1 if the plan "
+        "assumes the default approach works, or if no tools were called so no "
+        "constraint was ever discovered. Score 3 if the constraint is mentioned "
+        "but the plan is the same plan it would have been without it. Score 5 if "
+        "the plan names the constraint and its phasing, component choice, or "
+        "scope visibly changes to accommodate it."
+    ),
     "data_threading": (
         "Were values returned by one tool correctly carried into subsequent tool "
         "calls and into the final answer? Score 1 if the response ignores earlier "
