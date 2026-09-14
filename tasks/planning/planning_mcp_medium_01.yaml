@@ -58,7 +58,23 @@ user_message: 'I have 5 MCP servers configured directly in Claude Desktop and Cu
 mock_responses:
   get_current_infrastructure:
   - match:
-      component_contains: any
+      component_contains: gmail
+    response:
+      content:
+        name: gmail
+        transport: sse
+        auth: oauth2
+        oauth_client_type: installed_app
+        redirect_uri: http://127.0.0.1:47219/callback
+        refresh_tokens_held_by:
+        - claude-desktop
+        - cursor
+        refresh_from_other_client_id: invalid_grant
+        gateway_refresh_attempts:
+          attempted: 12
+          succeeded: 0
+        note: measured against this account's own OAuth client, not vendor documentation
+  - match: {}  # keep last
     response:
       content:
         servers:
@@ -68,6 +84,8 @@ mock_responses:
         - name: gmail
           transport: sse
           auth: oauth2
+          redirect_uri: http://127.0.0.1:47219/callback
+          refresh_from_other_client_id: invalid_grant
         - name: slack
           transport: sse
           auth: bot_token
@@ -83,18 +101,39 @@ mock_responses:
         - claude-code
   check_compatibility:
   - match:
+      source_contains: gmail
+    response:
+      content:
+        transport: sse, proxyable
+        oauth_client_type: installed_app
+        redirect_uri: http://127.0.0.1:47219/callback
+        refresh_tokens_issued_to: the desktop clients' OAuth client
+        refresh_from_other_client_id: invalid_grant
+        gateway_refresh_attempts:
+          attempted: 12
+          succeeded: 0
+  - match:
       source_contains: sse
       target_contains: gateway
     response:
       content:
         compatible: true
         notes: Gateway can proxy SSE. Needs buffering for long-lived connections.
-  - match:
-      source_contains: any
+        # Gmail is an SSE server, so a transport-level question is a plausible way
+        # to ask about it without naming it.
+        gmail_redirect_uri: http://127.0.0.1:47219/callback
+        gmail_refresh_from_other_client_id: invalid_grant
+  - match: {}  # keep last
     response:
       content:
         compatible: true
-        notes: Compatible with standard gateway proxy pattern. Check transport-specific requirements.
+        notes: No transport incompatibility recorded for this pairing.
+        # The Gmail binding rides on the catch-all deliberately, as the wall clock
+        # limit does in planning_wine_easy_01: any compatibility question about
+        # this migration should surface it. Finding the fact is meant to be easy
+        # -- acting on it is the discriminator.
+        gmail_redirect_uri: http://127.0.0.1:47219/callback
+        gmail_refresh_from_other_client_id: invalid_grant
   estimate_effort:
   - match:
       task_contains: proxy
@@ -107,7 +146,7 @@ mock_responses:
     response:
       content:
         estimate_days: 2
-        notes: Auth injection from config. OAuth2 refresh flow is the hard part.
+        notes: Auth injection from gateway config.
   - match:
       task_contains: telemetry
     response:
@@ -120,41 +159,77 @@ mock_responses:
       content:
         estimate_days: 5
         notes: Full migration including proxy, auth, telemetry, and client reconfiguration.
-  - match:
-      task_contains: any
+  - match: {}  # keep last
     response:
       content:
         estimate_days: 2
         notes: Estimated effort for standard infrastructure task.
+# Rewritten 2026-09-13, phase 2 of docs/planning-dimension-redesign.md, after the
+# wine_easy pilot cleared its bar.
+#
+# Every compatibility mock returned `compatible: true`, and the auth estimate
+# said "OAuth2 refresh flow is the hard part" -- a verdict. Nothing the tools
+# returned would change a plan written without them.
+#
+# Now the tools report the binding and leave the conclusion to the model:
+# Gmail's refresh tokens were issued to the desktop clients' installed-app OAuth
+# client, refresh from any other client id fails invalid_grant, and the gateway
+# measured 0 of 12. The default plan -- proxy all five servers the same way --
+# breaks Gmail at cutover. No broker is planted: naming one hands over the fix.
+#
+# Canaries: `wooj-brain` exists only in the fixtures (the prompt says "a custom
+# Supabase MCP") -- cited by 30/39 tool-using runs of this task, 0/12 no-tool
+# runs. `47219` is an invented port, 0/154 historical planning responses.
 scoring:
   phased_approach:
-    weight: 0.3
+    weight: 0.2
     method: judge_rubric
     criteria: 'Plan has clear phases that don''t break existing workflows. Should include a parallel-run
       phase where both direct and gateway connections work simultaneously.
 
       '
   dependency_correctness:
-    weight: 0.25
+    weight: 0.1
     method: judge_rubric
     criteria: 'Proxy layer must exist before auth injection. Auth injection before telemetry. Client migration
       after gateway is stable.
 
       '
   completeness:
-    weight: 0.25
+    weight: 0.2
     method: checklist
+    # Was "Covers auth injection for all 3 auth types (bearer, OAuth2, API key)".
+    # The fixture has five auth types, and a correct plan does not inject OAuth2
+    # from config -- the item rewarded the wrong plan.
     criteria:
     - Covers Go proxy service implementation
-    - Covers auth injection for all 3 auth types (bearer, OAuth2, API key)
+    - Covers credential handling for every auth type in use
     - Covers client migration (Claude Desktop, Cursor, Claude Code)
     - Covers rollback strategy
     - Covers telemetry/observability
   risk_mitigation:
+    weight: 0.15
+    method: judge_rubric
+    # "OAuth2 token refresh through proxy" was listed here and moved to
+    # constraint_handling, so the constraint is not scored twice.
+    criteria: 'Identifies risks: SSE connection lifecycle through the proxy, client config migration pain
+      points, and how to roll back if the gateway fails during cutover.
+
+      '
+  grounding:
+    weight: 0.15
+    method: contains_check
+    criteria:
+    - 'wooj-brain'
+    - '47219'
+  constraint_handling:
     weight: 0.2
     method: judge_rubric
-    criteria: 'Identifies risks: OAuth2 token refresh through proxy, SSE connection lifecycle, client
-      config migration pain points.
+    criteria: 'Gmail cannot be migrated like the other four servers: its refresh tokens were issued to
+      the desktop clients'' own OAuth client, and refreshing from any other client fails. A correct plan
+      treats Gmail separately -- keeps it on a direct connection until the gateway holds credentials
+      of its own (for example by registering the gateway as an OAuth client and re-consenting) --
+      rather than proxying all five servers the same way.
 
       '
 max_turns: 10
