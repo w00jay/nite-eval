@@ -152,6 +152,31 @@ rewritten task (mcp_medium, finance_hard):
 A task that fails condition 1 does not get rolled back automatically — it gets
 read, because the pilot showed a score can move for a reason the bar did not
 anticipate.
+
+**Phase 2 result (`run-20260914-000743`): both tasks pass.**
+
+| task | ornith (grounding) | best ungrounded | gap |
+|---|---|---|---|
+| mcp_medium | 0.87 (1.00) | 0.60 qwen3.6 | **+0.27** |
+| finance_hard | 0.87 (1.00) | 0.60 lfm2.5 | **+0.27** |
+
+ornith cited every canary on both and changed the plan's shape: Gmail gated
+into its own last phase behind a pre-check; embeddings attacked first ("Don't
+embed OHLCV/macro", reduced dimensions) against the 112GB/100GB overrun.
+qwen3.6 answered mcp and finance in one turn with no tools, so the last-turn
+defect does not touch those two numbers — only its wine 0.44.
+
+Planning across these three models, before -> after the redesign:
+ornith 0.779 -> 0.858, lfm2.5 0.692 -> 0.493, qwen3.6 0.686 -> 0.542. Spread
+0.093 -> 0.365. n=1 run, 3 models.
+
+Two things the numbers do not say. Ungrounded plans were not floored on
+finance's `constraint_handling` (2.33 and 2.67, against wine's 1.00): the judge
+partly credits generic scaling advice without tool evidence. And ornith's mcp
+plan misreads the fixture slightly — it calls `invalid_grant` an issue to "fix"
+rather than the consequence of refreshing from another client — while still
+arriving at the right shape. lfm2.5 moved 0.47 -> 0.41 on wine_easy, which did
+not change between runs: that is the judge noise the 0.15 bar sits on.
 This is the last point where the change is still attributable to the rubric
 rather than to the task set.
 
