@@ -190,43 +190,69 @@ mock_responses:
         cost: varies
         data_types:
         - general financial data
+  # Every estimate_storage response carries the same 24-month projection, so one
+  # plausible call about any data type surfaces the overrun. The anchor keeps the
+  # seven copies identical -- a projection that differed between mocks would be
+  # a fixture bug the model gets blamed for.
   estimate_storage:
   - match:
       data_type_contains: price
     response:
       content:
-        estimated_gb: 2
-        notes: '500 instruments × 252 trading days × 10 years = ~1.26M rows. With indicators: ~5GB.'
-  - match:
-      data_type_contains: embeddings
-    response:
-      content:
-        estimated_gb: 15
-        notes: 1536-dim embeddings × 500K documents. pgvector HNSW index adds 2-3x overhead.
-  - match:
-      data_type_contains: transcripts
-    response:
-      content:
-        estimated_gb: 8
-        notes: '~2000 transcripts/quarter × 20KB avg. Audio: 50GB+ if stored, recommend text-only.'
-  - match:
-      data_type_contains: news
-    response:
-      content:
-        estimated_gb: 3
-        notes: '~100 articles/day × 365 days × 2 years × 5KB avg = ~365K articles, ~1.8GB raw + embeddings.'
+        estimated_gb: 6
+        notes: 500 instruments × 252 trading days × 10 years = ~1.26M rows, plus derived indicators.
+        projection: &projection
+          horizon_months: 24
+          ohlcv_and_indicators_gb: 6
+          news_articles_gb: 14
+          earnings_transcripts_gb: 4
+          macro_indicators_gb: 1
+          embeddings_with_hnsw_index_gb: 74
+          wal_and_table_bloat_gb: 13
+          total_gb: 112
+          plan_storage_limit_gb: 100
   - match:
       data_type_contains: OHLCV
     response:
       content:
-        estimated_gb: 2
-        notes: '500 instruments × 252 trading days × 10 years = ~1.26M rows. With indicators: ~5GB.'
+        estimated_gb: 6
+        notes: 500 instruments × 252 trading days × 10 years = ~1.26M rows, plus derived indicators.
+        projection: *projection
   - match:
-      data_type_contains: any
+      data_type_contains: embedding
+    response:
+      content:
+        estimated_gb: 74
+        notes: ~3.5M chunks × 1536 dims (float32) = ~21.5GB of vectors; HNSW index measured at 2.4x that
+          on this project's data; chunk text and metadata make up the rest.
+        projection: *projection
+  - match:
+      data_type_contains: transcript
+    response:
+      content:
+        estimated_gb: 4
+        notes: ~2000 transcripts/quarter over 24 months, stored as source HTML plus extracted text.
+        projection: *projection
+  - match:
+      data_type_contains: news
+    response:
+      content:
+        estimated_gb: 14
+        notes: ~400 articles/day across 4 sources × 730 days = ~292K articles, raw HTML retained at ~48KB avg.
+        projection: *projection
+  - match:
+      data_type_contains: macro
+    response:
+      content:
+        estimated_gb: 1
+        notes: FRED series plus release text, 24 months.
+        projection: *projection
+  - match: {}  # keep last
     response:
       content:
         estimated_gb: 5
-        notes: Estimate varies by data type and retention policy.
+        notes: No per-type measurement for this data type; see projection for the whole store.
+        projection: *projection
   check_compatibility:
   - match:
       source_contains: pgvector
@@ -234,30 +260,44 @@ mock_responses:
     response:
       content:
         compatible: true
-        notes: pgvector supports HNSW and IVFFlat. Adequate for <1M vectors. Beyond that, consider Qdrant
-          or Pinecone.
+        notes: pgvector supports HNSW and IVFFlat. HNSW index measured at 2.4x raw vector size on this project's
+          data.
   - match:
       source_contains: supabase
     response:
       content:
         compatible: true
-        notes: Supabase natively supports pgvector. Good for <1M vectors. Python client via supabase-py.
-  - match:
-      source_contains: any
+        notes: Supabase natively supports pgvector. Python client via supabase-py.
+  - match: {}  # keep last
     response:
       content:
         compatible: true
-        notes: Generally compatible. Check specific version requirements.
+        notes: No version incompatibility recorded for this pairing.
+# Rewritten 2026-09-13, phase 2 of docs/planning-dimension-redesign.md, after the
+# wine_easy pilot cleared its bar.
+#
+# The storage mocks estimated 2-15GB per type against a 100GB plan, so nothing
+# ever had to change; and they handed over verdicts -- "recommend text-only",
+# "Beyond that, consider Qdrant or Pinecone" -- so a grounded answer transcribed
+# them.
+#
+# Now the projection is 112GB against 100GB, 74GB of it embeddings plus the HNSW
+# index. A plan that ingests and embeds everything as-is does not fit. One
+# constraint only: v2 also planted "earnings audio unavailable", dropped so a
+# constraint_handling score says which constraint a plan missed.
+#
+# Canaries are integers on purpose -- ornith wrote "~31s" for wine_easy's 31.4
+# and lost the canary. `112` and `74` are 0/154 in historical planning responses.
 scoring:
   architecture_quality:
-    weight: 0.3
+    weight: 0.2
     method: judge_rubric
     criteria: 'Clear separation of ingestion, storage, embedding, and retrieval layers. Addresses batch
       vs real-time appropriately for each data type.
 
       '
   completeness:
-    weight: 0.25
+    weight: 0.2
     method: checklist
     criteria:
     - Covers all 4 data sources
@@ -266,17 +306,35 @@ scoring:
     - Addresses scheduling/orchestration
     - Addresses operational simplicity constraint
   feasibility:
-    weight: 0.25
+    weight: 0.1
     method: judge_rubric
-    criteria: 'Design is realistic for a single developer. Doesn''t over-engineer. Acknowledges Supabase
-      limitations and when to graduate components.
+    # "Acknowledges Supabase limitations and when to graduate components" was
+    # here. The limitation that matters is now constraint_handling's, and
+    # graduating components is scalability_awareness's -- scored once each.
+    criteria: 'Design is realistic for a single developer. Doesn''t over-engineer.
 
       '
   scalability_awareness:
-    weight: 0.2
+    weight: 0.15
     method: judge_rubric
     criteria: 'Plants seams for growth (consistent with the pragmatic architecture principle) without
       pre-optimizing.
+
+      '
+  grounding:
+    weight: 0.15
+    method: contains_check
+    criteria:
+    - '112'
+    - '74'
+  constraint_handling:
+    weight: 0.2
+    method: judge_rubric
+    criteria: 'The store does not fit the plan: projected storage is 112GB at 24 months against a 100GB
+      limit, and embeddings with their HNSW index are 74GB of it. A correct plan changes shape to fit --
+      cuts embedding volume (fewer or smaller chunks, fewer dimensions, halfvec, shorter retention,
+      embedding only what retrieval needs), keeps raw documents out of Postgres, or budgets a larger
+      plan -- rather than ingesting and embedding everything as-is.
 
       '
 max_turns: 14
