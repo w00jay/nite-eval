@@ -139,6 +139,19 @@ Weights, same shape as the pilot:
 Then the same cheap run as the pilot — lfm2.5-8b-a1b, qwen3.6-35b-a3b,
 ornith-1.5-35b-a3b, planning only — and measure planning spread across the
 three rewritten tasks before going further.
+
+**Pass bar, fixed 2026-09-14 while `run-20260914-000743` was running, before any
+phase 2 score existed.** Ungrounded means `grounding` scored 0. Judged per
+rewritten task (mcp_medium, finance_hard):
+
+1. ornith beats the best ungrounded score on that task by **>= 0.15**.
+2. If ornith does not ground on a task, that task is **inconclusive**, not a pass.
+3. qwen3.6 counts toward "best ungrounded" but is reported separately: the judge
+   sees only its last turn (TODO.md), so its number is known to be skewed.
+
+A task that fails condition 1 does not get rolled back automatically — it gets
+read, because the pilot showed a score can move for a reason the bar did not
+anticipate.
 This is the last point where the change is still attributable to the rubric
 rather than to the task set.
 
