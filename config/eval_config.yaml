@@ -479,6 +479,25 @@ models:
     # decoding — temperature 0.0, kept for comparability with every existing
     # row in the DB — leaves a looping ternary model no escape; the model card
     # itself recommends temp 1.0 / top_p 0.95 / top_k 20.
+    #
+    # ALSO MEASURED at "low" — run-20260919-040532, same 15 tasks, temp 0.0:
+    #
+    #   dimension  medium        low           delta
+    #   agentic    0.837 f=0     0.850 f=0     +0.013
+    #   coding     0.231 f=3     0.433 f=2     +0.202
+    #   planning   0.674 f=0     0.589 f=1     -0.085
+    #   research   0.846 f=0     0.811 f=0     -0.035
+    #   overall    0.645 f=3     0.679 f=3
+    #
+    # "medium" is kept despite low's higher overall, because low does not fix
+    # the failure — it relocates it. Both runs failed exactly three tasks; low
+    # rescued one coding task and then blew up planning_finance_hard_01
+    # (42212 chars, finish_reason=length). coding_artemis looped harder at low,
+    # not less: 124318 chars compressing to 3.3% of their size against 8.4% at
+    # medium. A budget knob cannot fix a loop, and this model emits ~110k-char
+    # reasoning traces on hard tasks at either setting. The untested lever is
+    # sampling, not effort: we run temp 0.0 for comparability with every
+    # existing row, which leaves a looping model no escape route.
     chat_template_kwargs:
       reasoning_effort: "medium"
 
