@@ -521,8 +521,12 @@ class RoutedJudgeClient:
         temperature: float = 0.1,
         max_tokens: int = 1024,
         timeout: float = 120.0,
+        overrides: dict[str, JudgeClient] | None = None,
     ):
         self._flow_dims = flow_judge_dimensions
+        # Dimension → judge, taking priority over the local routing below.
+        # The key "*" routes every dimension.
+        self._overrides = overrides or {}
         self._flow = JudgeClient(
             base_url=flow_judge_url or base_url,
             model=flow_judge_model,
@@ -539,6 +543,10 @@ class RoutedJudgeClient:
         )
 
     def _select(self, dimension: str) -> JudgeClient:
+        if dimension in self._overrides:
+            return self._overrides[dimension]
+        if "*" in self._overrides:
+            return self._overrides["*"]
         return self._flow if dimension in self._flow_dims else self._reward
 
     def evaluate(
@@ -586,9 +594,109 @@ class RoutedJudgeClient:
     def close(self) -> None:
         self._flow.close()
         self._reward.close()
+        for judge in {id(j): j for j in self._overrides.values()}.values():
+            judge.close()
 
     def __enter__(self) -> "RoutedJudgeClient":
         return self
 
     def __exit__(self, *args: object) -> None:
         self.close()
+
+
+class ApiJudgeClient(JudgeClient):
+    """Judge backed by a frontier API model.
+
+    Subclasses the local judge so every rubric prompt, budget fit, and score
+    parser is shared — only the transport changes. Unlocks dimensions the 8B
+    local judges score poorly (and the deferred Arena-Hard-Auto layer), at
+    per-call cost, so every call is priced into the same run budget the models
+    under test draw from.
+    """
+
+    # Frontier context windows are large; the 6000-char truncation exists for a
+    # local judge's 4096-token window and would throw away evidence here.
+    MAX_RESPONSE_CHARS = 24000
+
+    def __init__(self, backend, max_tokens: int = 1024, tracker=None):
+        self._backend = backend
+        self.model = backend.model_id
+        self.max_tokens = max_tokens
+        self._tracker = tracker
+        self.base_url = ""
+        self.temperature = 0.0
+
+    def _generate(self, prompt: str, max_retries: int) -> str | JudgeError:
+        from nite_eval.conversation_runner import Message
+
+        last_error = ""
+        for attempt in range(1, max_retries + 1):
+            try:
+                reply = self._backend.generate([Message(role="user", content=prompt)], self.max_tokens)
+            except Exception as e:  # SDKs already retry transient errors internally
+                logger.warning("API judge %s failed (attempt %d/%d): %s", self.model, attempt, max_retries, e)
+                last_error = f"api_error: {e}"
+                continue
+            if self._tracker is not None:
+                self._tracker.record(
+                    self._backend.model_id, reply.prompt_tokens, reply.completion_tokens, self._backend.provider
+                )
+            if not reply.text.strip():
+                last_error = "empty_response"
+                logger.warning("API judge %s returned empty content (attempt %d/%d)", self.model, attempt, max_retries)
+                continue
+            return reply.text
+        return JudgeError(error=last_error, raw_response="")
+
+    def _call(self, prompt: str, max_retries: int = 3) -> JudgeResult | JudgeError:
+        raw = self._generate(prompt, max_retries)
+        if isinstance(raw, JudgeError):
+            return raw
+        return _parse_judge_response(raw)
+
+    def _call_raw(self, prompt: str, max_retries: int = 3) -> str | JudgeError:
+        return self._generate(prompt, max_retries)
+
+    def close(self) -> None:
+        self._backend.close()
+
+
+def build_judge(judge_cfg: dict, tracker=None) -> RoutedJudgeClient:
+    """Construct the judge stack from the `judge:` config block.
+
+    Local RewardAnything/Flow-Judge remain the default. An optional `frontier`
+    block routes named dimensions (or all of them, via `dimensions: ["*"]`) to
+    an API model instead — the prerequisite for Arena-Hard-Auto-style scoring.
+    """
+    from nite_eval.providers import build_backend
+
+    overrides: dict[str, JudgeClient] = {}
+    frontier = judge_cfg.get("frontier")
+    if frontier:
+        backend = build_backend(
+            {
+                "name": frontier.get("name", frontier.get("api_model", "frontier-judge")),
+                "provider": frontier["provider"],
+                "api_model": frontier.get("api_model"),
+                "api_key_env": frontier.get("api_key_env"),
+                "base_url": frontier.get("base_url"),
+                "params": frontier.get("params"),
+            }
+        )
+        if backend is None:
+            raise ValueError("judge.frontier must name a non-local provider")
+        api_judge = ApiJudgeClient(backend, max_tokens=frontier.get("max_tokens", 1024), tracker=tracker)
+        for dimension in frontier.get("dimensions") or ["*"]:
+            overrides[dimension] = api_judge
+        logger.info("Frontier judge %s handling dimensions: %s", backend.model_id, sorted(overrides))
+
+    return RoutedJudgeClient(
+        base_url=judge_cfg["base_url"],
+        flow_judge_model=judge_cfg.get("flow_judge_model", DEFAULT_FLOW_JUDGE_MODEL),
+        reward_anything_model=judge_cfg.get("reward_anything_model", DEFAULT_REWARD_ANYTHING_MODEL),
+        flow_judge_url=judge_cfg.get("flow_judge_url"),
+        reward_anything_url=judge_cfg.get("reward_anything_url"),
+        temperature=judge_cfg.get("temperature", 0.1),
+        max_tokens=judge_cfg.get("max_tokens", 2048),
+        overrides=overrides,
+    )

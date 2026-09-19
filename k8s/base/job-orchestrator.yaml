@@ -43,6 +43,12 @@ spec:
           args:
             - "--config"
             - "/workspace/config/eval_config.yaml"
+          # Frontier-model API keys. Optional: a local-only run needs no
+          # such secret, and the manifests stay applicable without one.
+          envFrom:
+            - secretRef:
+                name: nite-eval-api-keys
+                optional: true
           env:
             - name: PYTHONUNBUFFERED
               value: "1"

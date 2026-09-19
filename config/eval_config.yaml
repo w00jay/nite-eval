@@ -13,6 +13,17 @@ judge:
   temperature: 0.1
   max_tokens: 2048
 
+  # Optional: route rubric dimensions to a frontier judge instead of the local
+  # 8B pair. `dimensions: ["*"]` routes all of them. This is what the deferred
+  # Arena-Hard-Auto layer was waiting on, and it bills per scored dimension per
+  # task per model, which multiplies fast — judge spend counts against the same
+  # cost.max_usd cap as the models under test.
+  # frontier:
+  #   provider: anthropic
+  #   api_model: claude-opus-5
+  #   max_tokens: 1024
+  #   dimensions: ["reasoning_quality"]
+
 models:
   - name: "gemma4-26b-a4b"
     backend: "llama.cpp"
@@ -383,8 +394,47 @@ models:
     chat_template_kwargs:
       enable_thinking: false
 
+  # --- Frontier models (uncommented = real money; start with --dry-run) ---
+  #
+  # Same `native_tools` switch the local models use. API models default to
+  # native (it is how they are actually used); set it false to run one through
+  # the Hermes prompt-injected path the local fleet uses, which is the only way
+  # to measure what the format alone is worth rather than assuming it.
+  #
+  # Give API models more max_tokens than local ones: on Claude Opus 5 thinking
+  # is on by default and shares the budget with the answer. Prefer lowering
+  # params.output_config.effort over disabling thinking — thinking-off has its
+  # own tool-calling failure modes.
+  #
+  # - name: "claude-opus-5"
+  #   provider: anthropic
+  #   api_model: "claude-opus-5"
+  #   max_tokens: 8192
+  #   params:
+  #     output_config: {effort: "medium"}
+  #
+  # - name: "claude-opus-5-hermes"      # same model, the local fleet's format
+  #   provider: anthropic
+  #   api_model: "claude-opus-5"
+  #   native_tools: false
+  #   max_tokens: 8192
+  #
+  # - name: "gpt-5"
+  #   provider: openai
+  #   api_model: "gpt-5"
+  #   max_tokens: 8192
+  #   # Reasoning models reject `max_tokens`; switch the parameter name here.
+  #   # max_tokens_param: max_completion_tokens
+  #
+  # - name: "llama-405b-via-openrouter"
+  #   provider: openai_compatible
+  #   api_model: "meta-llama/llama-3.1-405b-instruct"
+  #   base_url: "https://openrouter.ai/api/v1"
+  #   api_key_env: OPENROUTER_API_KEY
+  #   provider_label: openrouter
+
 evaluation:
-  temperature: 0.0
+  temperature: 0.0        # local models only — current API models reject sampling params
   max_tokens: 4096
   # Average 3 judge samples per criterion. The target model is essentially
   # deterministic at temperature 0 (coding_artemis_medium_01 reproduced across
@@ -393,6 +443,20 @@ evaluation:
   # source; repeat target runs would buy nothing. Costs 3x judge calls.
   judge_averaging: true
   warm_up: true  # Send a warm-up prompt after each model swap
+
+cost:
+  # Hard cap on API spend for one run. The orchestrator aborts once measured
+  # spend reaches it — checkpointed, so --resume picks up after raising it.
+  # Local models are free and never count. Override per run with --max-cost.
+  max_usd: 10.00
+
+  # $/1M tokens. Anthropic list prices ship as defaults in src/nite_eval/cost.py;
+  # anything else must be priced here or it is reported as UNPRICED and left out
+  # of both the total and the cap.
+  prices: {}
+  #   gpt-5:
+  #     input_per_mtok: 0.00
+  #     output_per_mtok: 0.00
 
 scoring:
   # Composite gaps below this are inside judge variance and are reported as
