@@ -177,6 +177,18 @@ class ResultsDB:
         # before 2026-09-06, which is why the report skips those rather than
         # reading a missing count as "no tools offered".
         ("task_results", "tools_declared", "INTEGER"),
+        # Which backend generated the run and under which tool-calling format.
+        # A local model on Hermes tags and a frontier model on its native tool
+        # API are not doing the same task, so a score comparison across the two
+        # needs the format visible rather than inferred from the model name.
+        # NULL for runs before frontier support, which is why the report treats
+        # a missing value as "unknown" rather than "local".
+        ("task_results", "provider", "TEXT"),
+        ("task_results", "native_tools", "INTEGER"),
+        # Measured API spend for this task, from the provider's own usage
+        # numbers. 0 for local models, NULL for runs that predate pricing.
+        ("task_results", "cost_usd", "REAL"),
+        ("eval_runs", "total_cost_usd", "REAL"),
     )
 
     def _add_missing_columns(self, cursor: sqlite3.Cursor) -> None:
@@ -195,11 +207,11 @@ class ResultsDB:
         )
         self._conn.commit()
 
-    def finish_run(self, run_id: str, status: str = "completed") -> None:
+    def finish_run(self, run_id: str, status: str = "completed", total_cost_usd: float | None = None) -> None:
         """Mark a run as finished."""
         self._conn.execute(
-            "UPDATE eval_runs SET finished_at = ?, status = ? WHERE run_id = ?",
-            (time.time(), status, run_id),
+            "UPDATE eval_runs SET finished_at = ?, status = ?, total_cost_usd = ? WHERE run_id = ?",
+            (time.time(), status, total_cost_usd, run_id),
         )
         self._conn.commit()
 
@@ -273,6 +285,9 @@ class ResultsDB:
         predicted_n: int | None = None,
         unmatched_mock_samples: str | None = None,
         tools_declared: int | None = None,
+        provider: str | None = None,
+        native_tools: bool | None = None,
+        cost_usd: float | None = None,
     ) -> None:
         """Save a completed task result (the checkpoint)."""
         status = "failed" if error else "completed"
@@ -283,7 +298,7 @@ class ResultsDB:
             "reached_max_turns = ?, weighted_score = ?, error = ?, "
             "repaired_tool_calls = ?, unscored_weight = ?, unmatched_mock_calls = ?, "
             "completion_tokens = ?, prompt_tokens = ?, predicted_ms = ?, predicted_n = ?, unmatched_mock_samples = ?, "
-            "tools_declared = ? "
+            "tools_declared = ?, provider = ?, native_tools = ?, cost_usd = ? "
             "WHERE run_id = ? AND model_name = ? AND task_id = ?",
             (
                 status,
@@ -304,6 +319,9 @@ class ResultsDB:
                 predicted_n,
                 unmatched_mock_samples,
                 tools_declared,
+                provider,
+                None if native_tools is None else int(native_tools),
+                cost_usd,
                 run_id,
                 model_name,
                 task_id,
@@ -479,7 +497,9 @@ class ResultsDB:
             "SELECT model_name, COUNT(*) as total, "
             "SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed, "
             "SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed, "
-            "AVG(CASE WHEN status = 'completed' THEN weighted_score END) as avg_score "
+            "AVG(CASE WHEN status = 'completed' THEN weighted_score END) as avg_score, "
+            "SUM(cost_usd) as cost_usd, "
+            "MAX(provider) as provider, MAX(native_tools) as native_tools "
             "FROM task_results WHERE run_id = ? GROUP BY model_name",
             (run_id,),
         )
@@ -489,6 +509,11 @@ class ResultsDB:
                 "completed": row[2],
                 "failed": row[3],
                 "avg_score": row[4],
+                "cost_usd": row[5],
+                # NULL for runs recorded before frontier support; the report
+                # prints "?" for those rather than claiming they were local.
+                "provider": row[6],
+                "native_tools": row[7],
             }
             for row in cursor.fetchall()
         }

@@ -41,6 +41,12 @@ spec:
                 # JUDGE_GPU_UUID are not set. Without this the preflight raises
                 # and the run exits before a single task, not just coding ones.
                 - "--skip-gpu-check"
+              # Frontier-model API keys. Optional: a local-only run needs no
+              # such secret, and the manifests stay applicable without one.
+              envFrom:
+                - secretRef:
+                    name: nite-eval-api-keys
+                    optional: true
               env:
                 - name: PYTHONUNBUFFERED
                   value: "1"

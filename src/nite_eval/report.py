@@ -57,8 +57,8 @@ def generate_report(
     lines.append("## Summary")
     lines.append("")
     dimensions = ["research", "planning", "coding", "agentic"]
-    header = "| Model | " + " | ".join(d.capitalize() for d in dimensions) + " | Composite | Tasks |"
-    sep = "|" + "|".join(["-------"] * (len(dimensions) + 3)) + "|"
+    header = "| Model | Fmt | " + " | ".join(d.capitalize() for d in dimensions) + " | Composite | Tasks |"
+    sep = "|" + "|".join(["-------"] * (len(dimensions) + 4)) + "|"
     lines.append(header)
     lines.append(sep)
 
@@ -77,11 +77,21 @@ def generate_report(
         # a Composite that was really just the coding score.
         cells = [f"{dim_avgs[d]:.2f}" if d in dim_avgs else "—" for d in dimensions]
         lines.append(
-            f"| {model} | "
+            f"| {model} | {_tool_format(s)} | "
             + " | ".join(cells)
             + f" | **{composite:.2f}** | {s.get('completed', 0)}/{s.get('total', 0)} |"
         )
     lines.append("")
+
+    formats = {_tool_format(v) for v in summary.values()} - {"?"}
+    if len(formats) > 1:
+        lines.append(
+            "> **Comparability caveat:** models in this run used different tool-calling formats "
+            f"({', '.join(sorted(formats))}). Prompt-injected Hermes tags and a native tool API are "
+            "not equally friendly to every model, so a score gap across formats carries a format "
+            "effect as well as a capability one. Re-run a model under the other format to separate them."
+        )
+        lines.append("")
 
     # compute_composite renormalises over the dimensions present, so a composite
     # over a subset is arithmetically right and semantically narrower. Say so,
@@ -196,6 +206,24 @@ def generate_report(
 
             short_id = tid.replace(f"{dim}_", "")
             lines.append(f"| {short_id} | {diff} | " + " | ".join(cells) + f" | {turns_str} |")
+        lines.append("")
+
+    # Provider and cost. Skipped entirely for runs recorded before frontier
+    # support, where every provenance column is NULL.
+    if any(summary.get(m, {}).get("provider") for m in models):
+        lines.append("## Provider & Cost")
+        lines.append("")
+        lines.append("| Model | Provider | Format | Cost (USD) |")
+        lines.append("|-------|----------|--------|------------|")
+        total_cost = 0.0
+        for model in models:
+            row = summary.get(model, {})
+            cost = row.get("cost_usd") or 0.0
+            total_cost += cost
+            cost_str = f"${cost:.4f}" if cost else "free"
+            lines.append(f"| {model} | {row.get('provider') or '?'} | {_tool_format(row)} | {cost_str} |")
+        lines.append("")
+        lines.append(f"**Total API spend:** ${total_cost:.2f}")
         lines.append("")
 
     # Latency alone measures how long a model took, not how fast it generates,
@@ -559,3 +587,15 @@ def _get_task_result(db: ResultsDB, run_id: str, model: str, task_id: str) -> di
         "repaired_tool_calls": row[3],
         "unscored_weight": row[4],
     }
+
+
+def _tool_format(summary_row: dict) -> str:
+    """Render the tool-calling format a model ran under.
+
+    "?" means the run predates provenance recording — distinct from a known
+    local/Hermes run, which the report must not claim on its behalf.
+    """
+    native = summary_row.get("native_tools")
+    if native is None:
+        return "?"
+    return "native" if native else "hermes"

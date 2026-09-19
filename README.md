@@ -1,8 +1,8 @@
 # nite-eval
 
-Autonomous overnight LLM evaluation pipeline for local GGUF models. Runs multi-turn agentic tasks with the Hermes tool-calling format, scores them with dimension-routed judge models, and produces comparison reports.
+Autonomous overnight LLM evaluation pipeline. Runs multi-turn agentic tasks, scores them with dimension-routed judge models, and produces comparison reports — for local GGUF models and frontier APIs (Anthropic, OpenAI, any OpenAI-compatible gateway) in the same run.
 
-Built for dual-GPU rigs running [llama.cpp](https://github.com/ggerganov/llama.cpp) + [llama-swap](https://github.com/mostlygeek/llama-swap), but the orchestrator is just an OpenAI-compatible HTTP client — any backend that speaks `/v1/chat/completions` will work.
+Built for dual-GPU rigs running [llama.cpp](https://github.com/ggerganov/llama.cpp) + [llama-swap](https://github.com/mostlygeek/llama-swap); any backend that speaks `/v1/chat/completions` works as a local target, and frontier models are reached through their own SDKs under a per-run cost cap.
 
 ## What it does
 
@@ -373,6 +373,59 @@ You'll need:
 - Judge GGUFs:
   - [RewardAnything-8B-v1](https://huggingface.co/) (Q6_K)
   - [Flow-Judge-v0.1](https://huggingface.co/flowaicom/Flow-Judge-v0.1) (Q6_K)
+
+## Frontier models
+
+Any model in `config/eval_config.yaml` can name a `provider`. Local models keep llama-swap and the Hermes `<tool_call>` format; API models are reached through their own SDK and default to native tool calling.
+
+```yaml
+models:
+  - name: "qwen3.6-35b-a3b"      # provider defaults to local
+    backend: "llama.cpp"
+
+  - name: "claude-opus-5"
+    provider: anthropic
+    api_model: "claude-opus-5"
+    max_tokens: 8192             # thinking shares this budget with the answer
+    params:
+      output_config: {effort: "medium"}
+
+  - name: "gpt-5"
+    provider: openai
+    api_model: "gpt-5"
+    # max_tokens_param: max_completion_tokens   # reasoning models reject max_tokens
+
+  - name: "llama-405b"
+    provider: openai_compatible  # OpenRouter, Together, Gemini's compat layer, ...
+    base_url: "https://openrouter.ai/api/v1"
+    api_key_env: OPENROUTER_API_KEY
+```
+
+Keys come from the environment (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or whatever `api_key_env` names) — see `.env.example`.
+
+The agent loop itself is unchanged: nudges, tool-call repair, truncation diagnosis, caps and sandboxed coding tasks all behave the same, because a backend only replaces the generate call.
+
+### Cost control
+
+Spend is measured from each provider's own usage numbers, priced per model, and capped:
+
+```bash
+# Upper-bound estimate, no API calls made
+uv run python -m nite_eval.orchestrator --dry-run
+
+# Abort (checkpointed, resumable) once spend reaches $5
+uv run python -m nite_eval.orchestrator --max-cost 5.00
+```
+
+`cost.max_usd` sets the default cap. Anthropic list prices ship as defaults in `src/nite_eval/cost.py`; anything else must be priced under `cost.prices` or it is reported as UNPRICED and left out of both the total and the cap. Hitting the cap ends the run cleanly — resume with `--resume <run-id>` after raising it.
+
+### The tool-format caveat
+
+Local models get tool definitions pasted into the prompt (Hermes tags); API models get their native tool API. That difference is not neutral, so a local-vs-frontier score gap carries a format effect as well as a capability one. `native_tools: false` on an API model runs it through the Hermes path instead, which is how to measure the difference rather than argue about it. Runs that mix formats get a `Fmt` column and a caveat line in the report.
+
+### Frontier judges
+
+`judge.frontier` routes named rubric dimensions — or all of them, with `dimensions: ["*"]` — to an API model instead of the local 8B pair. That is what the deferred Arena-Hard-Auto layer was waiting on. Judge spend counts against the same cap.
 
 ## Usage
 

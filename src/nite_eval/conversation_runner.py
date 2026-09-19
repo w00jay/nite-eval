@@ -36,6 +36,29 @@ class ToolEnv(Protocol):
     def call(self, tool_name: str, arguments: dict) -> dict: ...
 
 
+class ModelBackend(Protocol):
+    """How the runner reaches a model.
+
+    The default is llama-server over HTTP; the provider clients in
+    nite_eval.providers implement the same call for frontier APIs, so the loop
+    below — nudges, repairs, truncation diagnosis, caps — is identical no
+    matter who generates the tokens.
+    """
+
+    provider: str
+    model_id: str
+
+    def generate(
+        self,
+        messages: list["Message"],
+        max_tokens: int,
+        tools: list[dict] | None = None,
+        native_tools: bool = False,
+    ) -> "ModelReply": ...
+
+    def close(self) -> None: ...
+
+
 @dataclass
 class Message:
     role: str
@@ -243,6 +266,7 @@ def run_conversation(
     system_suffix: str = "",
     chat_template_kwargs: dict | None = None,
     native_tools: bool = False,
+    backend: ModelBackend | None = None,
 ) -> ConversationResult:
     """Run a multi-turn conversation with Hermes-format tool calling.
 
@@ -258,6 +282,11 @@ def run_conversation(
     into the Jinja chat template. Needed for models whose thinking toggle is a
     template variable rather than a prompt string — Qwen3.8 has no `/no_think`
     branch at all and only responds to `{"enable_thinking": false}`.
+
+    `backend` routes generation somewhere other than the local llama-server at
+    `base_url` — an Anthropic or OpenAI-compatible client, say. When omitted the
+    local HTTP path is used and `base_url`/`model_name`/`temperature` apply as
+    before.
 
     `timeout_seconds` is the task's wall-clock budget, checked between turns.
     It previously did nothing at all — accepted, then discarded — so a task
@@ -296,6 +325,14 @@ def run_conversation(
     # separately, between turns, so a long single generation is never killed
     # mid-flight but a runaway conversation still terminates.
     client = httpx.Client(timeout=HTTP_READ_TIMEOUT)
+    if backend is None:
+        backend = LocalBackend(
+            client=client,
+            base_url=base_url,
+            model_id=model_name,
+            temperature=temperature,
+            chat_template_kwargs=chat_template_kwargs,
+        )
     task_start = time.monotonic()
 
     try:
@@ -327,17 +364,7 @@ def run_conversation(
 
             start = time.monotonic()
 
-            reply = _call_model(
-                client,
-                base_url,
-                model_name,
-                messages,
-                temperature,
-                max_tokens,
-                chat_template_kwargs,
-                tools=tools,
-                native_tools=native_tools,
-            )
+            reply = backend.generate(messages, max_tokens, tools=tools, native_tools=native_tools)
             response_text = reply.text
 
             latency = (time.monotonic() - start) * 1000
@@ -467,9 +494,7 @@ def run_conversation(
                         )
                     )
                     nudge_start = time.monotonic()
-                    nudge_reply = _call_model(
-                        client, base_url, model_name, messages, temperature, max_tokens, chat_template_kwargs
-                    )
+                    nudge_reply = backend.generate(messages, max_tokens)
                     nudged_text = nudge_reply.text
                     nudge_latency = (time.monotonic() - nudge_start) * 1000
                     total_latency += nudge_latency
@@ -574,16 +599,12 @@ def run_conversation(
                     "write your final answer to the original question now."
                 )
                 nudge_cost = _try_nudge(
-                    client,
-                    base_url,
-                    model_name,
+                    backend,
                     messages,
-                    temperature,
                     max_tokens,
                     nudge_content,
                     turn_num + 1,
                     turns,
-                    chat_template_kwargs,
                     tools,
                 )
                 total_latency += nudge_cost.latency_ms
@@ -606,16 +627,12 @@ def run_conversation(
                 "write your final answer to the original question now."
             )
             nudge_cost = _try_nudge(
-                client,
-                base_url,
-                model_name,
+                backend,
                 messages,
-                temperature,
                 max_tokens,
                 nudge_content,
                 max_turns + 1,
                 turns,
-                chat_template_kwargs,
                 tools,
             )
             total_latency += nudge_cost.latency_ms
@@ -793,16 +810,12 @@ def compact_tool_call_payloads(response_text: str, parsed: ParsedResponse, thres
 
 
 def _try_nudge(
-    client: httpx.Client,
-    base_url: str,
-    model_name: str,
+    backend: ModelBackend,
     messages: list[Message],
-    temperature: float,
     max_tokens: int,
     nudge_content: str,
     turn_number: int,
     turns: list[TurnResult],
-    chat_template_kwargs: dict | None = None,
     tools: list[dict] | None = None,
 ) -> NudgeCost:
     """Append a synthesis-nudge user message and collect the model's reply.
@@ -819,7 +832,7 @@ def _try_nudge(
     messages.append(Message(role="user", content=nudge_content))
     nudge_start = time.monotonic()
     try:
-        nudge_reply = _call_model(client, base_url, model_name, messages, temperature, max_tokens, chat_template_kwargs)
+        nudge_reply = backend.generate(messages, max_tokens)
         nudged_text = nudge_reply.text
     except httpx.HTTPStatusError as e:
         body = e.response.text[:300]
@@ -932,6 +945,54 @@ def _parse_native_tool_calls(msg: dict, model_name: str) -> list[ToolCall] | Non
             args = {}
         calls.append(ToolCall(name=name, arguments=args, raw=json.dumps(entry)))
     return calls or None
+
+
+class LocalBackend:
+    """Default backend: llama-server (or any OpenAI-compatible endpoint) over HTTP.
+
+    Calls the module-level `_call_model` rather than holding a reference to it,
+    so tests that patch `nite_eval.conversation_runner._call_model` still
+    intercept generation.
+    """
+
+    provider = "local"
+
+    def __init__(
+        self,
+        client: httpx.Client,
+        base_url: str,
+        model_id: str,
+        temperature: float = 0.0,
+        chat_template_kwargs: dict | None = None,
+    ):
+        self._client = client
+        self.base_url = base_url
+        self.model_id = model_id
+        self.temperature = temperature
+        self.chat_template_kwargs = chat_template_kwargs
+
+    def generate(
+        self,
+        messages: list[Message],
+        max_tokens: int,
+        tools: list[dict] | None = None,
+        native_tools: bool = False,
+    ) -> ModelReply:
+        return _call_model(
+            self._client,
+            self.base_url,
+            self.model_id,
+            messages,
+            self.temperature,
+            max_tokens,
+            self.chat_template_kwargs,
+            tools=tools,
+            native_tools=native_tools,
+        )
+
+    def close(self) -> None:
+        # The runner owns the httpx client's lifecycle on this path.
+        pass
 
 
 def _call_model(

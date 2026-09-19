@@ -24,13 +24,15 @@ from rich.console import Console
 from rich.table import Table
 
 from nite_eval.automated_scoring import run_automated_checks
-from nite_eval.conversation_runner import ConversationResult, run_conversation
+from nite_eval.conversation_runner import ConversationResult, ModelBackend, run_conversation
+from nite_eval.cost import BudgetExceededError, CostTracker, PriceBook
 from nite_eval.evidence import build_code_evidence, build_tool_evidence
 from nite_eval.gpu_check import GpuPlacementError, resolve_expected_uuids, verify_runtime_placement
 from nite_eval.gpu_check import preflight as gpu_preflight
-from nite_eval.judge import FLOW_JUDGE_DIMENSIONS, RoutedJudgeClient
+from nite_eval.judge import FLOW_JUDGE_DIMENSIONS, RoutedJudgeClient, build_judge
 from nite_eval.mock_tools import MockToolEnv, summarise_unmatched
 from nite_eval.model_manager import check_health, warm_up_model
+from nite_eval.providers import build_backend, is_local, model_id_for, native_tools_for
 from nite_eval.report import save_report  # noqa: TC001
 from nite_eval.results_db import ResultsDB
 from nite_eval.rubrics import get_rubric
@@ -319,6 +321,10 @@ def run_task(
     system_suffix: str = "",
     chat_template_kwargs: dict | None = None,
     native_tools: bool = False,
+    backend: ModelBackend | None = None,
+    tracker: CostTracker | None = None,
+    provider: str = "local",
+    api_model_id: str = "",
 ) -> float:
     """Run a single task for a model and persist results. Returns weighted score."""
     db.mark_task_running(run_id, model_name, task.id)
@@ -368,7 +374,20 @@ def run_task(
         system_suffix=system_suffix,
         chat_template_kwargs=chat_template_kwargs,
         native_tools=native_tools,
+        backend=backend,
     )
+
+    # Price the generation even when the task failed — a task that errored
+    # partway still spent whatever it spent.
+    cost = 0.0
+    if tracker is not None:
+        cost = tracker.record(
+            api_model_id or model_name,
+            conv.total_prompt_tokens,
+            conv.total_completion_tokens,
+            provider,
+        )
+    provenance = {"provider": provider, "native_tools": native_tools, "cost_usd": cost}
 
     # Record tool calls before branching on the outcome. This used to sit after
     # the failure return, so a failed task's calls were counted in
@@ -408,7 +427,10 @@ def run_task(
             predicted_ms=conv.total_predicted_ms or None,
             predicted_n=conv.total_predicted_n or None,
             tools_declared=len(task.tools or []),
+            **provenance,
         )
+        if tracker is not None:
+            tracker.check()
         return 0.0
 
     # Score
@@ -488,12 +510,16 @@ def run_task(
         # Zero tool calls only means something if tools were on offer; the
         # report cannot tell "chose not to" from "had none" without this.
         tools_declared=len(task.tools or []),
+        **provenance,
     )
 
     turns_str = f"{len(conv.turns)}t/{conv.total_tool_calls}tc"
     repaired = f", {conv.repaired_tool_calls} repaired" if conv.repaired_tool_calls else ""
     unscored = f", {unscored_weight:.0%} unscored" if unscored_weight else ""
-    console.print(f" → {weighted:.2f} ({turns_str}, {conv.total_latency_ms:.0f}ms{repaired}{unscored})")
+    spend = f", ${cost:.3f}" if cost else ""
+    console.print(f" → {weighted:.2f} ({turns_str}, {conv.total_latency_ms:.0f}ms{repaired}{unscored}{spend})")
+    if tracker is not None:
+        tracker.check()
     return weighted
 
 
@@ -529,6 +555,75 @@ def print_results(db: ResultsDB, run_id: str, models: list[str], weights: dict[s
     console.print(table)
 
 
+# Rough bytes-per-token ratio for English prompts. Only used for the pre-flight
+# estimate; actual spend is always measured from the provider's usage numbers.
+CHARS_PER_TOKEN = 4
+
+
+def estimate_run_cost(model_cfgs: list[dict], eval_cfg: dict, price_book: PriceBook, args) -> None:
+    """Print a rough pre-flight cost estimate without calling any provider.
+
+    Deliberately pessimistic: it assumes every task runs to max_turns and fills
+    max_tokens on every turn. Real runs usually finish earlier, so treat this as
+    a ceiling for choosing --max-cost, not a forecast.
+    """
+    tasks = load_tasks(dimension=args.dimension, difficulty=args.difficulty)
+    console.print("\n[bold]═══ Cost estimate (upper bound, no API calls made) ═══[/bold]\n")
+    table = Table(show_header=True, border_style="cyan")
+    table.add_column("Model")
+    table.add_column("Provider")
+    table.add_column("Input tok", justify="right")
+    table.add_column("Output tok", justify="right")
+    table.add_column("Est. cost", justify="right")
+
+    total = 0.0
+    unpriced: list[str] = []
+    for cfg in model_cfgs:
+        model_id = model_id_for(cfg)
+        provider = cfg.get("provider", "local")
+        in_tokens = 0
+        out_tokens = 0
+        for task in tasks:
+            max_tokens = task.max_tokens or eval_cfg.get("max_tokens", 2048)
+            prompt_tokens = (len(task.system_prompt) + len(task.user_message) + len(str(task.tools))) // CHARS_PER_TOKEN
+            # Each turn resends the growing history: turn i carries the prompt
+            # plus everything generated so far.
+            for turn in range(1, task.max_turns + 1):
+                in_tokens += prompt_tokens + (turn - 1) * max_tokens
+                out_tokens += max_tokens
+
+        cost = price_book.cost_usd(model_id, in_tokens, out_tokens, provider)
+        if cost is None:
+            unpriced.append(model_id)
+            cost_str = "unpriced"
+        else:
+            total += cost
+            cost_str = f"${cost:.2f}"
+        table.add_row(cfg["name"], provider, f"{in_tokens:,}", f"{out_tokens:,}", cost_str)
+
+    console.print(table)
+    console.print(f"\nEstimated ceiling for priced models: [bold]${total:.2f}[/bold]")
+    if unpriced:
+        console.print(
+            f"[yellow]No prices configured for: {', '.join(sorted(set(unpriced)))} — "
+            "add them under `cost.prices` in the config to include them.[/yellow]"
+        )
+
+
+def print_spend(tracker: CostTracker) -> None:
+    """Report measured API spend (local models contribute nothing)."""
+    if not tracker.spent_usd and not tracker.unpriced_models:
+        return
+    console.print(f"\nAPI spend this run: [bold]${tracker.spent_usd:.2f}[/bold]")
+    for model_id, spend in sorted(tracker.by_model.items(), key=lambda kv: -kv[1]):
+        console.print(f"  {model_id}: ${spend:.2f}")
+    if tracker.unpriced_models:
+        console.print(
+            "[yellow]Unpriced (excluded from the total and the cap): "
+            f"{', '.join(sorted(tracker.unpriced_models))}[/yellow]"
+        )
+
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -546,6 +641,8 @@ def main() -> None:
     parser.add_argument("--difficulty", help="Filter tasks by difficulty")
     parser.add_argument("--resume", help="Resume a previous run by ID")
     parser.add_argument("--skip-server-check", action="store_true", help="Skip server health checks")
+    parser.add_argument("--dry-run", action="store_true", help="Print a cost estimate and exit without calling models")
+    parser.add_argument("--max-cost", type=float, help="Abort the run once API spend reaches this many USD")
     parser.add_argument(
         "--skip-gpu-check",
         action="store_true",
@@ -562,10 +659,37 @@ def main() -> None:
     db_name = cfg.get("results", {}).get("db_name", "eval_results.db")
 
     models_cfg = cfg.get("models", [])
+    by_name = {m["name"]: m for m in models_cfg}
     models = args.models or [m["name"] for m in models_cfg]
+    unknown = [name for name in models if name not in by_name]
+    if unknown:
+        console.print(f"[red]Unknown model(s) in config: {', '.join(unknown)}[/red]")
+        sys.exit(1)
     if not models:
         console.print("[red]No models configured[/red]")
         sys.exit(1)
+    selected_cfgs = [by_name[name] for name in models]
+
+    # Frontier models are reached through their own SDKs; local models keep the
+    # runner's llama-server path, which is what a None backend selects.
+    price_book = PriceBook(cfg.get("cost", {}).get("prices"))
+    if args.dry_run:
+        estimate_run_cost(selected_cfgs, eval_cfg, price_book, args)
+        return
+
+    cap = args.max_cost if args.max_cost is not None else cfg.get("cost", {}).get("max_usd")
+    tracker = CostTracker(price_book=price_book, cap_usd=cap)
+    if cap is not None:
+        console.print(f"API budget cap: [bold]${cap:.2f}[/bold]")
+
+    try:
+        backend_by_model = {m["name"]: build_backend(m) for m in selected_cfgs}
+    except (KeyError, ValueError) as e:
+        console.print(f"[red]Model config error: {e}[/red]")
+        sys.exit(1)
+    provider_by_model: dict[str, str] = {m["name"]: str(m.get("provider", "local")) for m in selected_cfgs}
+    api_model_by_model: dict[str, str] = {m["name"]: str(model_id_for(m)) for m in selected_cfgs}
+    local_models = [m["name"] for m in selected_cfgs if is_local(m)]
 
     # Per-model system-prompt suffix (e.g. "/no_think" for Qwen3 models).
     # Applied to every task for that model via chat-template trigger.
@@ -580,12 +704,16 @@ def main() -> None:
     # parsing the reply out of text. Ornith's documented usage is the native
     # path and it returns clean calls there; asked to hand-write JSON in prose
     # it emitted four distinct malformation classes across three runs.
-    native_tools_by_model: dict[str, bool] = {m["name"]: bool(m.get("native_tools")) for m in models_cfg}
+    # API models default to their provider's native tool API; local models
+    # default to Hermes tags, unchanged. Setting `native_tools: false` on an API
+    # model runs it the local way, which is how the format's own contribution to
+    # a score gap gets measured instead of assumed.
+    native_tools_by_model: dict[str, bool] = {m["name"]: native_tools_for(m) for m in models_cfg}
 
     # Check servers
     if not args.skip_server_check:
         console.print("Checking servers...")
-        if not check_health(target_url):
+        if local_models and not check_health(target_url):
             console.print(f"[red]Target server not responding at {target_url}[/red]")
             sys.exit(1)
         judge_base = judge_cfg["base_url"].replace("/v1", "")
@@ -598,7 +726,7 @@ def main() -> None:
     # evaluation contends for VRAM and pushes the target's layers to host
     # memory — the run still completes and still writes scores, but the
     # latency numbers are meaningless. Fail loudly instead.
-    if not args.skip_gpu_check:
+    if not args.skip_gpu_check and local_models:
         console.print("Checking GPU placement...")
         swap_cfg = Path(cfg.get("target", {}).get("llama_swap_config", "config/llama_swap_config.yaml"))
         try:
@@ -645,23 +773,20 @@ def main() -> None:
             sys.exit(1)
         console.print(f"Resuming run [bold]{run_id}[/bold] (status: {status})")
 
-    # Initialize judge
-    judge = RoutedJudgeClient(
-        base_url=judge_cfg["base_url"],
-        flow_judge_model=judge_cfg.get("flow_judge_model", "flow-judge"),
-        reward_anything_model=judge_cfg.get("reward_anything_model", "reward-anything"),
-        flow_judge_url=judge_cfg.get("flow_judge_url"),
-        reward_anything_url=judge_cfg.get("reward_anything_url"),
-        temperature=judge_cfg.get("temperature", 0.1),
-        max_tokens=judge_cfg.get("max_tokens", 2048),
-    )
+    # Initialize judge (local by default; judge.frontier routes dimensions to an API model)
+    judge = build_judge(judge_cfg, tracker)
 
     try:
         for model in models:
-            console.print(f"\n[bold cyan]═══ {model} ═══[/bold cyan]")
+            provider = provider_by_model.get(model, "local")
+            fmt = "native" if native_tools_by_model.get(model) else "hermes"
+            console.print(
+                f"\n[bold cyan]═══ {model} ═══[/bold cyan] "
+                f"[dim]({provider}/{fmt}, {api_model_by_model.get(model, model)})[/dim]"
+            )
 
-            # Warm up model via llama-swap
-            if eval_cfg.get("warm_up", True):
+            # Warm up model via llama-swap. API providers have nothing to load.
+            if model in local_models and eval_cfg.get("warm_up", True):
                 console.print(f"  Warming up {model}...")
                 if not warm_up_model(target_url, model, timeout=120.0):
                     console.print(f"  [red]Failed to warm up {model}, skipping[/red]")
@@ -709,7 +834,13 @@ def main() -> None:
                         system_suffix=system_suffix_by_model.get(model, ""),
                         chat_template_kwargs=template_kwargs_by_model.get(model) or None,
                         native_tools=native_tools_by_model.get(model, False),
+                        backend=backend_by_model.get(model),
+                        tracker=tracker,
+                        provider=provider_by_model.get(model, "local"),
+                        api_model_id=api_model_by_model.get(model) or str(model),
                     )
+                except BudgetExceededError:
+                    raise
                 except Exception:
                     logger.exception("Task %s failed for %s", task.id, model)
                     db.save_task_result(
@@ -726,8 +857,9 @@ def main() -> None:
                         tools_declared=len(task.tools or []),
                     )
 
-        db.finish_run(run_id)
+        db.finish_run(run_id, total_cost_usd=tracker.spent_usd)
         print_results(db, run_id, models, weights)
+        print_spend(tracker)
 
         # Generate Markdown report
         report_path = save_report(
@@ -744,12 +876,22 @@ def main() -> None:
         )
         console.print(f"\nReport saved to [bold]{report_path}[/bold]")
 
+    except BudgetExceededError as e:
+        console.print(f"\n[red]Budget cap reached: {e}[/red]")
+        console.print(f"[yellow]Progress saved — resume with --resume {run_id} (raise --max-cost first)[/yellow]")
+        db.finish_run(run_id, status="budget_exceeded", total_cost_usd=tracker.spent_usd)
+        print_spend(tracker)
+        sys.exit(2)
     except KeyboardInterrupt:
-        console.print("\n[yellow]Interrupted — progress saved, resume with --resume {run_id}[/yellow]")
-        db.finish_run(run_id, status="interrupted")
+        console.print(f"\n[yellow]Interrupted — progress saved, resume with --resume {run_id}[/yellow]")
+        db.finish_run(run_id, status="interrupted", total_cost_usd=tracker.spent_usd)
+        print_spend(tracker)
         sys.exit(130)
     finally:
         judge.close()
+        for backend in backend_by_model.values():
+            if backend is not None:
+                backend.close()
         db.close()
         # A run that ends mid-task — Ctrl-C, an unhandled error, a killed
         # process — leaves its sandbox container running. Reaping only at
