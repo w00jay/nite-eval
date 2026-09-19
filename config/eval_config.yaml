@@ -498,6 +498,26 @@ models:
     # reasoning traces on hard tasks at either setting. The untested lever is
     # sampling, not effort: we run temp 0.0 for comparability with every
     # existing row, which leaves a looping model no escape route.
+    #
+    # That was then tested — run-20260919-053347, the card's own sampling
+    # (temp 1.0 / top_p 0.95 / top_k 20), 15 tasks. NOT leaderboard-comparable
+    # (every other row is temp 0.0) and a single nondeterministic sample, so
+    # it is evidence about a mechanism, not a score:
+    #
+    #   dimension  medium t0.0   low t0.0      card t1.0
+    #   agentic    0.837 f=0     0.850 f=0     0.855 f=0
+    #   coding     0.231 f=3     0.433 f=2     0.444 f=2
+    #   planning   0.674 f=0     0.589 f=1     0.733 f=0
+    #   research   0.846 f=0     0.811 f=0     0.892 f=0
+    #   overall    0.645 f=3     0.679 f=3     0.728 f=2
+    #
+    # The mechanism separates cleanly. degenerate_repetition failures: 1 at
+    # medium, 1 at low, ZERO at temp 1.0. Greedy decoding is what turns a long
+    # trace into an unescapable loop. But two coding tasks still failed at
+    # temp 1.0, as plain truncation — ~100k chars of reasoning against a
+    # 32768-token budget. So looping is an artifact of our temp 0.0 house
+    # rule; over-thinking on hard tasks is the model, and neither the effort
+    # knob nor sampling fixes it.
     chat_template_kwargs:
       reasoning_effort: "medium"
 
