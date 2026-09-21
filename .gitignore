@@ -17,7 +17,9 @@ config/judge_swap_config.yaml
 k8s/base/secret.yaml
 
 # Personal notes / planning (not part of the public project)
-CLAUDE.md
+# CLAUDE.md is committed — project guidance shared by every machine.
+# Machine-specific facts (hosts, addresses, full GPU UUIDs) go in CLAUDE.local.md.
+CLAUDE.local.md
 PLANS/
 TODO.md
 .claude/worktrees/
