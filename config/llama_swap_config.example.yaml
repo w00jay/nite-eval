@@ -12,7 +12,7 @@ models:
     cmd: >
       env CUDA_VISIBLE_DEVICES=GPU-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
       /ABS/PATH/TO/llama.cpp/build/bin/llama-server
-      -m /ABS/PATH/TO/gguf/gemma-4-26b-a4b-it-Q4_K_M.gguf
+      -m /ABS/PATH/TO/models/gemma-4-26b-a4b-it-Q4_K_M.gguf
       --port ${PORT} -ngl 999 --ctx-size 65536
       -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
     group: "target-gpu"
@@ -22,7 +22,7 @@ models:
     cmd: >
       env CUDA_VISIBLE_DEVICES=GPU-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
       /ABS/PATH/TO/llama.cpp/build/bin/llama-server
-      -m /ABS/PATH/TO/gguf/Qwen3.6-35B-A3B-UD-Q4_K_S.gguf
+      -m /ABS/PATH/TO/models/Qwen3.6-35B-A3B-UD-Q4_K_S.gguf
       --port ${PORT} -ngl 999 --ctx-size 65536
       -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
     group: "target-gpu"
@@ -34,7 +34,7 @@ models:
     cmd: >
       env CUDA_VISIBLE_DEVICES=GPU-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
       /ABS/PATH/TO/llama.cpp/build/bin/llama-server
-      -m /ABS/PATH/TO/gguf/Qwen3.8-27B-UD-Q4_K_XL.gguf
+      -m /ABS/PATH/TO/models/Qwen3.8-27B-UD-Q4_K_XL.gguf
       --port ${PORT} -ngl 999 --ctx-size 65536
       -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
     group: "target-gpu"
@@ -46,7 +46,7 @@ models:
     cmd: >
       env CUDA_VISIBLE_DEVICES=GPU-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
       /ABS/PATH/TO/llama.cpp/build/bin/llama-server
-      -m /ABS/PATH/TO/gguf/Ornith-1.5-35B-A3B-Q4_K_M.gguf
+      -m /ABS/PATH/TO/models/Ornith-1.5-35B-A3B-Q4_K_M.gguf
       --port ${PORT} -ngl 999 --ctx-size 65536
       -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
     group: "target-gpu"
@@ -59,7 +59,7 @@ models:
     cmd: >
       env CUDA_VISIBLE_DEVICES=GPU-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
       /ABS/PATH/TO/llama.cpp/build/bin/llama-server
-      -m /ABS/PATH/TO/gguf/LFM2.5-2.6B-Q4_K_M.gguf
+      -m /ABS/PATH/TO/models/LFM2.5-2.6B-Q4_K_M.gguf
       --port ${PORT} -ngl 999 --ctx-size 65536
       -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
     group: "target-gpu"
@@ -72,7 +72,7 @@ models:
     cmd: >
       env CUDA_VISIBLE_DEVICES=GPU-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
       /ABS/PATH/TO/llama.cpp/build/bin/llama-server
-      -m /ABS/PATH/TO/gguf/LFM2.5-8B-A1B-Q4_K_M.gguf
+      -m /ABS/PATH/TO/models/LFM2.5-8B-A1B-Q4_K_M.gguf
       --port ${PORT} -ngl 999 --ctx-size 65536
       -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
     group: "target-gpu"
@@ -86,7 +86,7 @@ models:
     cmd: >
       env CUDA_VISIBLE_DEVICES=GPU-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
       /ABS/PATH/TO/llama.cpp/build/bin/llama-server
-      -m /ABS/PATH/TO/gguf/Muse-Glimmer-30B-Q4_K_M.gguf
+      -m /ABS/PATH/TO/models/Muse-Glimmer-30B-Q4_K_M.gguf
       --port ${PORT} -ngl 999 --ctx-size 65536
       -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
     group: "target-gpu"
@@ -99,7 +99,7 @@ models:
     cmd: >
       env CUDA_VISIBLE_DEVICES=GPU-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
       /ABS/PATH/TO/llama.cpp/build/bin/llama-server
-      -m /ABS/PATH/TO/gguf/LFM2.5-8B-A1B-Q4_K_M.gguf
+      -m /ABS/PATH/TO/models/LFM2.5-8B-A1B-Q4_K_M.gguf
       --port ${PORT} -ngl 999 --ctx-size 65536
       -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
     group: "target-gpu"
@@ -113,7 +113,7 @@ models:
     cmd: >
       env CUDA_VISIBLE_DEVICES=GPU-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
       /ABS/PATH/TO/llama.cpp/build/bin/llama-server
-      -m /ABS/PATH/TO/gguf/Muse-Glimmer-30B-Q4_K_M.gguf
+      -m /ABS/PATH/TO/models/Muse-Glimmer-30B-Q4_K_M.gguf
       --port ${PORT} -ngl 999 --ctx-size 65536
       -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
     group: "target-gpu"
@@ -127,7 +127,7 @@ models:
     cmd: >
       env CUDA_VISIBLE_DEVICES=GPU-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
       /ABS/PATH/TO/llama.cpp/build/bin/llama-server
-      -m /ABS/PATH/TO/gguf/Muse-Glimmer-30B-Q4_K_M.gguf
+      -m /ABS/PATH/TO/models/Muse-Glimmer-30B-Q4_K_M.gguf
       --port ${PORT} -ngl 999 --ctx-size 65536
       -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
     group: "target-gpu"
@@ -169,7 +169,7 @@ models:
     cmd: >
       env CUDA_VISIBLE_DEVICES=GPU-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
       /ABS/PATH/TO/llama.cpp/build/bin/llama-server
-      -m /ABS/PATH/TO/gguf/Qwopus3.8-27B-Flash-Q4_K_M.gguf
+      -m /ABS/PATH/TO/models/Qwopus3.8-27B-Flash-Q4_K_M.gguf
       --port ${PORT} -ngl 999 --ctx-size 65536
       -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
     group: "target-gpu"
@@ -178,7 +178,7 @@ models:
     cmd: >
       env CUDA_VISIBLE_DEVICES=GPU-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
       /ABS/PATH/TO/llama.cpp/build/bin/llama-server
-      -m /ABS/PATH/TO/gguf/Qwopus3.8-27B-Flash-Q5_K_M.gguf
+      -m /ABS/PATH/TO/models/Qwopus3.8-27B-Flash-Q5_K_M.gguf
       --port ${PORT} -ngl 999 --ctx-size 65536
       -fa on --cache-type-k q8_0 --cache-type-v q8_0 --no-webui --metrics
     group: "target-gpu"
