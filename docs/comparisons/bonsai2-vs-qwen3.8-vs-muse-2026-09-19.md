@@ -61,8 +61,16 @@ separated the causes:
   loop — 1, 1, 0 across medium / low / temp 1.0 — but two coding tasks still died of plain
   truncation.
 
+A third side run (`run-20260922-045506`) tried `enable_thinking: false`, the switch that took
+qwen3.6 from 0-for-6 to 0.50 on `coding_artemis_medium_01`. It did not transfer: coding stayed at
+0.23 with the same three failures, and agentic fell 0.841 -> 0.721 for a net composite loss
+(0.641 -> 0.622). The switch worked at the token level — the loop vanished and per-task tokens
+roughly halved — but the model spent the savings on turns, going 63 -> 128 turns and 90 -> 163
+tool calls across the sweep and exhausting the same budget in 22-23 short turns.
+
 So looping is an artifact of our temperature 0.0 house rule, and over-thinking on hard tasks is
-the model. Neither the effort knob nor sampling removed the second one.
+the model. Neither the effort knob, nor sampling, nor turning thinking off removed the second one.
+`coding_artemis_medium_01` never once completed across all four configurations.
 
 ## What this does not answer
 
