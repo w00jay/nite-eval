@@ -499,6 +499,33 @@ models:
     # sampling, not effort: we run temp 0.0 for comparability with every
     # existing row, which leaves a looping model no escape route.
     #
+    # ALSO MEASURED with enable_thinking: false — run-20260922-045506, same 15
+    # tasks, temp 0.0, against the medium baseline in run-20260919-193418:
+    #
+    #   dimension  medium        no-think      delta
+    #   agentic    0.841 f=0     0.721 f=0     -0.120
+    #   coding     0.237 f=3     0.231 f=3     -0.006
+    #   planning   0.649 f=0     0.724 f=0     +0.075
+    #   research   0.838 f=0     0.876 f=0     +0.038
+    #   overall    0.641 f=3     0.622 f=3     -0.019
+    #
+    # A net loss, and it does not rescue coding. Worth testing anyway: this is
+    # the switch that took qwen3.6 from 0-for-6 to 0.50 on
+    # coding_artemis_medium_01 (TODO.md). That precedent does not transfer.
+    #
+    # It does exactly what it claims at the token level — the repetition loop
+    # disappears and per-task tokens roughly halve, taking the sweep from 39.6
+    # to 28.7 minutes — but the model spends the savings on turns instead:
+    # 63 -> 128 turns and 90 -> 163 tool calls across the sweep. It grinds
+    # through 22-23 short turns and still exhausts the same 32768-token budget,
+    # ending with 81-211 chars of content. The budget was never being consumed
+    # by one large reasoning blob that a switch could remove.
+    #
+    # coding_artemis_medium_01 has now failed under all four configurations
+    # tried here: medium, low, the card's temp 1.0 sampling, and thinking off.
+    # Best coding seen is 2 of 4 tasks, at low or at temp 1.0. Whatever that
+    # task gates on, no setting of this model clears it.
+    #
     # That was then tested — run-20260919-053347, the card's own sampling
     # (temp 1.0 / top_p 0.95 / top_k 20), 15 tasks. NOT leaderboard-comparable
     # (every other row is temp 0.0) and a single nondeterministic sample, so
