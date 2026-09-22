@@ -526,6 +526,17 @@ models:
     # Best coding seen is 2 of 4 tasks, at low or at temp 1.0. Whatever that
     # task gates on, no setting of this model clears it.
     #
+    # The budget was also tested directly — run-20260922-134531, coding only,
+    # task max_tokens raised 32768 -> 65536 and ctx-size 32768 -> 131072. The
+    # answer is that this harness cannot ask the question: all three failures
+    # became 20-minute hanging requests killed by HTTP_READ_TIMEOUT (1200s),
+    # because a 65536-token generation at ~65 tok/s needs ~17 minutes before
+    # prompt processing. Wall clock 23.2 / 20.1 / 21.2 min against 3.2 / 0.1
+    # min of actual generation. coding_mcp_easy_01 still passed at 0.93.
+    # Answering "would more budget help" needs HTTP_READ_TIMEOUT raised first;
+    # what is established is that the model consumes whatever budget it is
+    # given.
+    #
     # That was then tested — run-20260919-053347, the card's own sampling
     # (temp 1.0 / top_p 0.95 / top_k 20), 15 tasks. NOT leaderboard-comparable
     # (every other row is temp 0.0) and a single nondeterministic sample, so
@@ -545,6 +556,40 @@ models:
     # 32768-token budget. So looping is an artifact of our temp 0.0 house
     # rule; over-thinking on hard tasks is the model, and neither the effort
     # knob nor sampling fixes it.
+    chat_template_kwargs:
+      reasoning_effort: "medium"
+
+  - name: "bonsai2-27b-ptq1"
+    backend: "llama.cpp"
+    # PTQ1_0 (5.6 GB) — the smaller of Bonsai 2's two shipped quants, run with
+    # the identical config to bonsai2-27b-ternary (PQ2_0, 6.8 GB) so the only
+    # variable is bit-width.
+    #
+    # MEASURED run-20260922-145405 against PQ2_0 in run-20260919-193418:
+    #
+    #   dimension  PQ2_0 6.8GB   PTQ1_0 5.6GB  delta
+    #   agentic    0.841 f=0     0.810 f=0     -0.031
+    #   coding     0.237 f=3     0.433 f=2     +0.196
+    #   planning   0.649 f=0     0.636 f=0     -0.013
+    #   research   0.838 f=0     0.882 f=0     +0.044
+    #   overall    0.641 f=3     0.689 f=2     +0.048
+    #   decode     64.9 t/s      56.3 t/s
+    #
+    # The smaller quant scores HIGHER and runs SLOWER. Both halves are
+    # counterintuitive and both are weakly held:
+    #
+    # - The composite gap is 0.048, just under the 0.05 resolution floor, so it
+    #   is a tie by this harness's own rule. It is carried by one task:
+    #   coding_wine_medium_01 went from failure to 0.81. Coding has a wider
+    #   noise floor (0.10) and the +0.196 there does clear it, but one task
+    #   flipping is not four tasks improving.
+    # - n=1 for PTQ1_0 against n=2 for PQ2_0, whose three coding failures
+    #   reproduced to the character across both its runs. A second PTQ1_0 sweep
+    #   is what would turn this from "not worse" into "better".
+    #
+    # Do not conclude that fewer bits help. The defensible statement is that
+    # dropping from 2.13 bpw to ~1 bpw cost nothing measurable on these tasks.
+    native_tools: true
     chat_template_kwargs:
       reasoning_effort: "medium"
 
