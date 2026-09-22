@@ -433,131 +433,139 @@ models:
   #   api_key_env: OPENROUTER_API_KEY
   #   provider_label: openrouter
 
-  - name: "bonsai2-27b-ternary"
-    backend: "llama.cpp"
-    # prism-ml/Ternary-Bonsai-2-27B-gguf, PQ2_0: 6.8 GB, 2.13 bpw group-128
-    # ternary. Base Qwen3.8-27B — the SAME base as qwen3.8-27b above, so the
-    # pair measures what ternary quantization costs at fixed base, on our own
-    # tasks. It is not a check of the vendor's headline: that came from
-    # EvalScope + vLLM on an H100 against the unquantized model, not this GGUF.
-    #
-    # Runs on the PrismML llama.cpp fork (~/P/llama.cpp-prismml). Stock
-    # llama.cpp rejects PQ2_0/PTQ1_0 as unknown types — neither symbol appears
-    # anywhere in the stock checkout. The llama_swap entry is the only one
-    # pointing at that binary; every other target keeps the stock build.
-    #
-    # native_tools because the embedded template emits PrismML's own XML form,
-    #   <tool_call><function=NAME><parameter=KEY>value</parameter></function></tool_call>
-    # not Hermes JSON. Verified by dumping the GGUF chat template, then
-    # end to end: a get_weather probe returned finish_reason=tool_calls with
-    # structured {"city":"Paris"}. No parser work was needed, the same way
-    # ornith needed none once it stopped being asked to hand-write Hermes.
-    native_tools: true
-    # reasoning_effort, NOT system_suffix: the template inherits Qwen3.8's
-    # reasoning_effort variable (5 references) and carries no `no_think`
-    # literal (0), so "/no_think" would be inert filler here.
-    #
-    # MEASURED at "medium" — run-20260919-030032, all 15 tasks, temp 0.0:
-    #
-    #   dimension  bonsai  qwen3.8-27b  delta   latency/task
-    #   agentic    0.837   0.810        +0.03   29.5s vs 51.5s
-    #   research   0.846   0.839        +0.01   55.6s vs 90.5s
-    #   planning   0.674   0.817        -0.14
-    #   coding     0.231   0.790        -0.56   3 of 4 tasks FAILED
-    #   overall    0.645   0.812                decode 64.9 vs 39.9 tok/s
-    #
-    # (qwen3.8-27b baseline: run-20260908-012542, its most recent complete
-    # sweep. Its four complete runs span 0.812-0.861, so treat sub-0.05 gaps
-    # as ties — agentic and research above are ties, planning and coding are
-    # not.)
-    #
-    # The coding failures are non-answers, not bad answers: 117k and 113k
-    # chars of reasoning_content, finish_reason=length, empty content. One was
-    # classified degenerate_repetition (compresses to 8.4% of its size), a
-    # loop that a larger max_tokens would only lengthen. This is qwen3.8's
-    # failure mode, which "medium" fixed there and does not fix here. Greedy
-    # decoding — temperature 0.0, kept for comparability with every existing
-    # row in the DB — leaves a looping ternary model no escape; the model card
-    # itself recommends temp 1.0 / top_p 0.95 / top_k 20.
-    #
-    # ALSO MEASURED at "low" — run-20260919-040532, same 15 tasks, temp 0.0:
-    #
-    #   dimension  medium        low           delta
-    #   agentic    0.837 f=0     0.850 f=0     +0.013
-    #   coding     0.231 f=3     0.433 f=2     +0.202
-    #   planning   0.674 f=0     0.589 f=1     -0.085
-    #   research   0.846 f=0     0.811 f=0     -0.035
-    #   overall    0.645 f=3     0.679 f=3
-    #
-    # "medium" is kept despite low's higher overall, because low does not fix
-    # the failure — it relocates it. Both runs failed exactly three tasks; low
-    # rescued one coding task and then blew up planning_finance_hard_01
-    # (42212 chars, finish_reason=length). coding_artemis looped harder at low,
-    # not less: 124318 chars compressing to 3.3% of their size against 8.4% at
-    # medium. A budget knob cannot fix a loop, and this model emits ~110k-char
-    # reasoning traces on hard tasks at either setting. The untested lever is
-    # sampling, not effort: we run temp 0.0 for comparability with every
-    # existing row, which leaves a looping model no escape route.
-    #
-    # ALSO MEASURED with enable_thinking: false — run-20260922-045506, same 15
-    # tasks, temp 0.0, against the medium baseline in run-20260919-193418:
-    #
-    #   dimension  medium        no-think      delta
-    #   agentic    0.841 f=0     0.721 f=0     -0.120
-    #   coding     0.237 f=3     0.231 f=3     -0.006
-    #   planning   0.649 f=0     0.724 f=0     +0.075
-    #   research   0.838 f=0     0.876 f=0     +0.038
-    #   overall    0.641 f=3     0.622 f=3     -0.019
-    #
-    # A net loss, and it does not rescue coding. Worth testing anyway: this is
-    # the switch that took qwen3.6 from 0-for-6 to 0.50 on
-    # coding_artemis_medium_01 (TODO.md). That precedent does not transfer.
-    #
-    # It does exactly what it claims at the token level — the repetition loop
-    # disappears and per-task tokens roughly halve, taking the sweep from 39.6
-    # to 28.7 minutes — but the model spends the savings on turns instead:
-    # 63 -> 128 turns and 90 -> 163 tool calls across the sweep. It grinds
-    # through 22-23 short turns and still exhausts the same 32768-token budget,
-    # ending with 81-211 chars of content. The budget was never being consumed
-    # by one large reasoning blob that a switch could remove.
-    #
-    # coding_artemis_medium_01 has now failed under all four configurations
-    # tried here: medium, low, the card's temp 1.0 sampling, and thinking off.
-    # Best coding seen is 2 of 4 tasks, at low or at temp 1.0. Whatever that
-    # task gates on, no setting of this model clears it.
-    #
-    # The budget was also tested directly — run-20260922-134531, coding only,
-    # task max_tokens raised 32768 -> 65536 and ctx-size 32768 -> 131072. The
-    # answer is that this harness cannot ask the question: all three failures
-    # became 20-minute hanging requests killed by HTTP_READ_TIMEOUT (1200s),
-    # because a 65536-token generation at ~65 tok/s needs ~17 minutes before
-    # prompt processing. Wall clock 23.2 / 20.1 / 21.2 min against 3.2 / 0.1
-    # min of actual generation. coding_mcp_easy_01 still passed at 0.93.
-    # Answering "would more budget help" needs HTTP_READ_TIMEOUT raised first;
-    # what is established is that the model consumes whatever budget it is
-    # given.
-    #
-    # That was then tested — run-20260919-053347, the card's own sampling
-    # (temp 1.0 / top_p 0.95 / top_k 20), 15 tasks. NOT leaderboard-comparable
-    # (every other row is temp 0.0) and a single nondeterministic sample, so
-    # it is evidence about a mechanism, not a score:
-    #
-    #   dimension  medium t0.0   low t0.0      card t1.0
-    #   agentic    0.837 f=0     0.850 f=0     0.855 f=0
-    #   coding     0.231 f=3     0.433 f=2     0.444 f=2
-    #   planning   0.674 f=0     0.589 f=1     0.733 f=0
-    #   research   0.846 f=0     0.811 f=0     0.892 f=0
-    #   overall    0.645 f=3     0.679 f=3     0.728 f=2
-    #
-    # The mechanism separates cleanly. degenerate_repetition failures: 1 at
-    # medium, 1 at low, ZERO at temp 1.0. Greedy decoding is what turns a long
-    # trace into an unescapable loop. But two coding tasks still failed at
-    # temp 1.0, as plain truncation — ~100k chars of reasoning against a
-    # 32768-token budget. So looping is an artifact of our temp 0.0 house
-    # rule; over-thinking on hard tasks is the model, and neither the effort
-    # knob nor sampling fixes it.
-    chat_template_kwargs:
-      reasoning_effort: "medium"
+  # PARKED 2026-09-22 — superseded by bonsai2-27b-ptq1, the same model's smaller
+  # quant. PTQ1_0 is 5.6 GB against this 6.8 GB and completes one more task,
+  # reproducibly: coding_wine_medium_01 passes on PTQ1_0 in both its sweeps and
+  # fails on PQ2_0 in both of its. Both models are deterministic at temp 0 and
+  # their failures reproduce to the character, so that is a real difference and
+  # not judge noise. Everything below is kept because it is the measurement
+  # record for four configurations plus a budget probe; re-enable the entry if
+  # a PQ2_0 number is ever needed again.
+  # - name: "bonsai2-27b-ternary"
+  #   backend: "llama.cpp"
+  #   # prism-ml/Ternary-Bonsai-2-27B-gguf, PQ2_0: 6.8 GB, 2.13 bpw group-128
+  #   # ternary. Base Qwen3.8-27B — the SAME base as qwen3.8-27b above, so the
+  #   # pair measures what ternary quantization costs at fixed base, on our own
+  #   # tasks. It is not a check of the vendor's headline: that came from
+  #   # EvalScope + vLLM on an H100 against the unquantized model, not this GGUF.
+  #   #
+  #   # Runs on the PrismML llama.cpp fork (~/P/llama.cpp-prismml). Stock
+  #   # llama.cpp rejects PQ2_0/PTQ1_0 as unknown types — neither symbol appears
+  #   # anywhere in the stock checkout. The llama_swap entry is the only one
+  #   # pointing at that binary; every other target keeps the stock build.
+  #   #
+  #   # native_tools because the embedded template emits PrismML's own XML form,
+  #   #   <tool_call><function=NAME><parameter=KEY>value</parameter></function></tool_call>
+  #   # not Hermes JSON. Verified by dumping the GGUF chat template, then
+  #   # end to end: a get_weather probe returned finish_reason=tool_calls with
+  #   # structured {"city":"Paris"}. No parser work was needed, the same way
+  #   # ornith needed none once it stopped being asked to hand-write Hermes.
+  #   native_tools: true
+  #   # reasoning_effort, NOT system_suffix: the template inherits Qwen3.8's
+  #   # reasoning_effort variable (5 references) and carries no `no_think`
+  #   # literal (0), so "/no_think" would be inert filler here.
+  #   #
+  #   # MEASURED at "medium" — run-20260919-030032, all 15 tasks, temp 0.0:
+  #   #
+  #   #   dimension  bonsai  qwen3.8-27b  delta   latency/task
+  #   #   agentic    0.837   0.810        +0.03   29.5s vs 51.5s
+  #   #   research   0.846   0.839        +0.01   55.6s vs 90.5s
+  #   #   planning   0.674   0.817        -0.14
+  #   #   coding     0.231   0.790        -0.56   3 of 4 tasks FAILED
+  #   #   overall    0.645   0.812                decode 64.9 vs 39.9 tok/s
+  #   #
+  #   # (qwen3.8-27b baseline: run-20260908-012542, its most recent complete
+  #   # sweep. Its four complete runs span 0.812-0.861, so treat sub-0.05 gaps
+  #   # as ties — agentic and research above are ties, planning and coding are
+  #   # not.)
+  #   #
+  #   # The coding failures are non-answers, not bad answers: 117k and 113k
+  #   # chars of reasoning_content, finish_reason=length, empty content. One was
+  #   # classified degenerate_repetition (compresses to 8.4% of its size), a
+  #   # loop that a larger max_tokens would only lengthen. This is qwen3.8's
+  #   # failure mode, which "medium" fixed there and does not fix here. Greedy
+  #   # decoding — temperature 0.0, kept for comparability with every existing
+  #   # row in the DB — leaves a looping ternary model no escape; the model card
+  #   # itself recommends temp 1.0 / top_p 0.95 / top_k 20.
+  #   #
+  #   # ALSO MEASURED at "low" — run-20260919-040532, same 15 tasks, temp 0.0:
+  #   #
+  #   #   dimension  medium        low           delta
+  #   #   agentic    0.837 f=0     0.850 f=0     +0.013
+  #   #   coding     0.231 f=3     0.433 f=2     +0.202
+  #   #   planning   0.674 f=0     0.589 f=1     -0.085
+  #   #   research   0.846 f=0     0.811 f=0     -0.035
+  #   #   overall    0.645 f=3     0.679 f=3
+  #   #
+  #   # "medium" is kept despite low's higher overall, because low does not fix
+  #   # the failure — it relocates it. Both runs failed exactly three tasks; low
+  #   # rescued one coding task and then blew up planning_finance_hard_01
+  #   # (42212 chars, finish_reason=length). coding_artemis looped harder at low,
+  #   # not less: 124318 chars compressing to 3.3% of their size against 8.4% at
+  #   # medium. A budget knob cannot fix a loop, and this model emits ~110k-char
+  #   # reasoning traces on hard tasks at either setting. The untested lever is
+  #   # sampling, not effort: we run temp 0.0 for comparability with every
+  #   # existing row, which leaves a looping model no escape route.
+  #   #
+  #   # ALSO MEASURED with enable_thinking: false — run-20260922-045506, same 15
+  #   # tasks, temp 0.0, against the medium baseline in run-20260919-193418:
+  #   #
+  #   #   dimension  medium        no-think      delta
+  #   #   agentic    0.841 f=0     0.721 f=0     -0.120
+  #   #   coding     0.237 f=3     0.231 f=3     -0.006
+  #   #   planning   0.649 f=0     0.724 f=0     +0.075
+  #   #   research   0.838 f=0     0.876 f=0     +0.038
+  #   #   overall    0.641 f=3     0.622 f=3     -0.019
+  #   #
+  #   # A net loss, and it does not rescue coding. Worth testing anyway: this is
+  #   # the switch that took qwen3.6 from 0-for-6 to 0.50 on
+  #   # coding_artemis_medium_01 (TODO.md). That precedent does not transfer.
+  #   #
+  #   # It does exactly what it claims at the token level — the repetition loop
+  #   # disappears and per-task tokens roughly halve, taking the sweep from 39.6
+  #   # to 28.7 minutes — but the model spends the savings on turns instead:
+  #   # 63 -> 128 turns and 90 -> 163 tool calls across the sweep. It grinds
+  #   # through 22-23 short turns and still exhausts the same 32768-token budget,
+  #   # ending with 81-211 chars of content. The budget was never being consumed
+  #   # by one large reasoning blob that a switch could remove.
+  #   #
+  #   # coding_artemis_medium_01 has now failed under all four configurations
+  #   # tried here: medium, low, the card's temp 1.0 sampling, and thinking off.
+  #   # Best coding seen is 2 of 4 tasks, at low or at temp 1.0. Whatever that
+  #   # task gates on, no setting of this model clears it.
+  #   #
+  #   # The budget was also tested directly — run-20260922-134531, coding only,
+  #   # task max_tokens raised 32768 -> 65536 and ctx-size 32768 -> 131072. The
+  #   # answer is that this harness cannot ask the question: all three failures
+  #   # became 20-minute hanging requests killed by HTTP_READ_TIMEOUT (1200s),
+  #   # because a 65536-token generation at ~65 tok/s needs ~17 minutes before
+  #   # prompt processing. Wall clock 23.2 / 20.1 / 21.2 min against 3.2 / 0.1
+  #   # min of actual generation. coding_mcp_easy_01 still passed at 0.93.
+  #   # Answering "would more budget help" needs HTTP_READ_TIMEOUT raised first;
+  #   # what is established is that the model consumes whatever budget it is
+  #   # given.
+  #   #
+  #   # That was then tested — run-20260919-053347, the card's own sampling
+  #   # (temp 1.0 / top_p 0.95 / top_k 20), 15 tasks. NOT leaderboard-comparable
+  #   # (every other row is temp 0.0) and a single nondeterministic sample, so
+  #   # it is evidence about a mechanism, not a score:
+  #   #
+  #   #   dimension  medium t0.0   low t0.0      card t1.0
+  #   #   agentic    0.837 f=0     0.850 f=0     0.855 f=0
+  #   #   coding     0.231 f=3     0.433 f=2     0.444 f=2
+  #   #   planning   0.674 f=0     0.589 f=1     0.733 f=0
+  #   #   research   0.846 f=0     0.811 f=0     0.892 f=0
+  #   #   overall    0.645 f=3     0.679 f=3     0.728 f=2
+  #   #
+  #   # The mechanism separates cleanly. degenerate_repetition failures: 1 at
+  #   # medium, 1 at low, ZERO at temp 1.0. Greedy decoding is what turns a long
+  #   # trace into an unescapable loop. But two coding tasks still failed at
+  #   # temp 1.0, as plain truncation — ~100k chars of reasoning against a
+  #   # 32768-token budget. So looping is an artifact of our temp 0.0 house
+  #   # rule; over-thinking on hard tasks is the model, and neither the effort
+  #   # knob nor sampling fixes it.
+  #   chat_template_kwargs:
+  #     reasoning_effort: "medium"
 
   - name: "bonsai2-27b-ptq1"
     backend: "llama.cpp"
@@ -589,6 +597,29 @@ models:
     #
     # Do not conclude that fewer bits help. The defensible statement is that
     # dropping from 2.13 bpw to ~1 bpw cost nothing measurable on these tasks.
+    #
+    # CONFIRMED run-20260922-222526, a second sweep at the same config:
+    #
+    #   dimension  PTQ1 run1     PTQ1 run2     PQ2_0
+    #   agentic    0.810         0.808         0.841
+    #   coding     0.433 f=2     0.445 f=2     0.237 f=3
+    #   planning   0.636         0.602         0.649
+    #   research   0.882         0.894         0.838
+    #   overall    0.689 f=2     0.687 f=2     0.641 f=3
+    #
+    # The two sweeps land 0.002 apart, and every task moves by at most 0.06 —
+    # judge variance on a deterministic target, as expected. The coding
+    # failures reproduce to the character across both runs (23869 and 120688
+    # chars), the same way PQ2_0's did.
+    #
+    # The composite gap to PQ2_0 (~0.047) is still under the 0.05 floor and
+    # should not be reported as a win. What is not inside noise is the
+    # completion count: coding_wine_medium_01 passes here in both sweeps and
+    # failed on PQ2_0 in both of its. Two deterministic models disagreeing on
+    # whether a task finishes is a real difference.
+    #
+    # It is also slower — 55.9-56.3 tok/s against 64.9, and 47.5 min against
+    # 39.6 for a sweep — so the smaller quant costs wall clock, not saves it.
     native_tools: true
     chat_template_kwargs:
       reasoning_effort: "medium"
