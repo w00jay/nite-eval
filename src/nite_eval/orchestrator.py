@@ -24,6 +24,7 @@ from rich.console import Console
 from rich.table import Table
 
 from nite_eval.automated_scoring import run_automated_checks
+from nite_eval.config_check import check_referenced_files
 from nite_eval.conversation_runner import ConversationResult, ModelBackend, run_conversation
 from nite_eval.cost import BudgetExceededError, CostTracker, PriceBook
 from nite_eval.evidence import build_code_evidence, build_tool_evidence
@@ -749,6 +750,18 @@ def main() -> None:
     if not args.skip_gpu_check and local_models:
         console.print("Checking GPU placement...")
         swap_cfg = Path(cfg.get("target", {}).get("llama_swap_config", "config/llama_swap_config.yaml"))
+
+        # llama-swap only resolves a model's command line when it swaps that
+        # model in, so a moved GGUF or a rebuilt fork checkout surfaces
+        # mid-sweep as a load failure, after earlier models have been scored.
+        # Only the models this run will actually touch are checked.
+        missing = check_referenced_files(swap_cfg, model_names=set(local_models))
+        if missing:
+            console.print("[red]Files named in the llama-swap config are missing:[/red]")
+            for m in missing:
+                console.print(f"  [red]- {m}[/red]")
+            sys.exit(1)
+
         try:
             _, gpu_warnings = gpu_preflight(swap_cfg, strict=True)
         except GpuPlacementError as e:
