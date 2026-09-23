@@ -72,6 +72,20 @@ def generate_run_id() -> str:
     return datetime.now(UTC).strftime("run-%Y%m%d-%H%M%S")
 
 
+def resolve_max_tokens(task_max_tokens: int | None, model_cfg: dict, eval_cfg: dict) -> int:
+    """Resolve a generation budget as model > task > global.
+
+    A model entry wins so it can *lower* a task's budget, not just raise it: a
+    model that loops fills whatever coding gives it, and capping it there is a
+    per-model fact, not a per-task one. Raising works the same way, which is
+    what the frontier examples in `eval_config.yaml` use it for.
+
+    Zero is treated as unset at every level, matching the `or` semantics the
+    task-level read has always had.
+    """
+    return int(model_cfg.get("max_tokens") or task_max_tokens or eval_cfg.get("max_tokens") or 2048)
+
+
 def score_task(
     task: TaskDefinition,
     conv: ConversationResult,
@@ -321,6 +335,7 @@ def run_task(
     system_suffix: str = "",
     chat_template_kwargs: dict | None = None,
     native_tools: bool = False,
+    max_tokens: int | None = None,
     backend: ModelBackend | None = None,
     tracker: CostTracker | None = None,
     provider: str = "local",
@@ -370,7 +385,7 @@ def run_task(
         max_tool_calls=task.max_tool_calls,
         timeout_seconds=task.timeout_seconds,
         temperature=eval_cfg.get("temperature", 0.0),
-        max_tokens=task.max_tokens or eval_cfg.get("max_tokens", 2048),
+        max_tokens=resolve_max_tokens(task.max_tokens, {"max_tokens": max_tokens}, eval_cfg),
         system_suffix=system_suffix,
         chat_template_kwargs=chat_template_kwargs,
         native_tools=native_tools,
@@ -584,7 +599,7 @@ def estimate_run_cost(model_cfgs: list[dict], eval_cfg: dict, price_book: PriceB
         in_tokens = 0
         out_tokens = 0
         for task in tasks:
-            max_tokens = task.max_tokens or eval_cfg.get("max_tokens", 2048)
+            max_tokens = resolve_max_tokens(task.max_tokens, cfg, eval_cfg)
             prompt_tokens = (len(task.system_prompt) + len(task.user_message) + len(str(task.tools))) // CHARS_PER_TOKEN
             # Each turn resends the growing history: turn i carries the prompt
             # plus everything generated so far.
@@ -710,6 +725,11 @@ def main() -> None:
     # a score gap gets measured instead of assumed.
     native_tools_by_model: dict[str, bool] = {m["name"]: native_tools_for(m) for m in models_cfg}
 
+    # Per-model generation budget, overriding the task's and the global one.
+    # Lowering is the point as often as raising: a model that loops fills
+    # whatever coding hands it, and a bigger budget only buys a longer loop.
+    max_tokens_by_model: dict[str, int | None] = {m["name"]: m.get("max_tokens") for m in models_cfg}
+
     # Check servers
     if not args.skip_server_check:
         console.print("Checking servers...")
@@ -834,6 +854,7 @@ def main() -> None:
                         system_suffix=system_suffix_by_model.get(model, ""),
                         chat_template_kwargs=template_kwargs_by_model.get(model) or None,
                         native_tools=native_tools_by_model.get(model, False),
+                        max_tokens=max_tokens_by_model.get(model),
                         backend=backend_by_model.get(model),
                         tracker=tracker,
                         provider=provider_by_model.get(model, "local"),
