@@ -626,6 +626,12 @@ models:
 
 evaluation:
   temperature: 0.0        # local models only — current API models reject sampling params
+  # Global generation budget. Resolution is model > task > this, so a `max_tokens:`
+  # on a model entry overrides both — it can lower a task's budget as well as raise
+  # it. Lowering is the useful direction for a model that loops: coding hands out
+  # 32768 and a bigger budget only buys a longer loop. Until 2026-09-22 a model-level
+  # `max_tokens:` was silently ignored, so any entry that set one was not doing what
+  # it looked like it was doing.
   max_tokens: 4096
   # Average 3 judge samples per criterion. The target model is essentially
   # deterministic at temperature 0 (coding_artemis_medium_01 reproduced across

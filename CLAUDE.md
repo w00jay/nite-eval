@@ -29,7 +29,7 @@ Read the README first — it covers usage, hardware, models, and the dimension/j
 | `scripts/smoke_test.py` | Quick end-to-end pipeline check on a single inline task. Use to verify the loop works after changing scoring/runner code. |
 | `scripts/validate_judge_pipeline.py` | Sends synthetic responses (good/bad/refusal) through the judge to sanity-check rubric routing. |
 | `scripts/run_calibration.py` + `score_calibration.py` + `generate_calibration_set.py` | Judge calibration against human scores. |
-| `scripts/compare_quants.sh` | Compare two GGUF quants of the same base model: metadata diff, xxh64 hashes, determinism check (with `--system-suffix` for thinking models, default `/no_think`), wikitext-2 perplexity. Args: `PATH_A LABEL_A PATH_B LABEL_B` or no args (defaults to the two Qwen3.6 quants). Outputs to `results/quant-compare/<timestamp>/`. |
+| `scripts/compare_quants.sh` | Compare two GGUF quants of the same base model: metadata diff, xxh64 hashes, determinism check (with `--system-suffix` for thinking models, default `/no_think`), wikitext-2 perplexity. Args: `PATH_A LABEL_A PATH_B LABEL_B` or no args (defaults to the two Qwen3.6 quants). Needs `GGUF_DIR` in `.env` — it used to fall back to the llama-server binary's directory, which held the models until the 2026-09-19 move and holds none now. Outputs to `results/quant-compare/<timestamp>/`. |
 | `scripts/gguf_meta_diff.py` | Standalone GGUF metadata comparator (general.* / tokenizer.* / per-tensor quant breakdown / chat template hash). Run via `uv run --with gguf python scripts/gguf_meta_diff.py A.gguf B.gguf --labels A B`. The `gguf` package isn't a runtime dep so it's pulled ad-hoc. |
 
 ## GPU placement — check this every time
@@ -102,6 +102,23 @@ raising judge `--ctx-size` above 4096, will not fit — move a judge to the P40
 
 ## Workflow notes
 
+- **`max_tokens` resolves model > task > global, as of 2026-09-22.** Before that
+  a `max_tokens:` on a model entry was never read — the only resolution was
+  task-then-global — so the key the frontier examples in `eval_config.yaml`
+  already showed was inert, the same silent no-op as a `chat_template_kwargs`
+  key the template does not contain. It is now honoured by
+  `orchestrator.resolve_max_tokens`, used by both the run path and `--dry-run`'s
+  estimator so the two cannot drift. A model entry can therefore *lower* a
+  task's budget as well as raise it, which is the useful direction for a model
+  that loops: coding hands out 32768 and a bigger budget only buys a longer
+  loop. **Setting one changes that model's scores, so it is a comparability
+  boundary** — no fleet model sets it today, deliberately.
+- **`config/llama_swap_config.example.yaml` silently lost 4 of its 13 entries to
+  duplicate YAML keys** until 2026-09-22 — `lfm2.5-8b-a1b` was written twice and
+  `muse-glimmer-30b` three times, and PyYAML keeps the last of a repeated
+  mapping key without complaining. If you add an entry by copying a neighbouring
+  block, check the name actually changed: `yaml.safe_load` is the only thing
+  that will tell you, and it will not raise.
 - **Report times in Pacific.** The host clock is UTC, and run IDs, log lines and
   the `started_at` / `finished_at` columns stay UTC — a run ID is an identifier,
   and rewriting it would break `--resume` and every cross-reference to a past
@@ -585,3 +602,10 @@ invisible to it.
   0 across `reasoning_effort` medium / low / the card's temp 1.0 sampling. Looping is an artifact
   of the temp 0.0 house rule; over-thinking on hard tasks is the model, and neither the effort knob
   nor sampling removed it.
+- **`compare_quants.sh` cannot compare these two quants**, so the PQ2_0-vs-PTQ1_0 call rests on
+  eval scores alone with no perplexity cross-check. The script derives its binary directory from
+  `LLAMA_SERVER_BIN`, and that stock `llama-perplexity` cannot read a PrismML quant. Giving it a
+  binary-directory override is the fix; it has not been done.
+- **`config/llama_swap_config.example.yaml` now carries a `bonsai2-27b-ptq1` entry**, the only one
+  pointing at a fork build. It exists so a fresh checkout can reproduce the target; every other
+  entry stays on the stock binary.

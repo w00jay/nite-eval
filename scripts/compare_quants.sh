@@ -35,7 +35,11 @@ fi
 LLAMA_SERVER="${LLAMA_SERVER_BIN:?LLAMA_SERVER_BIN not set in .env}"
 LLAMA_BIN_DIR="$(dirname "$LLAMA_SERVER")"
 GPU_UUID="${TARGET_GPU_UUID:?TARGET_GPU_UUID not set in .env}"
-GGUF_DIR="${GGUF_DIR:-$LLAMA_BIN_DIR}"
+# Models moved out of the build tree on 2026-09-19 (a `cmake -B build` or
+# `git clean` in the llama.cpp checkout would have destroyed them), so the old
+# `${GGUF_DIR:-$LLAMA_BIN_DIR}` fallback now resolves to a directory that holds
+# binaries and no models. Require it rather than defaulting somewhere wrong.
+GGUF_DIR="${GGUF_DIR:?GGUF_DIR not set in .env — the directory holding your target GGUFs}"
 
 # --- Defaults: the two Qwen3.6 quants ---
 MODEL_A="$GGUF_DIR/Qwen3.6-35B-A3B-UD-Q4_K_S.gguf"
