@@ -69,7 +69,15 @@ mis-sized budgets without anything noticing):**
   the health check. Verifies config pinning statically, then asks the driver
   which GPU each live `llama-server` actually occupies. Wrong GPU is a hard
   error that aborts the run; low VRAM headroom is a warning.
-- Bypass with `--skip-gpu-check` only when you know why you are bypassing it.
+- `src/nite_eval/config_check.py` — `check_referenced_files()` runs alongside it
+  and aborts if a binary or GGUF named in `llama_swap_config.yaml` is missing.
+  llama-swap resolves a model's command line only when it swaps that model in,
+  so a moved GGUF or a rebuilt fork checkout used to surface mid-sweep as a load
+  failure, after earlier models had already been scored. Only the models the run
+  will actually touch are checked, so a sweep of one model does not fail on an
+  unrelated entry.
+- Bypass with `--skip-gpu-check` only when you know why you are bypassing it —
+  it skips the file check too, since both hang off the same flag.
 
 **When changing anything GPU-related, verify with the driver, not the config:**
 
@@ -602,10 +610,14 @@ invisible to it.
   0 across `reasoning_effort` medium / low / the card's temp 1.0 sampling. Looping is an artifact
   of the temp 0.0 house rule; over-thinking on hard tasks is the model, and neither the effort knob
   nor sampling removed it.
-- **`compare_quants.sh` cannot compare these two quants**, so the PQ2_0-vs-PTQ1_0 call rests on
-  eval scores alone with no perplexity cross-check. The script derives its binary directory from
-  `LLAMA_SERVER_BIN`, and that stock `llama-perplexity` cannot read a PrismML quant. Giving it a
-  binary-directory override is the fix; it has not been done.
+- **The PQ2_0-vs-PTQ1_0 call still has no perplexity cross-check**, so it rests on eval scores
+  alone. `compare_quants.sh` now takes `--bin-dir` (or `$LLAMA_BIN_DIR`) to run every step against
+  another llama.cpp build, which removes half the problem — the stock `llama-perplexity` cannot
+  read a PrismML quant. **The other half is that the fork build has no `llama-perplexity` to point
+  at.** Verified 2026-09-22: `~/P/llama.cpp-prismml/build/bin/` holds `llama-cli` and
+  `llama-server` and nothing else, so it was configured with a target subset. Rebuilding the fork
+  with the tools targets is the remaining step; the script now fails with that exact message
+  rather than something obscure.
 - **`config/llama_swap_config.example.yaml` now carries a `bonsai2-27b-ptq1` entry**, the only one
   pointing at a fork build. It exists so a fresh checkout can reproduce the target; every other
   entry stays on the stock binary.
