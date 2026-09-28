@@ -12,15 +12,30 @@
 #   scripts/compare_quants.sh --skip-determinism             # skip step 3
 #   scripts/compare_quants.sh --skip-perplexity              # skip step 4
 #   scripts/compare_quants.sh --system-suffix ""             # for non-thinking models
+#   scripts/compare_quants.sh --bin-dir /path/to/build/bin   # use another llama.cpp build
 #   scripts/compare_quants.sh PATH_A LABEL_A PATH_B LABEL_B  # compare arbitrary pair
 #
 # Defaults: system-suffix is "/no_think" (correct for the default Qwen3.6 pair).
 # Override to "" for non-thinking models, or to any other chat-template trigger.
 #
-# Requires: $LLAMA_SERVER_BIN and $TARGET_GPU_UUID from .env.
+# --bin-dir (or $LLAMA_BIN_DIR) selects which llama.cpp build runs every step.
+# It exists because a vendor quant can need a vendor build: PrismML's PQ2_0 and
+# PTQ1_0 are unknown types to a stock checkout, so comparing the two Bonsai 2
+# quants with the stock llama-perplexity cannot work. Point this at the fork's
+# build/bin and the whole comparison runs against it.
+#
+# Requires: $LLAMA_SERVER_BIN, $GGUF_DIR and $TARGET_GPU_UUID from .env.
 # Stops anything it starts on exit.
 
 set -euo pipefail
+
+# Before the .env checks below: `-h` should work on a machine that has no .env,
+# which is where someone is most likely to be reading it.
+for arg in "$@"; do
+    case "$arg" in
+        -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
+    esac
+done
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_DIR"
@@ -33,7 +48,8 @@ if [ -f .env ]; then
 fi
 
 LLAMA_SERVER="${LLAMA_SERVER_BIN:?LLAMA_SERVER_BIN not set in .env}"
-LLAMA_BIN_DIR="$(dirname "$LLAMA_SERVER")"
+# Resolved after argument parsing so --bin-dir can override it.
+BIN_DIR_OVERRIDE="${LLAMA_BIN_DIR:-}"
 GPU_UUID="${TARGET_GPU_UUID:?TARGET_GPU_UUID not set in .env}"
 # Models moved out of the build tree on 2026-09-19 (a `cmake -B build` or
 # `git clean` in the llama.cpp checkout would have destroyed them), so the old
@@ -56,8 +72,9 @@ while [ $# -gt 0 ]; do
         --skip-determinism) SKIP_DET=1; shift ;;
         --skip-perplexity)  SKIP_PPL=1; shift ;;
         --system-suffix)    SYSTEM_SUFFIX="$2"; shift 2 ;;
+        --bin-dir)          BIN_DIR_OVERRIDE="$2"; shift 2 ;;
         -h|--help)
-            sed -n '2,21p' "$0"; exit 0 ;;
+            sed -n '2,28p' "$0"; exit 0 ;;
         *) POSITIONAL+=("$1"); shift ;;
     esac
 done
@@ -70,12 +87,33 @@ elif [ "${#POSITIONAL[@]}" -ne 0 ]; then
     exit 2
 fi
 
+if [ -n "$BIN_DIR_OVERRIDE" ]; then
+    LLAMA_BIN_DIR="$BIN_DIR_OVERRIDE"
+    # Every step must come from the same build, or the comparison silently
+    # mixes two llama.cpp versions.
+    LLAMA_SERVER="$LLAMA_BIN_DIR/llama-server"
+else
+    LLAMA_BIN_DIR="$(dirname "$LLAMA_SERVER")"
+fi
+
+if [ ! -x "$LLAMA_SERVER" ]; then
+    echo "ERROR: llama-server not executable: $LLAMA_SERVER"
+    exit 1
+fi
+if [ "$SKIP_PPL" -eq 0 ] && [ ! -x "$LLAMA_BIN_DIR/llama-perplexity" ]; then
+    echo "ERROR: llama-perplexity not executable: $LLAMA_BIN_DIR/llama-perplexity"
+    echo "       Pass --skip-perplexity, or --bin-dir pointing at a build that has it."
+    exit 1
+fi
+
 for f in "$MODEL_A" "$MODEL_B"; do
     if [ ! -f "$f" ]; then
         echo "ERROR: model file not found: $f"
         exit 1
     fi
 done
+
+echo "=== Using llama.cpp build: $LLAMA_BIN_DIR ==="
 
 OUT="results/quant-compare/$(date -u +%Y%m%d-%H%M%S)"
 mkdir -p "$OUT"
